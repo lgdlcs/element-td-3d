@@ -94,6 +94,11 @@ export class TowerManager {
       kills: 0,
       birth: performance.now() * 0.001,
       mode: 'first',
+      // How many times this TILE has been morphed. Declared here rather than
+      // left undefined so the morph tax is visible state on every tower object;
+      // Game.morphTower carries it across the remove/create pair by hand,
+      // because create() legitimately hands back a fresh object each time.
+      morphCount: 0,
     };
     this.batch.attach(t);
     this.towers.push(t);

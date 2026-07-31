@@ -146,6 +146,17 @@ export class HUD {
   openInspector(t) { this.inspector.show(t); }
   closeInspector() { this.inspector.hide(); }
 
+  /**
+   * Open the morph sheet on a tower id. The seam for the `M` hotkey: Game knows
+   * tower ids and nothing about panels, Inspector knows panels and is handed
+   * tower objects, so the id -> object resolution belongs here alongside
+   * openInspector. Silently does nothing on a stale id or an inert block.
+   */
+  openMorph(id) {
+    const t = this.game.towers.byId(id);
+    if (t) this.inspector.showMorph(t);
+  }
+
   // ---- element picker --------------------------------------------------
 
   openElementPicker() { this.picker.show(); }

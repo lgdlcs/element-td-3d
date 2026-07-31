@@ -17,6 +17,10 @@ export class Inspector {
     this.game = game;
     this.root = root;
     this.tower = null;
+    /** 'tower' | 'inert' | 'morph' — which body is currently rendered. */
+    this.view = 'tower';
+    /** Effective DPS of the tower the open morph sheet belongs to. */
+    this._morphNow = 0;
 
     root.insertAdjacentHTML('beforeend',
       '<aside id="inspector" aria-live="polite" aria-hidden="true"></aside>');
@@ -26,10 +30,18 @@ export class Inspector {
       const t = this.tower;
       if (!t) return;
       if (e.target.closest('.insp-close')) { this.game.selectTower(null); return; }
+      if (e.target.closest('.morph-back')) { this.show(t); return; }
+      if (e.target.closest('#insp-morph')) { this.showMorph(t); return; }
       if (e.target.closest('#insp-upgrade')) { this.game.upgradeTower(t.id); return; }
       if (e.target.closest('#insp-sell')) { this.game.sellTower(t.id); return; }
       const conv = e.target.closest('[data-convert]');
       if (conv && !conv.disabled) { this.game.convertTower(t.id, conv.dataset.convert); return; }
+      // Deliberately not gated on the card's own state: morphTower re-checks the
+      // phase, the unlock and the gold and warns with the exact reason. Swallowing
+      // the click here would turn an unaffordable card into a button that does
+      // nothing and explains nothing.
+      const m = e.target.closest('[data-morph]');
+      if (m) { this.game.morphTower(t.id, m.dataset.morph); return; }
       const mode = e.target.closest('[data-mode]');
       if (mode) {
         t.mode = mode.dataset.mode;
@@ -40,10 +52,32 @@ export class Inspector {
         });
       }
     });
+
+    /**
+     * The sticky comparison strip. Twenty morph targets cannot each carry a
+     * before/after DPS pair without turning the panel into a spreadsheet, so
+     * exactly one number tracks the cursor instead: you sweep the grid and read
+     * a single figure. `pointerover` bubbles (unlike pointerenter), so one
+     * delegated listener covers every card and survives every re-render.
+     */
+    const preview = (e) => {
+      if (this.view !== 'morph') return;
+      const b = e.target.closest?.('[data-morph]');
+      const out = this.$el.querySelector('.mc-next');
+      if (!b || !out) return;
+      const next = Number(b.dataset.dps);
+      out.textContent = num(next);
+      out.classList.toggle('up', next >= this._morphNow);
+      out.classList.toggle('down', next < this._morphNow);
+    };
+    this.$el.addEventListener('pointerover', preview);
+    this.$el.addEventListener('focusin', preview);
   }
 
   show(t) {
     this.tower = t;
+    this.view = 'tower';
+    this.$el.classList.remove('morph');
     // A foundation has no element, no weapon and no upgrade ladder, so the
     // normal panel cannot render it at all: the lineage line would dereference
     // ELEMENTS[null] and the hero number is 0/0. It gets its own panel, whose
@@ -82,6 +116,21 @@ export class Inspector {
 
     const dotNow = dotDps(s);
     const dotNext = next ? dotDps(next) : 0;
+
+    // Disabled ONLY for the two reasons that leave nothing to show. Being mid-
+    // wave is not one of them: the sheet is worth reading during combat — it is
+    // where you decide what to spend the prep on — and morphTower refuses the
+    // commit anyway. Chrome fires no mouse events on a disabled button, so a
+    // greyed control's `title` never renders, which would make "Morph only
+    // between waves" a rule the player could only discover by it not happening.
+    const targets = def.kind === 'primal' ? [] : this.game.morphTargets.filter((d) => d.key !== def.key);
+    const prep = this.game.state.phase === 'prep';
+    const morphOff = def.kind === 'primal' || targets.length === 0;
+    const morphWhy = def.kind === 'primal'
+      ? 'A Primal cannot morph — its two element stacks would have to be destroyed or laundered. Sell it and they come back in full.'
+      : targets.length === 0 ? 'Nothing else is unlocked to morph into yet'
+      : !prep ? 'Compare targets now — morphing itself is only possible between waves'
+      : `Re-key this tower in place — ${targets.length} targets, level carries over`;
 
     this.$el.innerHTML = /* html */`
       <header class="insp-head" style="--c:${hex(def.color)};--a:${hex(def.accent)}">
@@ -135,10 +184,13 @@ export class Inspector {
         <div class="insp-meter"><i style="width:${Math.min(100, share).toFixed(1)}%;background:${hex(def.color)}"></i></div>
       </div>
 
-      <footer class="insp-actions">
+      <footer class="insp-actions insp-actions-3">
         <button id="insp-upgrade" class="primary" ${maxed ? 'disabled' : ''}>
           ${maxed ? 'Fully forged' : `<span>Upgrade</span><em>${num(next.cost)}</em>`}
           ${maxed ? '' : '<kbd>U</kbd>'}
+        </button>
+        <button id="insp-morph" class="ghost" ${morphOff ? 'disabled' : ''} title="${esc(morphWhy)}">
+          <span>Morph</span><kbd>M</kbd>
         </button>
         <button id="insp-sell" class="ghost"><span>Sell</span><em>+${num(refund)}</em><kbd>X</kbd></button>
       </footer>`;
@@ -157,6 +209,8 @@ export class Inspector {
    * 20 for would read as being charged twice.
    */
   #showFoundation(t) {
+    this.view = 'inert';
+    this.$el.classList.remove('morph');
     const def = t.def;
     const g = this.game;
     const refund = Math.floor(def.levels[0].cost * ECONOMY.sellRefund);
@@ -209,9 +263,131 @@ export class Inspector {
     this.$el.setAttribute('aria-hidden', 'false');
   }
 
+  /**
+   * The morph sheet: every tower this one may become, and what each costs.
+   *
+   * It replaces the panel BODY and keeps the header and the footer, so the
+   * player never loses track of which tile they are editing. Nothing new is
+   * invented visually either — it reuses the `.insp-arm` / `.arm-opt` grid the
+   * foundation panel already ships, which already carries 21 options in this
+   * column without drowning.
+   *
+   * Cards carry four fields and no DPS pair. The delta lives in the single
+   * sticky strip above them (see the `preview` listener in the constructor):
+   * twenty cards each showing a before/after is a spreadsheet, one number that
+   * tracks the cursor is a comparison.
+   *
+   * Cards you cannot pay for are NOT `disabled`. A disabled button dispatches no
+   * pointer events in Chrome, so it would drop out of the comparison sweep —
+   * precisely when you are deciding what to save up for. They are dimmed, they
+   * announce themselves via aria-disabled, and clicking one gets the honest
+   * refusal from Game.morphTower.
+   */
+  showMorph(t) {
+    // Reachable from the M hotkey with anything selected, so it has to defend
+    // the same three cases the footer button greys out.
+    if (!t || t.def.kind === 'inert' || t.def.kind === 'primal') return this.show(t);
+
+    const g = this.game;
+    const def = t.def;
+    const gold = g.state.gold;
+    const prep = g.state.phase === 'prep';
+
+    this.tower = t;
+    this.view = 'morph';
+    this._morphNow = effectiveDps(def.levels[t.level]);
+
+    let paid = 0; for (let l = 0; l <= t.level; l++) paid += def.levels[l].cost;
+    const sellRefund = Math.floor(paid * ECONOMY.sellRefund);
+
+    const opts = g.morphTargets.filter((d) => d.key !== def.key).map((d) => {
+      const kept = Math.min(t.level, d.levels.length - 1);
+      let want = 0; for (let l = 0; l <= kept; l++) want += d.levels[l].cost;
+      return {
+        d, kept,
+        cost: g.morphCost(t, d.key),
+        // A free morph is not a bargain: it means the target is worth less than
+        // the credit, and the difference is investment walked away from. The
+        // panel must say so — this is the one case the price alone hides.
+        loss: want < paid * ECONOMY.morphCredit,
+        next: effectiveDps(d.levels[kept]),
+      };
+    }).sort((a, b) => a.cost - b.cost || a.d.name.localeCompare(b.d.name));
+
+    const card = (o) => {
+      const d = o.d;
+      const poor = gold < o.cost;
+      const parts = d.kind === 'dual' ? d.parts : [d.element];
+      const glyphs = parts.map((p) =>
+        `<b style="color:${hex(ELEMENTS[p].color)}">${ELEMENTS[p].glyph}</b>`).join('');
+      const title = o.loss
+        ? `${d.name} — free, but you walk away from the ${num(sellRefund)} gold selling this tower would refund`
+        : poor ? `${d.name} — needs ${num(o.cost - Math.floor(gold))} more gold`
+        : `${d.name} — ${num(o.cost)} gold, lands at level ${o.kept + 1} of ${d.levels.length}`;
+      return `<button class="arm-opt morph-opt${o.loss ? ' morph-loss' : ''}${poor ? ' poor' : ''}"
+          data-morph="${d.key}" data-dps="${Math.round(o.next)}" style="--c:${hex(d.color)}"
+          aria-disabled="${poor || !prep}" title="${esc(title)}">
+        <span class="ao-glyph">${glyphs}</span>
+        <span class="ao-name">${esc(d.name.replace(' Tower', ''))}</span>
+        <span class="ao-lv">Lv ${o.kept + 1}</span>
+        <span class="ao-cost">${o.cost === 0 ? 'Free' : num(o.cost)}</span>
+      </button>`;
+    };
+
+    const group = (legend, list) => (list.length
+      ? `<div class="insp-legend sub">${legend}</div><div class="insp-arm">${list.map(card).join('')}</div>`
+      : '');
+
+    const taxed = (t.morphCount ?? 0) > 0;
+    const parts = def.kind === 'dual' ? def.parts : [def.element];
+    const lineage = parts.map((p) =>
+      `<em style="color:${hex(ELEMENTS[p].color)}">${ELEMENTS[p].glyph} ${ELEMENTS[p].name}</em>`).join('<s>+</s>');
+
+    this.$el.innerHTML = /* html */`
+      <header class="insp-head" style="--c:${hex(def.color)};--a:${hex(def.accent)}">
+        <span class="insp-glyph">${def.kind === 'dual' ? '◆' : def.glyph}</span>
+        <div class="insp-id">
+          <b>${esc(def.name)}</b>
+          <span class="insp-lineage">${lineage}</span>
+        </div>
+        <button class="insp-close" aria-label="Close (Esc)">✕</button>
+      </header>
+
+      <div class="insp-section morph-sheet">
+        <div class="insp-legend"><button class="morph-back" aria-label="Back">←</button> Morph into</div>
+
+        <div class="morph-compare" style="--c:${hex(def.color)}"
+             title="Effective DPS: direct damage plus sustained damage over time, splash and chain.">
+          <b>${num(this._morphNow)}</b><u>DPS now</u>
+          <span class="mc-arrow">→</span>
+          <b class="mc-next">—</b><u>after</u>
+        </div>
+
+        <p class="ii-note">Level carries as far as the target can hold it — each card says
+        where. Targeting, damage and kills carry over.${taxed
+          ? ` <b>Morph #${(t.morphCount ?? 0) + 1} here</b>: prices include a
+             ${Math.round(ECONOMY.morphTax * 100)}% tax per earlier morph.` : ''}</p>
+        ${prep ? '' : '<p class="ii-note bad">Combat has started. Morph is only available between waves.</p>'}
+
+        ${group('Elemental', opts.filter((o) => o.d.kind === 'pure'))}
+        ${group('Fusion', opts.filter((o) => o.d.kind === 'dual'))}
+        ${opts.length ? '' : '<p class="ii-empty">Nothing else is unlocked to morph into yet.</p>'}
+      </div>
+
+      <footer class="insp-actions">
+        <button class="primary morph-back"><span>Back to stats</span></button>
+        <button id="insp-sell" class="ghost"><span>Sell</span><em>+${num(sellRefund)}</em><kbd>X</kbd></button>
+      </footer>`;
+
+    this.$el.classList.add('open', 'morph');
+    this.$el.setAttribute('aria-hidden', 'false');
+    this.tick();
+  }
+
   hide() {
     this.tower = null;
-    this.$el.classList.remove('open');
+    this.view = 'tower';
+    this.$el.classList.remove('open', 'morph');
     this.$el.setAttribute('aria-hidden', 'true');
   }
 
@@ -219,6 +395,22 @@ export class Inspector {
   tick() {
     const t = this.tower;
     if (!t || !this.$el.classList.contains('open')) return;
+
+    // The morph sheet, same contract as the arm list below: which cards you can
+    // act on right now, re-derived from the SAME morphCost call the click will
+    // charge, so the printed price and the debit can never drift apart. The
+    // phase is re-read too — a wave can start while the sheet is open, and the
+    // grid has to grey itself out the moment it does.
+    if (this.view === 'morph') {
+      const gold = this.game.state.gold;
+      const prep = this.game.state.phase === 'prep';
+      for (const b of this.$el.querySelectorAll('[data-morph]')) {
+        const poor = gold < this.game.morphCost(t, b.dataset.morph);
+        b.classList.toggle('poor', poor);
+        b.setAttribute('aria-disabled', String(poor || !prep));
+      }
+      return;
+    }
 
     // A foundation has no upgrade button; what has to stay honest is which of
     // its arm options you can currently pay for. Without this the buttons keep

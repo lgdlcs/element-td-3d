@@ -12,7 +12,7 @@ import { ProjectileManager } from '../systems/Projectiles.js';
 import { TowerManager } from './Towers.js';
 import { EffectSystem } from '../fx/EffectSystem.js';
 import { WaveRunner, waveDef, isAirWave, TOTAL_WAVES } from './Waves.js';
-import { towerDef, availableTowers, FOUNDATION } from './TowerDefs.js';
+import { towerDef, availableTowers, morphTargets, FOUNDATION } from './TowerDefs.js';
 import { ELEMENT_IDS, ELEMENTS } from './Elements.js';
 import { rngFor, pickN } from '../core/Rng.js';
 import { HUD } from '../ui/HUD.js';
@@ -477,6 +477,11 @@ export class Game {
         case 'Digit2': this.setSpeed(2); break;
         case 'Digit3': this.setSpeed(3); break;
         case 'KeyU': if (this.selectedTower !== null) this.upgradeTower(this.selectedTower); break;
+        // Opens the morph sheet; it never commits anything on its own. Routed
+        // through the HUD rather than straight into Inspector because Game must
+        // not reach into a panel's internals — HUD already owns that delegation
+        // (openInspector, refreshBuildBar).
+        case 'KeyM': if (this.selectedTower !== null) this.hud.openMorph(this.selectedTower); break;
         case 'KeyX': if (this.selectedTower !== null) this.sellTower(this.selectedTower); break;
         default: break;
       }
@@ -707,6 +712,109 @@ export class Game {
     return true;
   }
 
+  /**
+   * Gold to morph tower `t` into `key`.
+   *
+   *   cost = max(0, round( (Ctgt(kept) - Csrc(level) * morphCredit)
+   *                        * (1 - morphDiscount[level]) * (1 + morphTax * morphCount) ))
+   *
+   *   Csrc(level)  everything the player has actually put into this tower,
+   *                including any level the target cannot hold.
+   *   Ctgt(kept)   what the target would have cost to raise to the kept level.
+   *   morphCredit  0.75, the same rate as sellRefund. That is the coherence
+   *                anchor: morphing can never be worse than sell-then-rebuild,
+   *                because it credits the source at exactly the price a sale
+   *                would have paid and then discounts on top of it.
+   *   discount     keyed on the SOURCE level, NOT on `kept`: a heavily invested
+   *                tower has to be cheaper to repurpose, and a pure L3 -> dual
+   *                keeps only level 2, so keying on `kept` would silently deny
+   *                that tower the tier-3 rate it had already paid for.
+   *
+   * THE FLOOR IS AT ZERO AND THERE IS NO REFUND PATH. A morph that paid out
+   * would be a gold pump — build cheap, morph down, repeat. Free down-morphs are
+   * already strictly worse than selling (a Howitzer L2 -> Nature costs 0 and
+   * forfeits the 1 162 a sale would have refunded), so the floor needs no second
+   * guard; the Inspector's job is to make that forfeit visible, not to hide it.
+   *
+   * Pure and side-effect free: the Inspector renders this number before the
+   * click and morphTower charges this same call, so the two can never disagree.
+   */
+  morphCost(t, key) {
+    const tgt = towerDef(key);
+    if (!tgt || !tgt.levels) return Infinity;
+    const kept = Math.min(t.level, tgt.levels.length - 1);
+    let paid = 0; for (let l = 0; l <= t.level; l++) paid += t.def.levels[l].cost;
+    let want = 0; for (let l = 0; l <= kept; l++) want += tgt.levels[l].cost;
+    const disc = ECONOMY.morphDiscount[Math.min(t.level, ECONOMY.morphDiscount.length - 1)];
+    const tax = 1 + ECONOMY.morphTax * Math.min(t.morphCount ?? 0, ECONOMY.morphTaxCap);
+    return Math.max(0, Math.round((want - paid * ECONOMY.morphCredit) * (1 - disc) * tax));
+  }
+
+  /**
+   * Re-key a tower in place, keeping as much of its level as the target can hold.
+   *
+   * PREP ONLY, AND TAXED PER TILE — one rule with two clauses, because either
+   * half alone is broken. Prep-only does not stop the boss flip-flop (there is a
+   * prep phase before wave 30 AND before wave 31), and a tax alone would allow a
+   * mid-boss emergency re-spec, which is the single most wave-trivialising move
+   * available. Together they price the flip-flop at 775 gold, half a fusion.
+   */
+  morphTower(id, key) {
+    const t = this.towers.byId(id);
+    if (!t) return false;
+    if (this.state.phase !== 'prep') { this.hud.warn('Morph only between waves'); this.audio.play('deny'); return false; }
+    // A foundation has convertTower, which is cheaper and purpose-built. A
+    // primal cannot morph OUT at all: the two stacks it ate would have to be
+    // either destroyed (theft) or returned (raise a primal, morph it into a
+    // cheap fusion, keep both the stacks and the fusion). Sell already does the
+    // right thing and hands them back.
+    if (t.def.kind === 'inert' || t.def.kind === 'primal') {
+      this.hud.warn('This tower cannot morph'); this.audio.play('deny'); return false;
+    }
+    const tgt = towerDef(key);
+    if (!tgt || tgt.key === t.key || tgt.kind === 'inert' || tgt.kind === 'primal') return false;
+    if (!this.morphTargets.some((d) => d.key === tgt.key)) {
+      this.hud.warn('Element not bound'); this.audio.play('deny'); return false;
+    }
+    const cost = this.morphCost(t, key);
+    if (this.state.gold < cost) { this.hud.warn('Not enough gold'); this.audio.play('deny'); return false; }
+
+    // Snapshot everything that belongs to the TILE rather than to the tower def,
+    // because towers.create() hands back a brand-new object with a new id.
+    // Losing `mode` silently resets targeting to 'first', a behaviour change the
+    // player did not ask for; losing totalDamage/kills zeroes the Contribution
+    // panel and skews the board-share percentage for every other tower.
+    const { c, r } = t;
+    const kept = Math.min(t.level, tgt.levels.length - 1);
+    const carry = { mode: t.mode, totalDamage: t.totalDamage, kills: t.kills, morphCount: (t.morphCount ?? 0) + 1 };
+
+    this.state.gold -= cost;
+    this.towers.remove(id);
+    const nt = this.towers.create(key, kept, c, r);
+    Object.assign(nt, carry);
+
+    // NO path.rebuild(), NO arena.markPathDirty(), NO arena.refreshOccupancy().
+    // Same 2x2 anchor: grid.clearTower() and grid.setTower() both run inside this
+    // call with nothing observing the gap, so those four cells go TOWER -> FREE
+    // -> TOWER and the maze the creeps walk is bit-for-bit identical. It is also
+    // exactly four cells in both directions, because canPlaceTower only ever
+    // accepts CELL.FREE, so clearTower cannot be restoring a PATH_ONLY cell as
+    // FREE. Same argument convertTower already makes, and it is a fact here too
+    // rather than a bet. (arena.refreshOccupancy only reads grid.cells, which is
+    // unchanged; PathMask additionally checksums the grid on its own.)
+    this.audio.play('upgrade');
+    this.fx.explosion(nt.x, 2.0, nt.z, 2.1, [0.95, 0.85, 0.6]);
+    this.rig.addShake(0.12);
+    // MANDATORY. Inspector.tower holds a reference to the OLD object: without
+    // this the panel keeps rendering a dead tower and its Sell/Upgrade buttons
+    // fire against an id byId() resolves to null, i.e. a button that does
+    // nothing and explains nothing. It also re-seats the range indicator, which
+    // changes on almost every morph.
+    this.selectTower(nt.id);
+    this.hud.refreshBuildBar();
+    return true;
+  }
+
   selectTower(id) {
     this.selectedTower = id;
     if (id === null) {
@@ -876,6 +984,9 @@ export class Game {
   }
 
   get availableTowers() { return availableTowers(this.state.elements); }
+
+  /** Every tower a morph may land on — see morphTargets in TowerDefs.js. */
+  get morphTargets() { return morphTargets(this.state.elements); }
 
   /**
    * The selected tower, if it is an unarmed foundation — otherwise null.

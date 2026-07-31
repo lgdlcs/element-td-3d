@@ -757,7 +757,83 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 .arm-opt.poor .ao-cost { color: var(--warn); }
 .arm-opt:disabled { cursor: not-allowed; }
 
+/* -------------------------------------------------------------------------
+   MORPH SHEET — the inspector body replaced by "what this tower can become".
+
+   The panel keeps its header and footer so the player never loses track of the
+   tile being edited; only the middle scrolls. It has to scroll: up to twenty
+   targets in a two-column grid is ten rows, and the panel is anchored to the
+   top of the viewport with no height of its own. Scoped to `.morph` so the
+   default and foundation panels keep their intrinsic-height layout.
+   ------------------------------------------------------------------------- */
+#inspector.morph {
+  display: flex; flex-direction: column;
+  max-height: calc(100vh - var(--topbar-h) - 30px);
+}
+#inspector.morph > .insp-head, #inspector.morph > .insp-actions { flex: none; }
+.morph-sheet { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-top: 0; }
+.morph-sheet::-webkit-scrollbar { width: 6px; }
+.morph-sheet::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
+
+.morph-back {
+  width: 18px; height: 18px; border-radius: 5px; margin-right: 4px;
+  font-size: 11px; line-height: 1; color: var(--ink-3);
+  vertical-align: -3px; transition: all var(--t-fast);
+}
+.morph-back:hover { color: var(--ink); background: rgba(255, 255, 255, 0.08); }
+.insp-actions .morph-back { width: auto; height: auto; margin: 0; vertical-align: baseline; }
+.insp-legend.sub { margin-top: 3px; color: var(--ink-4); }
+
+/* The one number that makes twenty cards scannable: it tracks the cursor as
+   you sweep the grid, instead of every card carrying its own before/after. */
+.morph-compare {
+  position: sticky; top: -1px; z-index: 2;
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 8px 10px; border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--c) 32%, var(--line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 12%, var(--solid)), var(--solid));
+}
+.morph-compare b { font-family: var(--font-num); font-size: 17px; font-weight: 500; letter-spacing: -0.03em; }
+.morph-compare u { text-decoration: none; font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-4); }
+.morph-compare .mc-arrow { margin-left: auto; color: var(--ink-4); font-size: 12px; }
+.morph-compare .mc-next { color: var(--ink-3); }
+.morph-compare .mc-next.up { color: var(--good); }
+.morph-compare .mc-next.down { color: var(--warn); }
+/* Prose in the sheet is a footnote, not a paragraph: at body size it cost four
+   lines and four cards' worth of the fold on a 720px viewport. */
+.morph-sheet .ii-note { font-size: 10.5px; line-height: 1.42; color: var(--ink-3); }
+.morph-sheet .ii-note b { color: var(--ink-2); font-weight: 500; }
+.ii-note.bad { color: var(--warn); }
+
+/* ONE column, unlike the foundation panel's two. Measured: the panel is 296px,
+   so a two-column morph card gives the name ~28px and every fusion renders as
+   "Blac…" / "Infer…" — a list of towers you cannot identify is not a list. One
+   column gives the name ~160px, and the sheet was always going to scroll at 20
+   targets anyway, so the density bought nothing. */
+.morph-sheet .insp-arm { grid-template-columns: 1fr; gap: 3px; }
+/* Four fields, so the fourth column is where the level lands — the only place
+   the player learns that a pure Lv3 lands at Lv2 inside a two-level fusion. */
+.morph-opt { grid-template-columns: auto 1fr auto auto; gap: 8px; }
+.morph-opt .ao-lv {
+  font-family: var(--font-num); font-size: 9px; letter-spacing: 0.02em; color: var(--ink-4);
+  padding: 1px 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.05);
+}
+.arm-opt[aria-disabled="true"] { opacity: 0.45; }
+/* A free morph is the one price that lies: it is free because the target is
+   worth less than the credit, so the card has to name the forfeit rather than
+   read as a bargain. */
+.morph-loss .ao-cost { color: var(--ink-4); text-decoration: line-through solid var(--warn); }
+.morph-loss .ao-name::after { content: ' ↓'; color: var(--warn); }
+
 .insp-actions { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1px; background: var(--line); border-top: 1px solid var(--line); }
+.insp-actions-3 { grid-template-columns: 1.25fr 0.95fr 1fr; }
+/* Three columns leave the Sell button ~90px, and num() groups with a thin space
+   — enough for "+1 162" to break across two lines mid-number. */
+.insp-actions button em { white-space: nowrap; }
+/* Morph is neither the gold "spend up" action nor the red "destroy" one, so it
+   gets its own hue instead of inheriting .ghost's danger hover. */
+#insp-morph:hover:not(:disabled) { background: rgba(150, 132, 232, 0.16); color: #b6a7f5; }
+#insp-morph:hover:not(:disabled) kbd { color: #b6a7f5; }
 /* The foundation panel has no upgrade button, so its lone Sell button takes the
    full width instead of leaving a dead 1fr column beside it. */
 .insp-actions:has(> button:only-child) { grid-template-columns: 1fr; }
