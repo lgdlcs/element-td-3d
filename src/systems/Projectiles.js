@@ -62,6 +62,7 @@ export class ProjectileManager {
     for (let i = MAX - 1; i >= 0; i--) this.free.push(i);
 
     this.onDamage = null; // (towerId, amount, creepIdx) -> void
+    this.onLeech = null;  // (towerId, lives) -> void, once per impact that killed
 
     this.renderer = new ProjectileRenderer(scene, MAX);
     this.ribbons = new RibbonSystem(scene, {
@@ -311,6 +312,10 @@ export class ProjectileManager {
     const cr = this.colors[i * 3], cg = this.colors[i * 3 + 1], cb = this.colors[i * 3 + 2];
     const fam = this.family[i] ?? 'light';
 
+    // Lives leeched by this ONE impact. Accumulated rather than fired per body:
+    // see the release below.
+    let leech = 0;
+
     const deal = (idx, amount, crit = false) => {
       if (!c.alive[idx]) return;
       let dmg = amount;
@@ -319,7 +324,14 @@ export class ProjectileManager {
         dmg *= 1 + missing * s.execute * 6;
       }
       if (crit) dmg *= COMBAT.critMult;
+      const wasAlive = c.alive[idx] === 1;
       const dealt = c.damage(idx, dmg, { armorPen: s.armorPen ?? 0, type: s.damageType ?? 'physical' });
+      // CreepManager.damage calls kill(i) synchronously, so alive[idx] is
+      // already 0 on return: this is a correct "did this hit kill it" test and
+      // not a frame-late one. `lifesteal` had been declared on earth+nature
+      // since the first tables and implemented nowhere; Primal Dark is what
+      // finally made it real.
+      if (s.lifesteal && wasAlive && !c.alive[idx]) leech += s.lifesteal;
       if (this.onDamage) this.onDamage(towerId, dealt, idx, crit);
       if (s.slow) c.applySlow(idx, s.slow.amt, s.slow.dur);
       if (s.burn) c.applyBurn(idx, s.burn.dps, s.burn.dur);
@@ -365,6 +377,10 @@ export class ProjectileManager {
         dmg *= s.chain.falloff;
       }
     }
+
+    // Once per impact, not once per creep: a 5.4-radius Tectonic shell can kill
+    // twenty bodies in the splash loop above and the player wants one number.
+    if (leech > 0) this.onLeech?.(towerId, leech);
 
     this.#release(i);
   }

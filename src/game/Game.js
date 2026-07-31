@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GRID, ECONOMY, SIM, QUALITY_PRESETS } from '../core/Config.js';
+import { GRID, ECONOMY, SIM, QUALITY_PRESETS, ELEMENT_PICK, PRIMAL } from '../core/Config.js';
 import { CameraRig } from '../core/CameraRig.js';
 import { RenderPipeline } from '../render/RenderPipeline.js';
 import { Lighting } from '../world/Lighting.js';
@@ -218,6 +218,20 @@ export class Game {
       this.audio.playImpact(t.key, Math.min(1, amount / 260), { pan });
     };
 
+    /**
+     * `lifesteal` resolved. Projectiles accumulates the leech over one impact
+     * and fires this once, so a 5.4-radius Tectonic splash that kills twenty
+     * bodies is one call and one float, not twenty.
+     */
+    this.projectiles.onLeech = (towerId, lives) => {
+      const before = this.state.lives;
+      this.state.lives = Math.min(ECONOMY.maxLives, this.state.lives + lives);
+      const gained = this.state.lives - before;
+      if (gained <= 0) return;        // at the cap: no float text, no toast, no noise
+      const t = this.towers.byId(towerId);
+      if (t) this.hud.floatText(t.x, 3.2, t.z, `+${gained} ♥`, '#7ad62a');
+    };
+
     this.waves.onWaveStart = (def) => {
       this.audio.play(def.isBoss ? 'bossHorn' : 'waveStart');
       this.hud.announceWave(def);
@@ -287,29 +301,105 @@ export class Game {
    * and another is offered nothing but Earth is not a contest, it is a coin toss.
    *
    * The seed drives a full priority ordering of all six elements, and the offer
-   * is the first three of that order the player does not already own. That gives
-   * the guarantee that is actually achievable here: two players who have made the
-   * same choices see the same three options, and no player's draw is ever luckier
-   * than another's.
+   * is drawn from that order. That gives the guarantee that is actually
+   * achievable here: two players who have made the same choices see the same
+   * three options, and no player's draw is ever luckier than another's.
    *
    * It does NOT guarantee that two players see the same options regardless of
-   * what they own — it cannot, because the pool is "everything you don't have
-   * yet", so a player who diverged has genuinely diverged. Stating that plainly
+   * what they own — it cannot, because the pools below are derived from what you
+   * hold, so a player who diverged has genuinely diverged. Stating that plainly
    * matters more than pretending to a stronger property: the fairness claim this
    * supports is "the same draw", not "the same offer forever".
    *
    * Keyed on `pickIndex`, which advances only when a choice is actually made, so
    * reopening the picker cannot reroll a decision the player is looking at.
+   *
+   * THE ECHO SLOT. From ELEMENT_PICK.echoFromPick onward, one of the three cards
+   * repeats an element you already hold. This is the only route to the three
+   * stacks a Primal tower needs, and it is a real cost: an echo card is a card
+   * that is not offering you a new element, and therefore not offering you the
+   * fusions that element would unlock. Before this existed a duplicate was only
+   * ever offered once you owned all six, i.e. pick index 5 at the earliest, so
+   * three copies of one element were unreachable before wave 30 and Primals were
+   * unreachable at all.
+   *
+   * WHY THE ECHO PREFERS YOUR HIGHEST STACK. With the pool sorted by count
+   * descending, the FIRST echo you take is the seed's choice among your holdings,
+   * but every echo after it is guaranteed to be the same element. So the seed
+   * decides which primal you are being offered, and you decide whether to chase
+   * it — which is a decision, whereas "roll until the seed repeats itself" is a
+   * lottery.
+   *
+   * DETERMINISM CONTRACT — do not break either half:
+   *  1. Exactly ELEMENT_IDS.length rand() calls are consumed, always, through the
+   *     single pickN below. Never call rand() inside a branch that depends on
+   *     player state, or two clients with different holdings desync every draw
+   *     after the first.
+   *  2. The result is a pure function of (seed, pickIndex, the MULTISET of owned
+   *     elements). It must not depend on the ORDER of state.elements: two players
+   *     who took fire-then-water and water-then-fire hold the same thing and must
+   *     see the same offer.
    */
   rollElementChoices() {
-    const owned = new Set(this.state.elements);
+    const counts = new Map();
+    for (const id of this.state.elements) counts.set(id, (counts.get(id) ?? 0) + 1);
+
     const rand = rngFor(this.seed, 'elements', this.state.pickIndex);
-    const order = pickN(rand, ELEMENT_IDS, ELEMENT_IDS.length);
-    const picks = order.filter((id) => !owned.has(id)).slice(0, 3);
-    // Owning all six is reachable (11 picks, 6 elements): fall back to the
-    // seeded order itself so the picker is never empty and never throws.
-    const out = picks.length ? picks : order.slice(0, 3);
+    const order = pickN(rand, ELEMENT_IDS, ELEMENT_IDS.length);   // exactly 6 rand() calls
+    const rank = new Map(order.map((id, i) => [id, i]));
+
+    // Pool 1: never held. Pool 2: held, but not yet at a full primal. Pool 3:
+    // already at three or more — dead value right now, so last-resort filler only.
+    const fresh = order.filter((id) => !counts.has(id));
+    const echo = order.filter((id) => {
+      const n = counts.get(id) ?? 0;
+      return n >= 1 && n < PRIMAL.stacksRequired;
+    }).sort((a, b) => (counts.get(b) - counts.get(a)) || (rank.get(a) - rank.get(b)));
+    const spare = order.filter((id) => (counts.get(id) ?? 0) >= PRIMAL.stacksRequired);
+
+    const echoSlots = this.state.pickIndex >= ELEMENT_PICK.echoFromPick ? ELEMENT_PICK.echoSlots : 0;
+    const out = [];
+    const take = (pool, n) => {
+      for (const id of pool) {
+        if (out.length >= ELEMENT_PICK.slots || n <= 0) break;
+        if (out.includes(id)) continue;   // slots must be DISTINCT ids — see Picker.#choose
+        out.push(id); n--;
+      }
+    };
+
+    take(fresh, ELEMENT_PICK.slots - echoSlots);
+    take(echo, echoSlots);
+    // Top-up, in order of usefulness, so the picker always renders exactly three.
+    // With six elements and at most three slots these three passes can never
+    // under-fill, which is what lets Picker render the roll verbatim.
+    take(fresh, ELEMENT_PICK.slots);
+    take(echo, ELEMENT_PICK.slots);
+    take(spare, ELEMENT_PICK.slots);
+
     return out.map((id) => ELEMENTS[id]);
+  }
+
+  /** How many of `id` the player holds. */
+  elementCount(id) {
+    let n = 0;
+    for (const e of this.state.elements) if (e === id) n++;
+    return n;
+  }
+
+  /**
+   * Remove PRIMAL.stacksConsumed copies of `id` from state.elements.
+   * MUST be called only after every placement check has passed — a refused build
+   * that has already eaten two stacks is unrecoverable and invisible.
+   */
+  #spendStacks(id) {
+    for (let k = 0; k < PRIMAL.stacksConsumed; k++) {
+      const i = this.state.elements.lastIndexOf(id);
+      if (i >= 0) this.state.elements.splice(i, 1);
+    }
+  }
+
+  #refundStacks(id) {
+    for (let k = 0; k < PRIMAL.stacksConsumed; k++) this.state.elements.push(id);
   }
 
   /**
@@ -401,12 +491,14 @@ export class Game {
 
   /**
    * Why can't a tower go at (c,r)? One of
-   * 'valid' | 'occupied' | 'creep' | 'seal' | 'poor'.
+   * 'valid' | 'occupied' | 'creep' | 'seal' | 'stacks' | 'poor'.
    *
    * Order matters and is not arbitrary: the reasons are ranked by how
    * fundamental they are, so the player is told about the wall before the price.
    * Being told "not enough gold" about a cell that also happens to be sealed
    * would send them off to earn gold for a placement that will still be refused.
+   * A stack shortfall sits above 'poor' for the same reason and one stronger: no
+   * amount of gold fixes it, so quoting a price would be a lie.
    */
   placementReason(c, r) {
     if (!this.grid.canPlaceTower(c, r)) return 'occupied';
@@ -416,6 +508,8 @@ export class Game {
     if (this.creeps.blockedByFootprint(c, r)) return 'creep';
     if (this.path.wouldBlock(c, r)) return 'seal';
     const def = towerDef(this.selectedBuild);
+    if (def?.kind === 'primal'
+        && this.elementCount(def.element) < PRIMAL.stacksRequired) return 'stacks';
     if (def && this.state.gold < def.levels[0].cost) return 'poor';
     return 'valid';
   }
@@ -442,7 +536,16 @@ export class Game {
       } else {
         this.arena.setSealPreview(null);
       }
-      this.hud.showPlacementHint(reason, this._pointer);
+      // THE SECOND CONFIRMATION FOR A PRIMAL, and deliberately not a modal: a
+      // modal inside a prep countdown is hostile. A valid primal placement is
+      // the one 'valid' outcome that still gets a hint, because the click is
+      // about to spend two element stacks and nothing else on the board does
+      // that. The card and the tooltip say it too; this says it under the cursor
+      // at the instant of the click.
+      const commit = reason === 'valid' && def.kind === 'primal'
+        ? `Commit ${PRIMAL.stacksConsumed}× ${ELEMENTS[def.element].glyph}`
+        : null;
+      this.hud.showPlacementHint(commit ? 'commit' : reason, this._pointer, commit);
 
       const centre = this.grid.towerCentreToWorld(a.c, a.r, {});
       this.arena.setRangeIndicator(centre.x, centre.z, def.levels[0].range, def.color);
@@ -502,6 +605,15 @@ export class Game {
     }
     if (this.state.gold < cost) { this.hud.warn(PLACEMENT_TEXT.poor.msg); this.audio.play('deny'); return false; }
 
+    // Last, and only once every structural refusal above has passed: a build
+    // that is going to be denied must never have eaten two stacks on the way.
+    if (def.kind === 'primal') {
+      if (this.elementCount(def.element) < PRIMAL.stacksRequired) {
+        this.hud.warn(PLACEMENT_TEXT.stacks.msg, 'bad'); this.audio.play('deny'); return false;
+      }
+      this.#spendStacks(def.element);
+    }
+
     this.state.gold -= cost;
     const t = this.towers.create(key, 0, c, r);
     this.path.rebuild();
@@ -516,9 +628,13 @@ export class Game {
     this.rig.addShake(0.08);
     const centre = this.grid.towerCentreToWorld(c, r, {});
     this.fx.explosion(centre.x, 0.3, centre.z, 1.2, [0.6, 0.55, 0.45]);
+    // Mandatory rather than cosmetic for a primal: the card must disappear on
+    // the same frame the stacks are spent.
     this.hud.refreshBuildBar();
 
-    if (!this.#canAfford(key)) this.setBuildSelection(null);
+    // A primal always re-locks itself (3 - 2 = 1), so the piece in hand is now
+    // unbuildable and must be dropped rather than left queued on the cursor.
+    if (def.kind === 'primal' || !this.#canAfford(key)) this.setBuildSelection(null);
     return !!t;
   }
 
@@ -560,6 +676,17 @@ export class Game {
     }
     const cost = this.convertCost(key);
     if (this.state.gold < cost) { this.hud.warn('Not enough gold'); this.audio.play('deny'); return false; }
+
+    // Arming a foundation into a primal is allowed and needs no new economics:
+    // (900 - 20) * 0.75 = 660, so the route costs 20 + 660 = 680 and selling
+    // refunds 0.75 * 900 = 675. The 5-gold loss is the identical constant every
+    // tower already pays on this route (paid = 0.75C + 5, refund = 0.75C).
+    if (def.kind === 'primal') {
+      if (this.elementCount(def.element) < PRIMAL.stacksRequired) {
+        this.hud.warn(PLACEMENT_TEXT.stacks.msg, 'bad'); this.audio.play('deny'); return false;
+      }
+      this.#spendStacks(def.element);
+    }
 
     const { c, r } = t;
     this.state.gold -= cost;
@@ -622,6 +749,13 @@ export class Game {
     const refund = Math.floor(spent * ECONOMY.sellRefund);
     this.state.gold += refund;
     this.fx.explosion(t.x, 1.2, t.z, 1.4, [0.9, 0.8, 0.6]);
+    // Returning the stacks is not generosity. Without it, a player who raises a
+    // primal and later needs the tile back is permanently two stacks poorer,
+    // which can strand them below a fusion they had already earned.
+    if (t.def.kind === 'primal') {
+      this.#refundStacks(t.def.element);
+      this.hud.warn(`+${PRIMAL.stacksConsumed} ${ELEMENTS[t.def.element].name} stacks returned`, 'good');
+    }
     this.towers.remove(id);
     this.path.rebuild();
     this.arena.markPathDirty();   // see buildTower — repaint the road this frame
@@ -629,6 +763,9 @@ export class Game {
     this.selectTower(null);
     this.audio.play('sell');
     this.hud.floatText(t.x, 2.5, t.z, `+${refund}`, '#ffd766');
+    // Missing until primals existed. A refunded primal's card has to reappear on
+    // the dock in the same frame the stacks come back, not on the next hover.
+    this.hud.refreshBuildBar();
   }
 
   setSpeed(v) { this.state.speed = v; this.hud.refreshTop(); }

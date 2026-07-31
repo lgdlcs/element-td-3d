@@ -1,4 +1,5 @@
-import { ELEMENTS, DUALS, LEGACY_DUAL_IDS, pairKey } from './Elements.js';
+import { ELEMENTS, DUALS, PRIMALS, LEGACY_DUAL_IDS, pairKey } from './Elements.js';
+import { PRIMAL } from '../core/Config.js';
 
 /**
  * Tower stat tables.
@@ -145,7 +146,108 @@ export const FOUNDATION = {
   levels: [{ cost: 20, damage: 0, cooldown: 0, range: 0, speed: 0 }],
 };
 
-export const ALL_TOWERS = { ...PURE_TOWERS, ...DUAL_TOWERS, foundation: FOUNDATION };
+/**
+ * Primal towers. Six entries, two levels each.
+ *
+ * BALANCE STATEMENT, so nobody re-tunes these blind:
+ *   direct DPS (damage/cooldown), mean of the six
+ *     L0  375.2   vs  mean fusion L0  167.1   =  2.25x
+ *     L1  981.9   vs  mean fusion L1  447.7   =  2.19x
+ *   gold efficiency (dps per gold of cumulative cost)
+ *     L1  981.9/3100 = 0.317  vs fusion 447.7/1550 = 0.289  =  +9.6%
+ *
+ * A primal is therefore 2.2x a fusion PER TILE and only 1.1x per gold. That
+ * asymmetry is the whole design: late-game boards run out of tiles with good
+ * coverage long before they run out of gold, so the primal is the answer to "I
+ * have three good tiles left and a boss inbound" and NOT to "how do I out-
+ * economy the board". Raising the gold efficiency turns it into the only
+ * correct purchase in the game.
+ *
+ * Cumulative cost is 900 + 2200 = 3 100, exactly 2x a fully-forged fusion
+ * (1 550) — the mental model to ship is "a primal costs two fusions in gold and
+ * two element stacks on top".
+ *
+ * The six are within +/-4% of each other on direct DPS ON PURPOSE. They are
+ * separated by their signature effect, never by raw numbers, so the choice of
+ * which primal to chase is a choice about the wave you are facing.
+ */
+const PRIMAL_STATS = {
+  // CATACLYSM — a burning field. Fire's pure identity (burn) at 2.5x its best
+  // fusion (Blacksmith L1 burns 145/s; this burns 380/s) plus splash, so the
+  // burn is applied to the whole pack rather than to one body.
+  fire: [
+    { cost: 900,  damage: 260, cooldown: 0.70, range: 11.5, speed: 44,
+      splash: { radius: 3.2, falloff: 0.50 }, burn: { dps: 150, dur: 4 } },
+    { cost: 2200, damage: 640, cooldown: 0.65, range: 12.4, speed: 48,
+      splash: { radius: 3.8, falloff: 0.50 }, burn: { dps: 380, dur: 4 } },
+  ],
+  // MAELSTROM — control, taken to its limit. 0.85 slow is the hardest on the
+  // board (Well L1 is 0.80) and chain 6 is the widest, so it is the only tower
+  // that applies its slow to a whole column at once.
+  water: [
+    { cost: 900,  damage: 190, cooldown: 0.55, range: 12.0, speed: 60,
+      slow: { amt: 0.72, dur: 3.5 }, chain: { count: 4, falloff: 0.75 } },
+    { cost: 2200, damage: 470, cooldown: 0.50, range: 13.0, speed: 65,
+      slow: { amt: 0.85, dur: 4.2 }, chain: { count: 6, falloff: 0.78 } },
+  ],
+  // WORLDROOT — 5.9 shots/s, the fastest weapon in the game (Bloom L1 is 3.8),
+  // with a stacking poison. Its damage is in the DoT it keeps re-applying, not
+  // in the hit, which makes it the anti-swarm answer and terrible against one
+  // fat boss. That is the intended weakness.
+  nature: [
+    { cost: 900,  damage: 76,  cooldown: 0.20, range: 10.6, speed: 70,
+      poison: { dps: 120, dur: 5, stack: true }, splash: { radius: 1.8, falloff: 0.75 } },
+    { cost: 2200, damage: 165, cooldown: 0.17, range: 11.4, speed: 76,
+      poison: { dps: 300, dur: 5, stack: true }, splash: { radius: 2.2, falloff: 0.75 } },
+  ],
+  // TECTONIC — 1520 in one shell, 2.7x Howitzer's 570, over a 5.4 radius, and
+  // it strips 22 armour. The slowest cadence in the game (0.67 shots/s) so it
+  // is a siege piece: devastating on a packed lane, wasted on stragglers.
+  earth: [
+    { cost: 900,  damage: 620,  cooldown: 1.55, range: 10.4, speed: 30,
+      splash: { radius: 4.6, falloff: 0.40 }, armorPen: 12 },
+    { cost: 2200, damage: 1520, cooldown: 1.50, range: 11.2, speed: 32,
+      splash: { radius: 5.4, falloff: 0.40 }, armorPen: 22 },
+  ],
+  // JUDGEMENT — 17.5 range (the board is 52x40; nothing else exceeds 14.5),
+  // pure damage so armour is irrelevant, and the strongest execute in the game.
+  // Projectiles.#impact computes dmg *= 1 + missing * execute * 6, so at 90%
+  // missing HP this multiplies by 3.6x.
+  light: [
+    { cost: 900,  damage: 235, cooldown: 0.62, range: 16.0, speed: 130,
+      damageType: 'pure', execute: 0.20, chain: { count: 2, falloff: 0.85 } },
+    { cost: 2200, damage: 570, cooldown: 0.58, range: 17.5, speed: 140,
+      damageType: 'pure', execute: 0.30, chain: { count: 3, falloff: 0.88 } },
+  ],
+  // OBLIVION — execute plus the only life recovery in the game. `lifesteal` was
+  // declared on earth+nature and implemented NOWHERE; shipping this tower meant
+  // implementing it in Projectiles.#impact, which retroactively makes
+  // Mushroom's advertised "Leech" true as well.
+  dark: [
+    { cost: 900,  damage: 300, cooldown: 0.80, range: 11.0, speed: 40,
+      execute: 0.28, lifesteal: 1, poison: { dps: 90,  dur: 6, stack: true } },
+    { cost: 2200, damage: 760, cooldown: 0.76, range: 11.8, speed: 44,
+      execute: 0.42, lifesteal: 2, poison: { dps: 230, dur: 6, stack: true } },
+  ],
+};
+
+export const PRIMAL_TOWERS = {};
+for (const [el, p] of Object.entries(PRIMALS)) {
+  const e = ELEMENTS[el];
+  PRIMAL_TOWERS[p.id] = {
+    key: p.id,
+    kind: 'primal',
+    element: el,
+    name: `${p.name} Tower`,
+    color: e.color,        // see the note in Elements.js — must be the element hex
+    accent: e.accent,
+    glyph: e.glyph,
+    tagline: p.tagline,
+    levels: PRIMAL_STATS[el],
+  };
+}
+
+export const ALL_TOWERS = { ...PURE_TOWERS, ...DUAL_TOWERS, ...PRIMAL_TOWERS, foundation: FOUNDATION };
 
 /**
  * Resolve a tower key. Accepts the canonical id and also the ids used by an
@@ -155,17 +257,36 @@ export function towerDef(key) {
   return ALL_TOWERS[key] ?? ALL_TOWERS[LEGACY_DUAL_IDS[key]] ?? null;
 }
 
-/** Which towers can the player build given the elements they own? */
+/**
+ * Which towers can the player build given the elements they hold?
+ *
+ * `ownedElements` is Game.state.elements, an array that CAN NOW CONTAIN
+ * DUPLICATES. Everything below that only cares about presence still reads the
+ * distinct keys; the primal branch reads the counts. Passing a Set into this
+ * function silently disables primals forever — every count collapses to 1.
+ *
+ * A PRIMAL BUILD CAN NEVER BREAK A FUSION. Spending PRIMAL.stacksConsumed of
+ * three copies leaves one, and the fusion loops below are derived from
+ * `counts.keys()`, so the element is still held and every pairing survives.
+ * Only the primal itself re-locks. That is why chooseElement/build/sellTower
+ * only ever need hud.refreshBuildBar() and never a fusion rebuild.
+ */
 export function availableTowers(ownedElements) {
-  const owned = new Set(ownedElements);
+  const list = Array.isArray(ownedElements) ? ownedElements : [...ownedElements];
+  const counts = new Map();
+  for (const id of list) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const owned = [...counts.keys()];
+
   const out = [];
   for (const id of owned) if (PURE_TOWERS[id]) out.push(PURE_TOWERS[id]);
-  const list = [...owned];
-  for (let i = 0; i < list.length; i++) {
-    for (let j = i + 1; j < list.length; j++) {
-      const d = DUALS[pairKey(list[i], list[j])];
+  for (let i = 0; i < owned.length; i++) {
+    for (let j = i + 1; j < owned.length; j++) {
+      const d = DUALS[pairKey(owned[i], owned[j])];
       if (d) out.push(DUAL_TOWERS[d.id]);
     }
+  }
+  for (const id of owned) {
+    if ((counts.get(id) ?? 0) >= PRIMAL.stacksRequired) out.push(PRIMAL_TOWERS[PRIMALS[id].id]);
   }
   return out;
 }

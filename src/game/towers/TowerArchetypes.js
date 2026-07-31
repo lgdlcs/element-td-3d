@@ -110,6 +110,19 @@ const PAL = {
   dark:   { stone: 0x552b9c, stone2: 0x8a55d8, metal: 0x2b1650, trim: 0xb56cff },
 };
 
+/**
+ * Primal override of the palette above.
+ *
+ * The same override on all six, so "primal" reads as a CLASS before the element
+ * does: near-black metal everywhere, and the trim pushed to the element's ACCENT
+ * (the brightest hex it owns) so the contrast against that metal is maximal.
+ * Stone is untouched — the element read lives there and in the emissive.
+ */
+const PAL_PRIMAL = {};
+for (const [id, p] of Object.entries(PAL)) {
+  PAL_PRIMAL[id] = { ...p, metal: 0x0e0b12, trim: ELEMENTS[id].accent };
+}
+
 const TAU = Math.PI * 2;
 
 /**
@@ -191,6 +204,35 @@ const SHAFT_LEVEL = 0.18;
 // the ground at 0.30 and earth at 1.20, so the eye reads a different first
 // interval on every family before the shaft has even started.
 // ---------------------------------------------------------------------------
+/**
+ * Six free-standing obelisks planted around the footing, canted 8 degrees
+ * inward, with an emissive sliver on the inner face. Primals only.
+ *
+ * This is the primal read that SURVIVES THE CAMERA. The SHAFT docblock below
+ * proves that towers occlude each other from ~5 units up, which is precisely why
+ * the tell cannot be height — making a primal taller would re-introduce the bug
+ * round 7 spent a whole pass removing. The ring instead sits at 1.15 units on a
+ * radius the neighbouring tile does not reach, under the additive ground pool,
+ * which is visible even when the tower's own body is not.
+ *
+ * 1.86 + 0.19 = 2.05 against a 2.0-unit tile half-width: the ring reaches the
+ * tile edge and no further, exactly like earth's 4.42 plinth does today.
+ */
+function primalRing(P, x) {
+  const p = x.pal;
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * TAU + 0.26;
+    const cx = Math.cos(a) * 1.86, cz = Math.sin(a) * 1.86;
+    P.add(shard(0.19, 1.15, 5, 0.30), {
+      color: p.stone2, mat: MAT.stoneCut, x: cx, z: cz, y: 0.10, ry: a, rz: -0.14,
+    });
+    P.add(taperBox(0.055, 0.035, 0.72, 0.045, 0.03), {
+      color: x.color, mat: MAT.core, emissive: x.emis * 1.35,
+      x: cx * 0.86, z: cz * 0.86, y: 0.52, ry: a, rz: -0.14,
+    });
+  }
+}
+
 const PLINTH = {
   /** ASYMMETRIC — a cracked slab shoved off the tile centre, plus a broken step. */
   fire(P, x) {
@@ -969,6 +1011,10 @@ export function buildTowerSpec(def, level) {
   // element, so the palette lookups below would resolve undefined and throw.
   if (def.kind === 'inert') return buildFoundationSpec(def);
 
+  // A primal reuses its element's PLINTH/BODY/CROWN unchanged — no new family
+  // authoring. What separates it is mass, palette, a second halo, the obelisk
+  // ring and the ground pool; see each site below.
+  const primal = def.kind === 'primal';
   const dual = def.kind === 'dual';
   const parts = dual ? [...def.parts].sort((p, q) => HEAVY[q] - HEAVY[p]) : [def.element, def.element];
   const baseEl = parts[0];
@@ -984,7 +1030,8 @@ export function buildTowerSpec(def, level) {
   // the presence is restored on the pulse instead, because that is the term the
   // firing spike also rides — so raising it lifts idle AND keeps the 10x flash
   // headroom, which raising the geometry term alone would not.
-  const emis = (ELEMENTS[baseEl]?.emissive ?? 2.6) * (0.34 + level * 0.16) * (dual ? 1.15 : 1);
+  const emis = (ELEMENTS[baseEl]?.emissive ?? 2.6) * (0.34 + level * 0.16)
+    * (primal ? 1.45 : dual ? 1.15 : 1);
 
   // Round 3 scale. Art Bible §5 asks 2.5-3.5x the 2x2 footprint (4 world
   // units); a blind Art Director measured the round-2 towers at ~1x and we lost
@@ -995,9 +1042,20 @@ export function buildTowerSpec(def, level) {
   // what an Element TD 2 tower actually is — a big characterful head on a short
   // body. Shrinking both would have produced a small version of the same
   // unreadable object.
-  const mass = (dual ? 1.42 : 1.30) + level * 0.11;
+  //
+  // MASS, NOT HEIGHT, is the primal lever. 1.85 puts the crown ~42% larger than
+  // a fusion's and ~30% larger than a level-2 pure's; the shaft gains only 12%
+  // (hMul below), which keeps the worst case — Primal Light, the tallest family
+  // — at 7.95 units, inside the band the board already occupies. Raising the
+  // shaft instead would walk straight back into the occlusion bug the SHAFT
+  // docblock documents.
+  const mass = (primal ? 1.85 : dual ? 1.42 : 1.30) + level * 0.11;
 
-  const x = { pal: PAL[baseEl], palB: PAL[crownEl], color, accent, emis, level, mass, rand, dual };
+  const x = {
+    pal: primal ? PAL_PRIMAL[baseEl] : PAL[baseEl],
+    palB: primal ? PAL_PRIMAL[crownEl] : PAL[crownEl],
+    color, accent, emis, level, mass, rand, dual, primal,
+  };
 
   // The crown carries the family read as much as the shaft does, so it is
   // scaled to the family too: a squat drum on earth wants to be broad, a needle
@@ -1010,6 +1068,7 @@ export function buildTowerSpec(def, level) {
   const plinthTop = PLINTH[baseEl](B, x);
   const shp = SHAPE[baseEl];
   footing(B, x, shp.foot);
+  if (primal) primalRing(B, x);
   // Round 4 set a flat 6.35 for every element, which is the single line most
   // responsible for "twenty near-identical chess pieces": six different profiles
   // forced into one bounding box read as one profile with six textures. The
@@ -1019,7 +1078,8 @@ export function buildTowerSpec(def, level) {
   // At the old value every tower was tall enough to hide the base of the tower
   // behind it, so the board rendered as one merged mass and no profile could
   // reach the frame.
-  const bodyTop = plinthTop + (SHAFT + level * SHAFT_LEVEL) * shp.h + (dual ? 0.35 : 0);
+  const hMul = shp.h * (primal ? 1.12 : 1);
+  const bodyTop = plinthTop + (SHAFT + level * SHAFT_LEVEL) * hMul + (dual ? 0.35 : 0);
   BODY[baseEl](B, x, plinthTop, bodyTop);
 
   // --- collar (duals only) ------------------------------------------------
@@ -1037,7 +1097,11 @@ export function buildTowerSpec(def, level) {
   // --- crown --------------------------------------------------------------
   const H = new Parts(headY).setElem(color);
   const sig = dual ? SIGNATURE[def.key] : null;
-  const crownCtx = { ...x, pal: PAL[crownEl], mass: mass * (sig ? 1 : (CROWNK[crownEl] ?? 1)) };
+  const crownCtx = {
+    ...x,
+    pal: primal ? PAL_PRIMAL[crownEl] : PAL[crownEl],
+    mass: mass * (sig ? 1 : (CROWNK[crownEl] ?? 1)),
+  };
   const info = sig ? sig(H, crownCtx) : CROWN[crownEl](H, crownCtx);
 
   // Duals that keep a parent crown get a hybrid accent from the base parent so
@@ -1092,6 +1156,19 @@ export function buildTowerSpec(def, level) {
         rx: Math.PI / 2, ry: -a,
       });
     }
+    if (primal) {
+      // A second, larger, counter-read band. Two concentric orbital rings is a
+      // silhouette nothing else on the board has, and it sits at the very top of
+      // the tower — the one zone the gameplay camera never occludes.
+      const rr2 = rr * 1.55;
+      R.add(ring(rr2, 0.038, TAU, 4, 22), { color: 0x0e0b12, mat: MAT.metalDark, rx: Math.PI / 2 });
+      for (let i = 0; i < 4; i++) {
+        R.add(ring(rr2, 0.062, 0.26, 4, 6), {
+          color: i % 2 ? accent : color, mat: MAT.core, emissive: emis * 1.25,
+          rx: Math.PI / 2, ry: -(i / 4) * TAU + 0.4,
+        });
+      }
+    }
     halo = R.build();
   }
 
@@ -1102,7 +1179,10 @@ export function buildTowerSpec(def, level) {
   // wider waist give it thickness from every angle, and cutting the count
   // stops seven of them turning a level-2 dual into confetti.
   // At least one at every level, for the same gate-G6 reason as the halo.
-  const nShards = Math.min(5, 1 + (dual ? 1 : 0) + level * 2);
+  // Seven on a primal — two past the cap every other tower obeys, which is the
+  // point: the orbit is visibly denser and the loop below already handles any
+  // count.
+  const nShards = primal ? 7 : Math.min(5, 1 + (dual ? 1 : 0) + level * 2);
   for (let i = 0; i < nShards; i++) {
     const S = new Parts(headY).setElem(color);
     const big = i % 2 === 0;
@@ -1136,7 +1216,12 @@ export function buildTowerSpec(def, level) {
     // seen on a floor that had just got 2.4x brighter. A 4.5-unit radius spills
     // past the 2x2 footprint and overlaps its neighbours, which is what turns
     // isolated dots into pools between towers.
-    glowRadius: 4.05 + level * 0.28 + (dual ? 0.45 : 0),
+    // The primal term is the largest single cue in this function. 6.2 units at
+    // 0.46 intensity is ~1.5x the radius and ~1.8x the intensity of anything
+    // else on the board and spills onto four neighbouring tiles — and per the
+    // finding above, the pool is the one element cue that reads when the tower
+    // itself is occluded.
+    glowRadius: 4.05 + level * 0.28 + (dual ? 0.45 : 0) + (primal ? 2.15 : 0),
     // NB: every glowIntensity in rounds 1-2 was tuned against a layer that was
     // back-face culled and therefore never drawn (see createGroundGlowMaterial).
     // These are the first values ever chosen by looking at the thing. Roughly
@@ -1146,7 +1231,7 @@ export function buildTowerSpec(def, level) {
     // dark floor vanishes on a light one. In the reference frames the pool is
     // the single strongest element cue — you can name every tower's element
     // from the ground alone, without seeing the tower.
-    glowIntensity: 0.235 + level * 0.065 + (dual ? 0.035 : 0),
+    glowIntensity: 0.235 + level * 0.065 + (dual ? 0.035 : 0) + (primal ? 0.22 : 0),
     runeY: headY + info.top + (level >= 1 ? 0.95 : 0.75),
   };
 }

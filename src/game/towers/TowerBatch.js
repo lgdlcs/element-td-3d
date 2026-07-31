@@ -534,7 +534,8 @@ export class TowerBatch {
       if (!t.inst) continue;
       t._lscore = t.spec?.inert
         ? -1
-        : t.recoil * 3.0 + t.spinup * 0.6 + t.level * 0.15 + (t.def.kind === 'dual' ? 0.3 : 0);
+        : t.recoil * 3.0 + t.spinup * 0.6 + t.level * 0.15
+          + (t.def.kind === 'dual' ? 0.3 : 0) + (t.def.kind === 'primal' ? 0.75 : 0);
     }
 
     // Keep current holders, then let challengers take the weakest slot.

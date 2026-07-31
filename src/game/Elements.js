@@ -133,3 +133,23 @@ export const DUAL_LIST = Object.entries(DUALS).map(([key, v]) => ({
   parts: key.split('+'),
   ...v,
 }));
+
+/**
+ * Primal towers — one per element, the apex of a single element rather than of
+ * a pairing. Colour and accent are DELIBERATELY the element's own hex and not a
+ * bespoke one: ProjectileManager.spawn() resolves its VFX dialect through
+ * ElementLang.resolveFamily(element, color), and an unseen hex would fall
+ * through to familyFromHue() and can bucket wrong. The primal read is carried by
+ * silhouette, emissive and the ground pool (TowerArchetypes), never by hue.
+ */
+export const PRIMALS = {
+  fire:   { id: 'primal_fire',   name: 'Cataclysm',  tagline: 'The ground itself catches, and keeps burning.' },
+  water:  { id: 'primal_water',  name: 'Maelstrom',  tagline: 'A vortex that drags a whole pack to a crawl.' },
+  nature: { id: 'primal_nature', name: 'Worldroot',  tagline: 'Never stops firing. Never stops spreading.' },
+  earth:  { id: 'primal_earth',  name: 'Tectonic',   tagline: 'The heaviest single blow on the board.' },
+  light:  { id: 'primal_light',  name: 'Judgement',  tagline: 'Reaches further than anything, and armour is not a word it knows.' },
+  dark:   { id: 'primal_dark',   name: 'Oblivion',   tagline: 'Devours the wounded and gives you back your lives.' },
+};
+
+/** All six, stable order, for UI grids. */
+export const PRIMAL_LIST = ELEMENT_IDS.map((id) => ({ element: id, ...PRIMALS[id] }));

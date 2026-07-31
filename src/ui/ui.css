@@ -1420,3 +1420,78 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 .end-board li span { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .end-board li b { font-family: var(--font-num); color: var(--gold-hi); }
 .end-board li i { font-style: normal; font-size: 10.5px; color: var(--ink-3); }
+
+/* ===========================================================================
+   PRIMAL TOWERS
+   Three surfaces have to agree on the same 1/3 - 2/3 - 3/3 language: the top-bar
+   pip (always visible), the dock rail (actionable), and the picker card (the
+   moment of the decision). They share the pip element and the `primal-ready`
+   class so a player learns the readout once.
+   =========================================================================== */
+
+/* Top-bar pip: a slow pulse the instant an element reaches three, because the
+   unlock happens on a panel the player is about to close. */
+.el-pip.primal-ready {
+  animation: primalPulse 2.2s var(--ease) infinite;
+}
+.el-pip.primal-ready i { color: var(--gold-hi); border-color: rgba(229, 189, 121, 0.55); }
+@keyframes primalPulse {
+  0%, 100% { box-shadow: 0 0 12px color-mix(in srgb, var(--c) 30%, transparent),
+                         0 0 0 1px color-mix(in srgb, var(--c) 18%, transparent); }
+  50%      { box-shadow: 0 0 22px color-mix(in srgb, var(--c) 65%, transparent),
+                         0 0 0 2px color-mix(in srgb, var(--c) 55%, transparent); }
+}
+
+/* Dock card. The unlocked primal is the only card that carries two numbers — a
+   gold price and a stack price — so the stack badge is pinned top-left, away
+   from the hotkey slot on the right. */
+.tcard.primal {
+  border-color: color-mix(in srgb, var(--c) 32%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 14%, transparent), rgba(255, 255, 255, 0.014));
+}
+.tcard.primal .tc-glyph { font-size: 20px; }
+.tc-stacks {
+  position: absolute; top: 3px; left: 4px;
+  font-size: 8.5px; letter-spacing: -0.02em;
+  color: var(--c); opacity: 0.9;
+}
+.tcard.primal.locked {
+  opacity: 0.6; filter: saturate(0.65);
+  border-style: dashed;
+  cursor: default;
+}
+.tcard.primal.locked:hover { transform: none; }
+.tcard.primal.locked .tc-cost { color: var(--ink-3); }
+.tc-prog { display: flex; gap: 3px; margin-top: 1px; }
+.tc-prog i {
+  width: 9px; height: 3px; border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.tc-prog i.on { background: var(--c); box-shadow: 0 0 6px color-mix(in srgb, var(--c) 70%, transparent); }
+
+/* Tooltip: the stack cost gets the locked-line treatment so it reads as a
+   requirement rather than as flavour. */
+.tip-stacks { line-height: 1.4; }
+
+/* Picker: the repeat card. `dup` (dimmed) is still right for a repeat that
+   leads nowhere; a repeat that completes a Primal is the opposite of dimmed. */
+.pcard.primal-ready {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--c) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent),
+              0 26px 70px color-mix(in srgb, var(--c) 22%, transparent);
+}
+.pc-unlocks.primal-progress .pc-unlock-head i { color: var(--ink-2); }
+.pc-unlocks.primal-progress.ready .pc-unlock-head i { color: var(--gold-hi); letter-spacing: 0.06em; }
+.pc-pips { display: flex; gap: 5px; justify-content: center; margin: 8px 0 4px; }
+.pc-pips i {
+  width: 26px; height: 4px; border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.pc-pips i.on { background: var(--c); box-shadow: 0 0 8px color-mix(in srgb, var(--c) 70%, transparent); }
+.pc-pips i.next { background: color-mix(in srgb, var(--c) 40%, transparent); animation: primalNext 1.4s var(--ease) infinite; }
+@keyframes primalNext { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+/* Codex: a locked primal shows "2 / 3" where a locked fusion shows a struck-out
+   price, so the cost column never quotes gold for a wall gold cannot climb. */
+.cx-cell.primal.locked .cx-cost { color: var(--ink-3); font-variant-numeric: tabular-nums; }
