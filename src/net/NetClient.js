@@ -37,6 +37,12 @@
 /** Contract default. The page is served from 5273 by vite; the ws server is 5274. */
 const DEFAULT_PORT = 5274;
 
+/** Must match WS_PATH in server/index.js. */
+const WS_PATH = '/ws';
+
+/** Ports that mean "vite is serving this page" — dev (5273) and preview (4173). */
+const VITE_PORTS = new Set(['5273', '4173']);
+
 /**
  * How long a connection attempt may sit unresolved. Short on purpose: this
  * number is added to the boot time of a single-player game whenever no server is
@@ -136,12 +142,24 @@ export class NetClient {
   // -- connection ----------------------------------------------------------
 
   /**
-   * Default endpoint, per the contract: `ws://<page hostname>:5274`, overridable
-   * with `?server=ws://host:port`.
+   * The endpoint, in three cases and in this order.
+   *
+   *   1. `?server=` wins, always. It is the only escape hatch for pointing a
+   *      phone at a laptop, or a prod page at a local server.
+   *   2. Production is SAME ORIGIN with the scheme upgraded. The page and the
+   *      socket are one node process behind one Render certificate, so
+   *      `https:` -> `wss:` is not a guess, it is the deployment. Deriving it
+   *      from `location` is also the only thing that makes a Render PREVIEW
+   *      deploy work: those get a fresh hostname per branch and nothing is
+   *      configured for them.
+   *   3. Dev is the exception, and the test is the PORT, not the protocol.
+   *      Under `npm run dev` the page comes from vite on 5273 while the lobby
+   *      server is a separate process on 5274; same-origin there would send the
+   *      upgrade to vite, which answers 400 and leaves the player silently
+   *      offline. Only the two vite ports get redirected.
    *
    * Reads `location` defensively because this module is also loaded by node in
-   * tools/scratch/netcheck.mjs, where `location` does not exist; a bare
-   * `location.hostname` here would be a TypeError at import-adjacent time.
+   * tools/scratch/netcheck.mjs, where `location` does not exist.
    * @returns {string}
    */
   static defaultUrl() {
@@ -150,11 +168,19 @@ export class NetClient {
       const q = new URLSearchParams(loc.search).get('server');
       if (q) return q;
     }
-    // `location.hostname` and not 'localhost': the game is regularly opened from
-    // a phone on the LAN, and hardcoding localhost there points the client at the
-    // phone itself.
-    const host = loc?.hostname || 'localhost';
-    return `ws://${host}:${DEFAULT_PORT}`;
+    if (!loc) return `ws://localhost:${DEFAULT_PORT}${WS_PATH}`;
+
+    const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+    // `location.hostname` and not 'localhost': the game is regularly opened
+    // from a phone on the LAN, and hardcoding localhost points the client at
+    // the phone itself.
+    const host = loc.hostname || 'localhost';
+    if (VITE_PORTS.has(loc.port)) return `${scheme}//${host}:${DEFAULT_PORT}${WS_PATH}`;
+
+    // `loc.host`, not `loc.hostname`: it carries the port when it is not the
+    // scheme default, which is what makes `node server/index.js` + browsing to
+    // http://localhost:5274/ work with no special case.
+    return `${scheme}//${loc.host}${WS_PATH}`;
   }
 
   /**
