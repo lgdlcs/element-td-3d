@@ -342,7 +342,16 @@ body.codex-open #scoreboard { transform: translateX(calc(-100% - 20px)); opacity
    That is the whole point of them sharing a variable: "the blue player" is one
    idea in two places, not two decorations that happen to be near each other.
    --------------------------------------------------------------------------- */
-.sb-row.watchable { cursor: pointer; }
+/*
+ * `pointer-events: auto` is what makes the click WORK, and it has to be here
+ * rather than on the panel: #scoreboard is `pointer-events: none` so a build
+ * click that lands behind it still reaches the board, and that rule swallowed
+ * every click on a row too. The cursor said "clickable", the handler was wired,
+ * the class was on the element, and nothing happened — the event was going
+ * straight through to the terrain. Only rows that are genuinely watchable opt
+ * back in, so a click anywhere else on the panel still falls through.
+ */
+.sb-row.watchable { cursor: pointer; pointer-events: auto; }
 
 .sb-row.watchable:hover,
 .sb-row.watchable:focus-visible {
