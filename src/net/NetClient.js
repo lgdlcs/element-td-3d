@@ -40,8 +40,21 @@ const DEFAULT_PORT = 5274;
 /** Must match WS_PATH in server/index.js. */
 const WS_PATH = '/ws';
 
-/** Ports that mean "vite is serving this page" — dev (5273) and preview (4173). */
+/**
+ * Ports that mean "vite is serving this page" — dev (5273) and preview (4173).
+ *
+ * Only a FALLBACK. The port list alone was wrong: `vite --port 5290` (which is
+ * what every headless harness and every second dev instance uses) is not in it,
+ * so the client resolved the socket to the vite port, found nothing listening
+ * and went silently offline. `import.meta.env.DEV` below is the real test —
+ * it is true for `vite dev` on ANY port and false in a production build. The
+ * list survives for `npm run preview`, which serves the built bundle (DEV
+ * false) from a port the node server is not listening on.
+ */
 const VITE_PORTS = new Set(['5273', '4173']);
+
+/** True under `vite dev`, on any port. Undefined outside a bundle (node harnesses). */
+const IS_VITE_DEV = import.meta.env?.DEV === true;
 
 /**
  * How long a connection attempt may sit unresolved. Short on purpose: this
@@ -262,7 +275,7 @@ export class NetClient {
     // from a phone on the LAN, and hardcoding localhost points the client at
     // the phone itself.
     const host = loc.hostname || 'localhost';
-    if (VITE_PORTS.has(loc.port)) return `${scheme}//${host}:${DEFAULT_PORT}${WS_PATH}`;
+    if (IS_VITE_DEV || VITE_PORTS.has(loc.port)) return `${scheme}//${host}:${DEFAULT_PORT}${WS_PATH}`;
 
     // `loc.host`, not `loc.hostname`: it carries the port when it is not the
     // scheme default, which is what makes `node server/index.js` + browsing to

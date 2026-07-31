@@ -742,7 +742,12 @@ export class Lobby {
       const cls = ['lb-row'];
       if (you) cls.push('you');
       if (p.ready) cls.push('ready');
-      return `<li class="${cls.join(' ')}">
+      // `data-id` so the lobby roster and the in-run leaderboard address players
+      // the same way. There is deliberately NO watch affordance here: this
+      // overlay is only ever visible while room.phase === 'lobby', and `watch`
+      // is refused outside a running room — a clickable row would be an
+      // affordance that always errors.
+      return `<li class="${cls.join(' ')}" data-id="${esc(p.id ?? '')}">
         <span class="lb-slot">${i + 1}</span>
         <span class="lb-name">${esc(p.name)}</span>
         ${p.host ? '<span class="lb-tag host">host</span>' : ''}

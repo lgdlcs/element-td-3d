@@ -39,6 +39,7 @@
  */
 
 import { num, esc } from './uikit.js';
+import { SEAT_COLORS, seatCss } from './seats.js';
 
 /**
  * Sort into leaderboard order and attach a rank. Exported because it is the
@@ -111,6 +112,29 @@ export class Scoreboard {
     this._final = false;
     this.rows = new Map();
 
+    /**
+     * Called with a player id when a watchable row is activated. Toggling is the
+     * CALLER's job: clicking the row you are already watching should stop, and
+     * only the caller knows what is currently subscribed.
+     * @type {?(id: string) => void}
+     */
+    this.onWatch = null;
+    /** Currently watched id, re-applied after every rebuild. See setWatching. */
+    this._watching = null;
+    /**
+     * Seat colour per id, assigned on FIRST SIGHT and never reassigned.
+     *
+     * Not by rank — a colour that changed when someone overtook someone else
+     * would identify nothing. Not by roster index either, because `scores`
+     * carries no promise of a stable order (see rankPlayers' id tiebreak), so
+     * indexing into it would repaint the table every time two players tied.
+     *
+     * It is a LOCAL mnemonic and two clients need not agree on it. Nothing on
+     * the wire carries a colour, and nothing would be improved by adding one.
+     * @type {Map<string, number>}
+     */
+    this._seat = new Map();
+
     root.insertAdjacentHTML('beforeend', /* html */`
       <aside id="scoreboard" aria-label="Live leaderboard" aria-live="off">
         <div class="sb-head">
@@ -140,6 +164,46 @@ export class Scoreboard {
     // twice a second turns a screen reader into a metronome. The panel is a
     // glanceable instrument, and the end-of-run standings are announced by the
     // end card instead.
+
+    // ONE delegated listener each, installed once, never per row. #build()
+    // re-runs on every roster change and rewrites innerHTML; per-row listeners
+    // would leak a full set on every one of those and there would be no moment
+    // at which anyone noticed.
+    this.$list.addEventListener('click', (e) => {
+      const li = e.target.closest?.('.sb-row.watchable');
+      if (li) this.onWatch?.(li.dataset.id);
+    });
+    this.$list.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const li = e.target.closest?.('.sb-row.watchable');
+      if (!li) return;
+      e.preventDefault();          // Space would otherwise also start the wave
+      this.onWatch?.(li.dataset.id);
+    });
+  }
+
+  /** Seat colour for a player id, minted on first sight. @returns {number} */
+  seatColor(id) {
+    const k = String(id);
+    let c = this._seat.get(k);
+    if (c === undefined) {
+      c = SEAT_COLORS[this._seat.size % SEAT_COLORS.length];
+      this._seat.set(k, c);
+    }
+    return c;
+  }
+
+  /**
+   * Mark which row is being watched, or none.
+   *
+   * MUST be re-applied at the end of #render(): #build() wipes innerHTML
+   * whenever the roster signature changes, and would otherwise drop the active
+   * marker silently — the player would still be watching, with nothing on the
+   * panel saying so and nothing to click to stop.
+   */
+  setWatching(id) {
+    this._watching = id == null ? null : String(id);
+    for (const [pid, r] of this.rows) r.li.classList.toggle('watching', pid === this._watching);
   }
 
   // ---- visibility --------------------------------------------------------
@@ -224,6 +288,10 @@ export class Scoreboard {
    */
   showFinal(standings, youId) {
     this._final = true;
+    // The run is over on every board in the room, so nothing is live to watch.
+    // Clearing here rather than waiting for the server's `unwatch` keeps the
+    // marker from outliving the thing it marks by a round trip.
+    this._watching = null;
     this.#render(rankPlayers(standings), youId, true);
     this.$el.classList.add('is-final');
     this.$title.textContent = 'Final standings';
@@ -309,7 +377,33 @@ export class Scoreboard {
       // The bar is the score animation. Setting a custom property lets the CSS
       // transition do the interpolation between two relay frames.
       r.bar.style.setProperty('--frac', (p.score / top).toFixed(4));
+
+      // Watchable: someone else, still in the run, and only while the run is
+      // live. Your own row is a no-op the server already refuses, a finished
+      // board is a frozen picture, and once the standings are final there is
+      // nothing live to watch — so the class, the tab stop and the button role
+      // all come off together. An affordance whose only outcome is a server
+      // error is worse than no affordance at all.
+      const canWatch = r.li.classList.contains('other') && !out && !final && !this._final;
+      if (r.watchable !== canWatch) {
+        r.watchable = canWatch;
+        r.li.classList.toggle('watchable', canWatch);
+        if (canWatch) {
+          r.li.tabIndex = 0;
+          r.li.setAttribute('role', 'button');
+          r.li.setAttribute('aria-label', `Watch ${p.name}'s board`);
+        } else {
+          r.li.removeAttribute('tabindex');
+          r.li.removeAttribute('role');
+          r.li.removeAttribute('aria-label');
+        }
+      }
     }
+
+    // #build wipes innerHTML whenever the roster signature changes, so the
+    // active marker has to be re-applied AFTER every render or it disappears
+    // while the player is still watching.
+    this.setWatching(this._watching);
 
     // After the writes, not before: the row count that just changed is what
     // decides whether the panel still clears the rail.
@@ -327,9 +421,13 @@ export class Scoreboard {
     // and it lands in an attribute.
     this.$list.innerHTML = list.map((p) => {
       const mine = p.id === you;
-      // Emitted in rank order, and #render keeps the DOM in rank order from
-      // then on, so no `style="order:"` is needed and the <ol> never lies.
-      return `<li class="sb-row${mine ? ' you' : ''}" data-id="${esc(p.id)}">
+      // The `watchable` affordance is NOT decided here: whether a row can be
+      // watched depends on `finished`, which changes during a run, while
+      // #build only re-runs when the roster SIGNATURE changes. Deciding it here
+      // would leave a dead player's row clickable for the rest of the game.
+      // #render owns it; this only carries the identity and the seat colour.
+      return `<li class="sb-row${mine ? ' you' : ''}${mine ? '' : ' other'}"
+        data-id="${esc(p.id)}" style="--sp-c:${seatCss(this.seatColor(p.id))}">
         <span class="sb-rank">${p.rank}</span>
         <span class="sb-name" title="${esc(p.name)}">${esc(p.name)}</span>
         ${mine ? '<span class="sb-mine">you</span>' : ''}

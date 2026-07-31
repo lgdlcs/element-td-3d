@@ -356,6 +356,13 @@ export class RenderPipeline {
       g.uniforms.uTime.value = elapsed;
       // decay any transient screen shake / flash driven by gameplay
       g.uniforms.uFlash.value = Math.max(0, g.uniforms.uFlash.value - dt * 2.2);
+      // Eased, never set hard: entering and leaving spectate is a ~250ms
+      // transition rather than a cut, which is what stops the mode change from
+      // reading as a one-frame glitch.
+      const want = this._spectateTarget ?? 0;
+      const u = g.uniforms.uSpectate;
+      u.value += (want - u.value) * (1 - Math.exp(-dt * 6));
+      if (Math.abs(want - u.value) < 0.002) u.value = want;
     }
     const gr = this.passes.godrays;
     // Anchor the shafts to a light source that is actually ON SCREEN.
@@ -377,8 +384,24 @@ export class RenderPipeline {
     this.composer.render(dt);
   }
 
+  /**
+   * Fade the spectator wash in on a seat colour, or out.
+   * @param {?number} colorHex sRGB tint, or null to fade the wash out.
+   */
+  setSpectateTint(colorHex) {
+    const g = this.passes.grade;
+    if (!g) return;
+    this._spectateTarget = colorHex == null ? 0 : 1;
+    if (colorHex == null) return;
+    _tint.setHex(colorHex).convertSRGBToLinear();
+    g.uniforms.uSpectateColor.value.set(_tint.r, _tint.g, _tint.b);
+  }
+
   /** Gameplay hook: full-screen colour flash (leak damage, boss spawn...). */
   flash(intensity = 1, color = [1, 0.25, 0.2]) {
+    // Muted around the local simulation while spectating: a leak on a board
+    // that is not on screen must not flash the board that is.
+    if (this.flashMuted) return;
     const g = this.passes.grade;
     if (!g) return;
     g.uniforms.uFlash.value = Math.min(1.5, g.uniforms.uFlash.value + intensity);
@@ -401,6 +424,9 @@ export class RenderPipeline {
  * top end off before ACES can clip it to white, and a fine-grained luminance
  * weighted grain that is perceptible at 200% and gone at 100%.
  */
+/** Scratch for setSpectateTint — the only sRGB->linear conversion in this file. */
+const _tint = new THREE.Color();
+
 const GradeShader = {
   name: 'GradeShader',
   uniforms: {
@@ -476,6 +502,22 @@ const GradeShader = {
     uShoulder: { value: 0.60 },   // where the highlight roll-off starts
     uFlash: { value: 0 },
     uFlashColor: { value: new THREE.Vector3(1, 0.25, 0.2) },
+    /**
+     * Spectator wash. 0 = your own board, 1 = someone else's.
+     *
+     * It lives on the COMPOSITE and not on the ground material because the
+     * board is not only ground: tinting the terrain alone leaves the towers,
+     * creeps, projectiles, particles and decals in their normal colours, which
+     * reads as a rendering bug rather than as a mode. The grade pass is also
+     * where the existing gameplay hook already lives (uFlash), so this is the
+     * established seam for "the whole frame reacts to game state" and it costs
+     * one compare per pixel when off.
+     *
+     * The DOM overlay sits outside the composer and is deliberately untouched:
+     * the chrome is yours, the world is theirs.
+     */
+    uSpectate: { value: 0 },
+    uSpectateColor: { value: new THREE.Vector3(0.29, 0.64, 1.0) },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -488,10 +530,10 @@ const GradeShader = {
     precision highp float;
     uniform sampler2D tDiffuse;
     uniform float uTime, uVignette, uGrain, uAberration, uSaturation, uContrast,
-                  uShoulder, uFlash, uSatRolloff;
+                  uShoulder, uFlash, uSatRolloff, uSpectate;
     uniform vec2 uSatLuma;
     uniform vec2 uResolution;
-    uniform vec3 uLift, uGamma, uGain, uFlashColor;
+    uniform vec3 uLift, uGamma, uGain, uFlashColor, uSpectateColor;
     varying vec2 vUv;
 
     // Interleaved gradient noise - cheap, temporally stable enough, no texture.
@@ -554,6 +596,17 @@ const GradeShader = {
       float chromaW = mix(1.0, uSatRolloff, smoothstep(0.30, 1.25, chroma));
       float satW = 1.0 + (uSaturation - 1.0) * lumaW * chromaW;
       col = vec3(luma) + dev * satW;
+
+      // Spectator wash. Desaturate toward the watched player's seat colour and
+      // drop a little value, weighted toward the frame edge so the centre of the
+      // board stays fully legible — the job is to LABEL the mode, not to make
+      // the opponent's board hard to read.
+      if (uSpectate > 0.0) {
+        float sl = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        vec3 washed = mix(col, vec3(sl) * uSpectateColor, 0.55);
+        float edge = 0.55 + 0.45 * smoothstep(0.0, 0.18, r2);
+        col = mix(col, washed * 0.92, uSpectate * edge);
+      }
 
       // Gameplay flash.
       col += uFlashColor * uFlash * 0.35;

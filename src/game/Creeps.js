@@ -89,14 +89,33 @@ const MAX_CREEPS = 900;
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class CreepManager {
-  constructor(scene, grid, pathfinder) {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.capacity=MAX_CREEPS] pool size. The spectate view
+   *   builds a second manager it never simulates, and 900 slots of typed arrays
+   *   plus six InstancedMeshes sized for them is a lot of memory to reserve for
+   *   a board that is capped at 64 units on the wire (docs/MULTIPLAYER.md).
+   */
+  constructor(scene, grid, pathfinder, opts = {}) {
     this.scene = scene;
     this.grid = grid;
     this.path = pathfinder;
 
-    this.capacity = MAX_CREEPS;
+    this.capacity = opts.capacity ?? MAX_CREEPS;
     this.count = 0;
     this.time = 0;
+
+    /**
+     * When false, update() simulates but writes no instance buffers.
+     *
+     * This is what lets the local run keep going at full rate while the player
+     * watches someone else's board: the army still moves, still takes damage,
+     * still leaks and still ends the run — it simply stops being uploaded to the
+     * GPU, and `group.visible` (setVisible) keeps it off screen. Splitting the
+     * two is deliberate: `visible` alone would still pay the per-frame buffer
+     * writes for an army nobody can see.
+     */
+    this.renderEnabled = true;
 
     // --- state arrays ---
     this.alive = new Uint8Array(this.capacity);
@@ -120,6 +139,19 @@ export class CreepManager {
     this.stepPhase = new Float32Array(this.capacity);
     this.typeIdx = new Uint8Array(this.capacity);
     this.flying = new Uint8Array(this.capacity);
+    /**
+     * Identity that survives a slot reuse.
+     *
+     * The slot index `i` comes off a free list and is recycled within seconds —
+     * two different creeps genuinely share index 7 inside one wave. Anything
+     * that has to correlate a creep across two observations (the spectate
+     * snapshot stream is the only such consumer today) must key on this, or it
+     * lerps a dead Mite into a freshly spawned Colossus.
+     *
+     * 16 bits is not a compromise: a full 55-wave run spawns under 2000 units,
+     * so the wrap at 65535 is unreachable. Zero is reserved as "no creep".
+     */
+    this.uid = new Uint16Array(this.capacity);
     this.bounty = new Float32Array(this.capacity);
     this.slowT = new Float32Array(this.capacity);
     this.slowAmt = new Float32Array(this.capacity);
@@ -131,6 +163,8 @@ export class CreepManager {
     this.progress = new Float32Array(this.capacity);
     this.groundY = new Float32Array(this.capacity);
     this.tint = new Float32Array(this.capacity * 3);   // linear rgb rim colour
+
+    this._nextUid = 1;
 
     this.freeList = [];
     for (let i = this.capacity - 1; i >= 0; i--) this.freeList.push(i);
@@ -278,6 +312,9 @@ export class CreepManager {
     const sz = (-g.rows / 2 + 0.4) * g.cell - offset;
 
     this.alive[i] = 1;
+    // Wrapping past 65535 skips 0, which is reserved for "no creep".
+    this.uid[i] = this._nextUid;
+    this._nextUid = ((this._nextUid + 1) & 0xffff) || 1;
     this.x[i] = sx;
     this.z[i] = sz;
     this.y[i] = t.flying ? 2.8 : 0;
@@ -652,7 +689,7 @@ export class CreepManager {
     this._liveCount = w;
 
     this.rebuildHash();
-    this.#writeInstances();
+    if (this.renderEnabled) this.#writeInstances();
 
     this.particles.update(dt);
     this.gibs.update(dt);
@@ -957,6 +994,19 @@ export class CreepManager {
     this.healthBars.commit(barCount);
     this.contact.commit(contactCount);
   }
+
+  /**
+   * Upload the current state to the GPU without simulating anything.
+   *
+   * The spectate view owns a CreepManager whose arrays are written from
+   * snapshots rather than by update(), so it needs the second half of update()
+   * on its own. Public for exactly that: a manager that is never updated still
+   * has to be drawable.
+   */
+  present() { this.#writeInstances(); }
+
+  /** Show/hide the whole army in one call — see renderEnabled. */
+  setVisible(on) { this.group.visible = !!on; }
 
   /** Highest-progress creep in range — the classic "first" targeting rule. */
   findTarget(x, z, range, { allowGround = true, allowAir = true, mode = 'first' } = {}) {

@@ -102,7 +102,12 @@ export class Game {
       gold: ECONOMY.startGold,
       lives: ECONOMY.startLives,
       wave: 0,
-      elements: [],          // owned element ids
+      elements: [],          // owned element ids — SPENDABLE, primals eat two
+      // Append-only ledger of every element ever chosen from the picker. Same
+      // contents as `elements` until the first primal is built, and then
+      // deliberately different: `elements` is a resource and rollElementChoices
+      // must not read a resource. See its docblock.
+      picks: [],
       pendingElementPicks: 0,
       // Advances only when a pick is committed — see rollElementChoices.
       pickIndex: 0,
@@ -123,6 +128,21 @@ export class Game {
     this.selectedBuild = null;   // tower key queued for placement
     this.selectedTower = null;   // inspected tower id
     this.hover = { c: -99, r: -99, valid: false };
+
+    // --- spectate ---
+    // `spectating` is the ONE flag the rest of the engine reads. It never gates
+    // the simulation — see frame() — only what reaches the screen.
+    this.spectating = false;
+    /** @type {?import('./spectate/SpectateView.js').SpectateView} */
+    this._spectate = null;
+    this._camSave = null;
+    /**
+     * Called when the game leaves spectate on its own (Escape, or the run
+     * ending). main.js owns the subscription and the banner and has no other way
+     * to hear about it.
+     * @type {?(reason: string) => void}
+     */
+    this.onSpectateExit = null;
 
     this.hud = new HUD(this);
     this.#wireCallbacks();
@@ -259,6 +279,11 @@ export class Game {
         this.state.pendingElementPicks++;
       }
       if (this.state.pendingElementPicks > 0) {
+        // A decision on YOUR board needs your board in front of you. The picker
+        // is a modal that has to be answered before the next wave can be
+        // prepared, and answering it over a tinted opponent's maze — with your
+        // own dock folded away behind the spectate class — is incoherent.
+        this.exitSpectate('pick');
         this.state.phase = 'pickElement';
         this.hud.openElementPicker();
       } else {
@@ -279,6 +304,7 @@ export class Game {
   chooseElement(id) {
     if (this.state.pendingElementPicks <= 0) return false;
     this.state.elements.push(id);
+    this.state.picks.push(id);
     this.state.pendingElementPicks--;
     this.state.pickIndex++;
     this.audio.play('elementPick');
@@ -335,21 +361,30 @@ export class Game {
    *     single pickN below. Never call rand() inside a branch that depends on
    *     player state, or two clients with different holdings desync every draw
    *     after the first.
-   *  2. The result is a pure function of (seed, pickIndex, the MULTISET of owned
-   *     elements). It must not depend on the ORDER of state.elements: two players
-   *     who took fire-then-water and water-then-fire hold the same thing and must
-   *     see the same offer.
+   *  2. The result is a pure function of (seed, pickIndex, the MULTISET of
+   *     PICKS). It must not depend on the ORDER of the picks: two players who
+   *     took fire-then-water and water-then-fire have chosen the same thing and
+   *     must see the same offer.
+   *  3. It reads state.picks, NOT state.elements. Those two diverge the moment a
+   *     primal is built, because building one spends two stacks — and counting
+   *     the spendable pool made the offer a function of BUILD decisions too. Two
+   *     players who had picked fire three times got different cards purely
+   *     because one of them had placed the tower: fire fell out of the `spare`
+   *     pool back into `echo`, displacing the third fresh element and with it
+   *     every fusion that element unlocks. Silent, and the exact opposite of
+   *     what this docblock promises.
    */
   rollElementChoices() {
     const counts = new Map();
-    for (const id of this.state.elements) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const id of this.state.picks) counts.set(id, (counts.get(id) ?? 0) + 1);
 
     const rand = rngFor(this.seed, 'elements', this.state.pickIndex);
     const order = pickN(rand, ELEMENT_IDS, ELEMENT_IDS.length);   // exactly 6 rand() calls
     const rank = new Map(order.map((id, i) => [id, i]));
 
-    // Pool 1: never held. Pool 2: held, but not yet at a full primal. Pool 3:
-    // already at three or more — dead value right now, so last-resort filler only.
+    // Pool 1: never picked. Pool 2: picked, but not yet enough for a primal.
+    // Pool 3: already picked three or more — the primal is unlocked, so another
+    // copy adds nothing new, hence last-resort filler only.
     const fresh = order.filter((id) => !counts.has(id));
     const echo = order.filter((id) => {
       const n = counts.get(id) ?? 0;
@@ -469,6 +504,11 @@ export class Game {
 
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
+      // Escape means "get me out of the biggest thing I am in", and while
+      // watching someone else's board that is the mode, not the cursor. Placed
+      // above the switch rather than inside the Escape case so it cannot be
+      // reordered into second place by a later edit.
+      if (e.code === 'Escape' && this.spectating) { this.exitSpectate('key'); return; }
       switch (e.code) {
         case 'Escape': this.setBuildSelection(null); this.selectTower(null); break;
         case 'Space': e.preventDefault(); this.startWaveNow(); break;
@@ -520,6 +560,7 @@ export class Game {
   }
 
   #updateHover() {
+    if (this.spectating) return;      // same reason as #onClick
     const p = this.#groundPoint();
     if (!p) return;
 
@@ -580,6 +621,12 @@ export class Game {
   }
 
   #onClick() {
+    // The board under the cursor is not the board `this.grid` describes. Without
+    // this, a click on the opponent's maze resolves against YOUR grid, selects
+    // whichever of your towers happens to sit at those coordinates, and paints
+    // its range ring on their board — a circle around nothing, over someone
+    // else's tower. The camera stays fully live; only acting on the board stops.
+    if (this.spectating) return;
     const p = this.#groundPoint();
     if (!p) return;
 
@@ -878,7 +925,120 @@ export class Game {
 
   setSpeed(v) { this.state.speed = v; this.hud.refreshTop(); }
 
+  // ---- spectate ---------------------------------------------------------
+
+  /**
+   * Put another player's board on screen. THE LOCAL RUN KEEPS SIMULATING.
+   *
+   * Every line here is about presentation: the local creeps, towers and
+   * projectiles stop writing to the GPU and the tower batch is handed over to
+   * the watched board's proxies, but `#step` is untouched and still runs at the
+   * same rate. A player who watches an opponent for two minutes loses no wave,
+   * no life and no gold — which is the one requirement that makes the feature
+   * usable at all.
+   *
+   * @param {import('./spectate/SpectateView.js').SpectateView} view
+   */
+  enterSpectate(view) {
+    if (this.spectating) {
+      // Switching targets. The caller has ALREADY re-pointed the view at the new
+      // player (SpectateView.begin), so running the full exit here would tear
+      // down the board it has just set up — and re-running the enter would
+      // detach an already-detached local board. Only the presentation differs
+      // between two watched players.
+      this._spectate = view;
+      this.fx.attachCreeps(view.creeps);
+      this.pipeline.setSpectateTint(view.color);
+      return;
+    }
+    this.setBuildSelection(null);
+    this.selectTower(null);
+    this._camSave = this.rig.save();
+    this.spectating = true;
+    this._spectate = view;
+
+    this.creeps.renderEnabled = false;
+    this.creeps.setVisible(false);
+    this.towers.renderEnabled = false;
+    this.projectiles.renderEnabled = false;
+    for (const t of this.towers.towers) this.towers.batch.detach(t);
+
+    // PathMask checksums the grid every frame and re-cuts the painted road on
+    // its own, so re-pointing these two is the whole of "the terrain follows the
+    // watched maze". refreshOccupancy() makes it happen this frame rather than
+    // next.
+    this.arena.grid = view.grid;
+    this.arena.mask.grid = view.grid;
+    this.arena.refreshOccupancy();
+    this.arena.setGridVisible(false);
+    this.arena.setRangeIndicator(0, 0, 0);
+    this.arena.setHover(-99, -99, 'none');
+    this.arena.setSealPreview(null);
+
+    // The status-VFX layer follows the board that is ON SCREEN: without this,
+    // your own burning creeps would keep throwing embers over someone else's
+    // board while theirs burned silently. fx.update() is not muted (particles
+    // in flight must finish), so this is the only way to get it right.
+    this.fx.attachCreeps(view.creeps);
+
+    // Centre on the board rather than wherever the player had panned their own
+    // maze. Zoom and orbit are deliberately kept: the camera stays fully live
+    // while spectating, and stealing the framing would undo a gesture they made
+    // one second ago.
+    this.rig.focus(0, 0);
+
+    this.hud.setSpectating(true);
+    this.pipeline.setSpectateTint(view.color);
+  }
+
+  /** @param {string} [reason] passed through to onSpectateExit */
+  exitSpectate(reason = 'exit') {
+    if (!this.spectating) return;
+    this._spectate.end();
+    this._spectate = null;
+    this.spectating = false;
+
+    // attach() hands out fresh batch instances whose matrices are still the
+    // identity, and resets `rise` to 0 to replay the placement animation. Both
+    // are wrong here. These towers were already standing before the player
+    // looked away, so seat them SETTLED rather than making the whole maze climb
+    // out of the ground again; and the matrices have to be written NOW, because
+    // batch.update() is only reachable from TowerManager.update() inside #step(),
+    // which FROZEN_PHASES skips — and the two most common ways out of spectate
+    // are #gameOver() and #victory(). Without this the end card comes up over
+    // every local tower stacked at the world origin at identity scale, with the
+    // glow and rune layers still laid out for the opponent's board because
+    // _layoutDirty is only consumed by that same update().
+    for (const t of this.towers.towers) {
+      this.towers.batch.attach(t);
+      t.rise = 1;
+      t.riseY = 0;
+      t.baseDirty = true;
+    }
+    this.towers.renderEnabled = true;
+    this.projectiles.renderEnabled = true;
+    this.creeps.renderEnabled = true;
+    this.creeps.setVisible(true);
+    this.towers.batch.update(this.towers.towers, 0, this.elapsed);
+
+    this.arena.grid = this.grid;
+    this.arena.mask.grid = this.grid;
+    this.arena.refreshOccupancy();
+
+    this.fx.attachCreeps(this.creeps);
+    this.rig.restore(this._camSave);
+    this._camSave = null;
+
+    this.hud.setSpectating(false);
+    this.pipeline.setSpectateTint(null);
+    this.onSpectateExit?.(reason);
+  }
+
   #gameOver() {
+    // BEFORE showEnd. The end card is the thing that says the run is over, and
+    // showing it over a tinted opponent's board is incoherent — the player would
+    // be reading their own result on top of someone else's maze.
+    this.exitSpectate('over');
     this.state.phase = 'gameover';
     this.hud.showEnd(false);
     this.audio.play('gameover');
@@ -886,6 +1046,7 @@ export class Game {
   }
 
   #victory() {
+    this.exitSpectate('over');
     this.state.phase = 'victory';
     this.hud.showEnd(true);
     this.audio.play('victory');
@@ -905,8 +1066,22 @@ export class Game {
     const dt = Math.min(rawDt, 0.1);
     this.elapsed += dt;
 
+    // The local board is not on screen while spectating, so its explosions,
+    // camera shake and screen flashes would land on someone else's board as
+    // unattributable noise. Muted around the SIMULATION ONLY, never around the
+    // whole frame: the spectate pass below emits through the same effect system
+    // a few lines later, and fx.update() has to stay unmuted so particles
+    // already in flight can finish.
+    const mute = this.spectating;
+    if (mute) { this.fx.muted = true; this.rig.shakeMuted = true; this.pipeline.flashMuted = true; }
+
     // 'lobby' is in this list for the same reason as the end states: the world
     // still renders and the camera still drifts, but nothing simulates.
+    //
+    // SPECTATING IS NOT IN THAT LIST AND MUST NEVER BE. Watching an opponent
+    // costs the player nothing: the wave clock, the creeps, the towers, the
+    // damage and the leaks all keep running at exactly the rate they would if
+    // this loop had never heard of the feature.
     if (!this.state.paused && !FROZEN_PHASES.has(this.state.phase)) {
       const steps = this.state.speed;
       this.accumulator += dt * steps;
@@ -918,6 +1093,12 @@ export class Game {
       }
       if (this.accumulator > SIM.dt * 4) this.accumulator = 0;
     }
+
+    if (mute) { this.fx.muted = false; this.rig.shakeMuted = false; this.pipeline.flashMuted = false; }
+
+    // `this.spectating` re-read rather than `mute`: #step can end the run, and
+    // #gameOver leaves spectate synchronously.
+    if (this.spectating) this._spectate.update(dt);
 
     this.rig.update(dt);
     this.arena.update(dt, this.elapsed);

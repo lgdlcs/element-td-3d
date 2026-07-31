@@ -196,7 +196,18 @@ Because the server does not validate, **the spectator must**, and its validation
 is a hard gate: a frame failing any check is dropped **whole**, never partially
 applied — a half-applied snapshot corrupts the interpolation state and the failure
 then looks like a rendering bug. The snapshot body is the client's own contract
-and is documented with the spectate renderer, not here.
+and is documented with the spectate renderer, not here: see the docblock and
+`validateSnapshot()` in `src/game/spectate/SpectateCodec.js`, which is the single
+place both the encoder and the gate are written down.
+
+Two properties of that body are worth knowing from this side, because they are
+what keep the bandwidth figures above true. Fourteen of the twenty per-creep
+fields are **not sent** — they are pure functions of position, time and type, and
+the watcher re-derives them with the simulation's own constants. And nothing
+about projectiles, muzzle flashes, impacts, chains or death explosions is on the
+wire at all: the watcher has tower positions, the same stat tables and creep
+positions, so it re-fires the board locally (`SpectateView`). That is where
+"essentially the entire visual life of a board, for zero bytes" comes from.
 
 ### Bounds
 
