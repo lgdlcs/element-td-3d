@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ELEMENTS, ELEMENT_ORDER, hex, num, clamp, esc, PLACEMENT_TEXT } from './uikit.js';
+import { ELEMENTS, ELEMENT_ORDER, PRIMALS, PRIMAL, hex, num, clamp, esc, PLACEMENT_TEXT } from './uikit.js';
 import { waveDef, TOTAL_WAVES } from '../game/Waves.js';
 import { towerDef } from '../game/TowerDefs.js';
 import { CREEP_TYPES } from '../game/Creeps.js';
@@ -109,11 +109,18 @@ export class HUD {
       this._elSig = want;
       const counts = new Map();
       for (const id of s.elements) counts.set(id, (counts.get(id) ?? 0) + 1);
+      // The persistent 1/3 - 2/3 - 3/3 readout. The dock rail is the actionable
+      // surface; this is the one that is always on screen, so the stack count is
+      // legible from the top bar without opening anything.
       this.nodes.elements.innerHTML = ELEMENT_ORDER.map((id) => {
         const e = ELEMENTS[id];
         const n = counts.get(id) ?? 0;
-        return `<span class="el-pip${n ? ' on' : ''}" style="--c:${hex(e.color)}"
-                  title="${e.name}${n ? '' : ' — not bound'}" aria-label="${e.name}${n ? '' : ' not bound'}">
+        const ready = n >= PRIMAL.stacksRequired;
+        const title = !n ? `${e.name} — not bound`
+          : ready ? `${e.name} ×${n} — ${PRIMALS[id].name} unlocked`
+          : `${e.name} ×${n} — ${PRIMAL.stacksRequired - n} more for ${PRIMALS[id].name}`;
+        return `<span class="el-pip${n ? ' on' : ''}${ready ? ' primal-ready' : ''}" style="--c:${hex(e.color)}"
+                  title="${esc(title)}" aria-label="${esc(title)}">
           ${e.glyph}${n > 1 ? `<i>${n}</i>` : ''}</span>`;
       }).join('');
     }
@@ -156,8 +163,13 @@ export class HUD {
    *
    * Silent on the valid case: a hint that is always on stops being read, and the
    * green pad already says yes. `reason === null` hides it entirely.
+   *
+   * `label` overrides the canned headline. Only the primal commit hint uses it,
+   * because that headline names an element and a stack count that PLACEMENT_TEXT
+   * cannot know. It is part of the cache signature or the panel would keep the
+   * first element's text after the player queues a different primal.
    */
-  showPlacementHint(reason, pointer) {
+  showPlacementHint(reason, pointer, label = null) {
     const el = this.nodes.placeHint;
     if (!reason || reason === 'valid') {
       el.classList.remove('on');
@@ -165,10 +177,11 @@ export class HUD {
       return;
     }
     const t = PLACEMENT_TEXT[reason] ?? PLACEMENT_TEXT.occupied;
-    if (this._hintFor !== reason) {
-      this._hintFor = reason;
+    const sig = label ? `${reason}:${label}` : reason;
+    if (this._hintFor !== sig) {
+      this._hintFor = sig;
       el.className = `on h-${t.tone}`;
-      el.innerHTML = `<b>${esc(t.label)}</b>${t.hint ? `<i>${esc(t.hint)}</i>` : ''}`;
+      el.innerHTML = `<b>${esc(label ?? t.label)}</b>${t.hint ? `<i>${esc(t.hint)}</i>` : ''}`;
     }
     if (pointer) {
       // Offset up-right of the cursor, then flipped near the right edge so the
@@ -310,7 +323,7 @@ export class HUD {
           <div><b>${num(s.killed)}</b><span>Kills</span></div>
           <div><b>${num(s.leaked)}</b><span>Leaked</span></div>
           <div><b>${this.game.towers.towers.length}</b><span>Towers</span></div>
-          <div><b>${s.elements.length}</b><span>Elements</span></div>
+          <div><b>${new Set(s.elements).size}</b><span>Elements</span></div>
         </div>
         <button id="end-again">Play again</button>
       </div>`;

@@ -49,6 +49,44 @@ export const ECONOMY = {
    * deciding later is the rewarded line rather than the merely cost-neutral one.
    */
   armDiscount: 0.25,
+  /**
+   * Life ceiling. Nothing in the game moved lives upward until Primal Dark's
+   * leech; without a cap a board of Oblivions turns the life counter into a
+   * second, unbounded currency and leaks stop meaning anything.
+   */
+  maxLives: 50,
+};
+
+/**
+ * Element picker offer shape.
+ *
+ * rollElementChoices() used to offer only elements you did NOT own, which made
+ * three copies of one element unreachable before wave 30 and Primal towers
+ * therefore unreachable at all. The "echo slot" is the fix: from the second
+ * draw onward one of the three cards may repeat an element you already hold.
+ *
+ * Every value here feeds a function of (seed, pickIndex, owned counts) only.
+ * Changing them changes the offer for EVERY player in a room identically, which
+ * is the only property that has to hold.
+ */
+export const ELEMENT_PICK = {
+  slots: 3,          // cards on the picker; the roll always returns exactly this many
+  echoFromPick: 1,   // pickIndex at which the echo slot opens (0 = the free opening pick)
+  echoSlots: 1,      // how many of the `slots` cards may repeat an owned element
+};
+
+/**
+ * Primal towers. One per element, unlocked by holding `stacksRequired` copies of
+ * that element, and each BUILD spends `stacksConsumed` of them — so the tower
+ * re-locks the moment you raise one and you must draw the element again.
+ *
+ * Selling returns the spent stacks in full (see Game.sellTower). Without that a
+ * player could permanently strand themselves below a fusion they had already
+ * earned, which is a trap, not a cost.
+ */
+export const PRIMAL = {
+  stacksRequired: 3,
+  stacksConsumed: 2,
 };
 
 /**

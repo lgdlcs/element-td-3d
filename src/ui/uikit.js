@@ -6,8 +6,9 @@
  * Nothing here touches the game object — everything is pure.
  */
 
-import { ELEMENTS, DUALS, pairKey } from '../game/Elements.js';
-import { PURE_TOWERS, DUAL_TOWERS } from '../game/TowerDefs.js';
+import { ELEMENTS, DUALS, PRIMALS, pairKey } from '../game/Elements.js';
+import { PURE_TOWERS, DUAL_TOWERS, PRIMAL_TOWERS } from '../game/TowerDefs.js';
+import { PRIMAL } from '../core/Config.js';
 
 // ---------------------------------------------------------------------------
 // primitives
@@ -78,7 +79,7 @@ export function specialsOf(lv) {
 
 /** One-line summary of what a tower *does*, for cards with no tagline. */
 export function summarise(def) {
-  if (def.kind === 'pure') return def.tagline;
+  if (def.kind === 'pure' || def.kind === 'primal') return def.tagline;
   return FUSION_LORE[def.key] ?? specialsOf(def.levels[0]).map((s) => s.label).join(' · ');
 }
 
@@ -128,7 +129,13 @@ export const PLACEMENT_TEXT = {
   occupied: { tone: 'warn', label: 'Occupied',         msg: 'Something is already there',   hint: 'this ground is already taken' },
   creep:    { tone: 'warn', label: 'Creeps in the way',  msg: 'A creep is standing there',    hint: 'wait for it to walk on' },
   seal:     { tone: 'bad',  label: 'Seals the maze',   msg: 'That would seal the maze',     hint: 'the creeps would have no route left' },
+  stacks:   { tone: 'bad',  label: 'Stacks spent',     msg: 'You no longer hold three of that element',
+              hint: `a Primal needs ${PRIMAL.stacksRequired} stacks and spends ${PRIMAL.stacksConsumed}` },
   poor:     { tone: 'gold', label: 'Not enough gold',  msg: 'Not enough gold',              hint: '' },
+  // The only *valid* placement that still speaks up — a primal click spends two
+  // element stacks and nothing else on the board does. The label is written by
+  // the caller (it names the element), so this entry carries only the tone.
+  commit:   { tone: 'gold', label: 'Commit stacks',    msg: '',                             hint: 'returned in full if you sell it' },
 };
 
 /** Short, evocative creep descriptions for the threat panel. */
@@ -170,13 +177,43 @@ export const TOWER_COLUMNS = ELEMENT_ORDER.map((id) => ({
     .filter(([, d]) => d.damage === id)
     .map(([key, d]) => ({ ...DUAL_TOWERS[d.id], pair: key, parts: key.split('+') }))
     .sort((a, b) => a.name.localeCompare(b.name)),
+  primal: PRIMAL_TOWERS[PRIMALS[id].id],
 }));
 
-/** Lock state of a tower given the owned element set. */
+/** Total towers in the game — the Tower Table's denominator. */
+export const TOWER_TOTAL =
+  Object.keys(PURE_TOWERS).length + Object.keys(DUAL_TOWERS).length + Object.keys(PRIMAL_TOWERS).length;
+
+/**
+ * Element id -> how many copies are held. Accepts the raw `state.elements`
+ * array (which can contain duplicates), a Set, or an already-built Map.
+ *
+ * Every lock test in the UI goes through this because a Set collapses three
+ * copies of Fire to one, which reads as "primal not unlocked" forever.
+ */
+export function countElements(list) {
+  if (list instanceof Map) return list;
+  const m = new Map();
+  for (const id of list) m.set(id, (m.get(id) ?? 0) + 1);
+  return m;
+}
+
+/**
+ * Lock state of a tower given what the player holds.
+ *
+ * A primal is gated on a COUNT, not on membership, so `owned` must carry counts
+ * — pass the array or a Map, never a Set built from it. `have`/`need` are only
+ * meaningful for primals and are what the codex renders as "2 / 3".
+ */
 export function lockState(def, owned) {
-  const set = owned instanceof Set ? owned : new Set(owned);
+  const counts = countElements(owned);
   const parts = def.kind === 'dual' ? def.parts : [def.element];
-  const missing = parts.filter((p) => !set.has(p));
+  if (def.kind === 'primal') {
+    const have = counts.get(def.element) ?? 0;
+    const unlocked = have >= PRIMAL.stacksRequired;
+    return { parts, missing: unlocked ? [] : [def.element], unlocked, have, need: PRIMAL.stacksRequired };
+  }
+  const missing = parts.filter((p) => !counts.has(p));
   return { parts, missing, unlocked: missing.length === 0 };
 }
 
@@ -185,4 +222,4 @@ export function elementCss(id) {
   return `--c:${hex(e.color)};--a:${hex(e.accent)}`;
 }
 
-export { ELEMENTS, DUALS, PURE_TOWERS, DUAL_TOWERS, pairKey };
+export { ELEMENTS, DUALS, PRIMALS, PURE_TOWERS, DUAL_TOWERS, PRIMAL_TOWERS, PRIMAL, pairKey };

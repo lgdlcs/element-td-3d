@@ -14,14 +14,17 @@
  */
 
 import {
-  ELEMENTS, ELEMENT_ORDER, PURE_TOWERS, TOWER_COLUMNS, lockState,
+  ELEMENTS, ELEMENT_ORDER, PRIMALS, PRIMAL, PURE_TOWERS, TOWER_COLUMNS, TOWER_TOTAL,
+  lockState, countElements,
   hex, num, dps, dotDps, specialsOf, summarise, esc,
 } from './uikit.js';
 import { towerDef as towerDefOf, FOUNDATION } from '../game/TowerDefs.js';
 
 const HOTKEYS = ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY'];
 const HOTKEY_LABEL = ['Q', 'W', 'E', 'R', 'T', 'Y'];
-const MAX_RANGE = 15;
+// 18, not 15: Judgement reaches 17.5 and its ring would otherwise be drawn
+// outside the tooltip SVG's viewBox.
+const MAX_RANGE = 18;
 let UID = 0;
 
 export class BuildBar {
@@ -37,7 +40,7 @@ export class BuildBar {
         <div class="codex-head">
           <div>
             <h3>Tower Table</h3>
-            <p>All twenty-one towers, filed under the element they damage with. Plan your picks here.</p>
+            <p>All twenty-seven towers, filed under the element they damage with. Plan your picks here.</p>
           </div>
           <button class="codex-close" aria-label="Close tower table (Escape)">✕</button>
         </div>
@@ -65,9 +68,14 @@ export class BuildBar {
           <div class="dock-rail" id="dock-fusion"></div>
         </div>
         <div class="dock-rule"></div>
+        <div class="dock-group" id="dock-primal-group">
+          <span class="dock-label">Primal</span>
+          <div class="dock-rail" id="dock-primal"></div>
+        </div>
+        <div class="dock-rule"></div>
         <button id="codex-toggle" aria-expanded="false" aria-controls="codex">
           <span class="ct-mark">▤</span>
-          <span class="ct-text"><b>Tower Table</b><i id="ct-count">0 of 21</i></span>
+          <span class="ct-text"><b>Tower Table</b><i id="ct-count">0 of ${TOWER_TOTAL}</i></span>
           <kbd>F</kbd>
         </button>
         <button id="send-wave" class="primary">
@@ -83,6 +91,8 @@ export class BuildBar {
     this.$pure = root.querySelector('#dock-pure');
     this.$fusion = root.querySelector('#dock-fusion');
     this.$fusionGroup = root.querySelector('#dock-fusion-group');
+    this.$primal = root.querySelector('#dock-primal');
+    this.$primalGroup = root.querySelector('#dock-primal-group');
     this.$toggle = root.querySelector('#codex-toggle');
     this.$count = root.querySelector('#ct-count');
     this.$codex = root.querySelector('#codex');
@@ -184,7 +194,10 @@ export class BuildBar {
   }
 
   #renderCodex() {
-    const owned = new Set(this.game.state.elements);
+    // Counts, not a Set: a primal cell is gated on holding three of an element
+    // and a Set collapses three Fires to one, which would lock every primal in
+    // the table forever.
+    const counts = countElements(this.game.state.elements);
     const gold = this.game.state.gold;
     // The table is clickable and shares the dock's click handler, so it has to
     // quote the same price the click will charge.
@@ -192,23 +205,25 @@ export class BuildBar {
 
     this.$grid.innerHTML = TOWER_COLUMNS.map((col) => {
       const e = col.element;
-      const has = owned.has(col.id);
-      return `<div class="cx-col${has ? ' on' : ''}" style="--c:${hex(e.color)};--a:${hex(e.accent)}">
+      const n = counts.get(col.id) ?? 0;
+      return `<div class="cx-col${n ? ' on' : ''}" style="--c:${hex(e.color)};--a:${hex(e.accent)}">
         <div class="cx-col-head">
           <span class="cx-orb">${e.glyph}</span>
           <b>${e.name}</b>
-          <i>${has ? 'bound' : 'not bound'}</i>
+          <i>${n ? `bound ×${n}` : 'not bound'}</i>
         </div>
         <div class="cx-tier">Elemental</div>
-        ${this.#cell(col.pure, owned, gold, arming)}
+        ${this.#cell(col.pure, counts, gold, arming)}
         <div class="cx-tier">Fusion</div>
-        ${col.fusions.map((f) => this.#cell(f, owned, gold, arming)).join('')}
+        ${col.fusions.map((f) => this.#cell(f, counts, gold, arming)).join('')}
+        <div class="cx-tier">Primal</div>
+        ${this.#cell(col.primal, counts, gold, arming)}
       </div>`;
     }).join('');
   }
 
-  #cell(def, owned, gold, arming = false) {
-    const { parts, missing, unlocked } = lockState(def, owned);
+  #cell(def, counts, gold, arming = false) {
+    const { parts, missing, unlocked, have, need } = lockState(def, counts);
     const cost = arming ? this.game.convertCost(def.key) : def.levels[0].cost;
     const afford = unlocked && gold >= cost;
     const cls = ['cx-cell', def.kind];
@@ -219,14 +234,22 @@ export class BuildBar {
 
     const name = def.name.replace(' Tower', '');
     const glyphs = parts.map((p) =>
-      `<b class="${owned.has(p) ? 'have' : ''}" style="color:${hex(ELEMENTS[p].color)}">${ELEMENTS[p].glyph}</b>`).join('');
+      `<b class="${counts.has(p) ? 'have' : ''}" style="color:${hex(ELEMENTS[p].color)}">${ELEMENTS[p].glyph}</b>`).join('');
+
+    // A locked primal is not missing an element — it is missing STACKS of one it
+    // may well already hold, so "needs Fire" would be a lie to a player looking
+    // at their own Fire tower. It gets the progress fraction instead.
+    const why = unlocked ? `${num(cost)} gold`
+      : def.kind === 'primal' ? `${have} of ${need} ${ELEMENTS[def.element].name} bound`
+      : `needs ${missing.map((m) => ELEMENTS[m].name).join(' + ')}`;
 
     return `<button class="${cls.join(' ')}" data-tower="${def.key}" data-cost="${cost}"
         style="--c:${hex(def.color)}" ${unlocked ? '' : 'aria-disabled="true" tabindex="-1"'}
-        title="${esc(name)} — ${unlocked ? `${num(cost)} gold` : `needs ${missing.map((m) => ELEMENTS[m].name).join(' + ')}`}">
+        title="${esc(name)} — ${esc(why)}">
       <span class="cx-pair">${glyphs}</span>
       <span class="cx-name">${name}</span>
-      <span class="cx-cost">${unlocked ? num(cost) : `<s>${num(cost)}</s>`}</span>
+      <span class="cx-cost">${unlocked ? num(cost)
+        : def.kind === 'primal' ? `${have} / ${need}` : `<s>${num(cost)}</s>`}</span>
     </button>`;
   }
 
@@ -237,6 +260,24 @@ export class BuildBar {
     const owned = st.elements;
     const all = this.game.availableTowers;
     const fusions = all.filter((t) => t.kind === 'dual');
+
+    // Progress cards: an element you are ONE pick away from turning into a
+    // primal. Below stacksRequired - 1 we show nothing — six permanently-dead
+    // cards would teach the player to ignore the whole rail, which is the
+    // opposite of the point.
+    const counts = countElements(owned);
+    const pending = ELEMENT_ORDER.filter((id) => (counts.get(id) ?? 0) === PRIMAL.stacksRequired - 1);
+
+    // Capped at four, exactly like the fusion rail, and for a harder reason: the
+    // dock is a single row with a max-width, and six primal cards on top of six
+    // elemental and four fusion ones pushes the Tower Table and Send Wave
+    // buttons off the right edge at 1600px. Eleven picks make three primals the
+    // realistic ceiling anyway, so the cap only fires in a debug board.
+    const primals = all
+      .filter((t) => t.kind === 'primal')
+      .sort((a, b) => (st.gold >= a.levels[0].cost ? 0 : 1) - (st.gold >= b.levels[0].cost ? 0 : 1))
+      .slice(0, 4);
+    const progress = pending.slice(0, Math.max(0, 4 - primals.length));
 
     // Dock fusion slots: affordable first, then the priciest — i.e. aspiration.
     const slots = fusions
@@ -253,7 +294,8 @@ export class BuildBar {
     const arming = !!this.game.heldFoundation;
     this.$dock.classList.toggle('arming', arming);
 
-    const sig = `${owned.join(',')}|${slots.map((s) => s.key).join(',')}|${arming ? 'arm' : ''}`;
+    const sig = `${owned.join(',')}|${slots.map((s) => s.key).join(',')}`
+      + `|${primals.map((p) => p.key).join(',')}|${progress.join(',')}|${arming ? 'arm' : ''}`;
     if (sig !== this._sig) {
       this._sig = sig;
       // The foundation never changes and never locks — it is the one thing you
@@ -267,6 +309,11 @@ export class BuildBar {
       this.$fusion.innerHTML = slots.map((d) => this.#card(d, null, arming)).join('')
         || `<span class="dock-empty">${owned.length < 2 ? 'two elements unlock a fusion' : 'saving up…'}</span>`;
       this.$fusionGroup.classList.toggle('empty', slots.length === 0);
+      this.$primal.innerHTML =
+        primals.map((d) => this.#card(d, null, arming)).join('')
+        + progress.map((id) => this.#progressCard(id, counts.get(id))).join('')
+        || '<span class="dock-empty">bind one element three times</span>';
+      this.$primalGroup.classList.toggle('empty', primals.length === 0 && progress.length === 0);
       if (this.codexOpen) this.#renderCodex();
     }
 
@@ -289,7 +336,7 @@ export class BuildBar {
       }
     }
 
-    this.$count.textContent = `${all.length} of 21 unlocked`;
+    this.$count.textContent = `${all.length} of ${TOWER_TOTAL} unlocked`;
   }
 
   #card(def, key, arming = false) {
@@ -306,7 +353,31 @@ export class BuildBar {
       <span class="tc-glyph">${glyph}</span>
       <span class="tc-name">${def.name.replace(' Tower', '')}</span>
       <span class="tc-cost">${num(cost)}</span>
+      ${def.kind === 'primal'
+        ? `<span class="tc-stacks" title="Spends ${PRIMAL.stacksConsumed} of your ${PRIMAL.stacksRequired} ${ELEMENTS[def.element].name} stacks — returned in full if you sell"
+             >−${ELEMENTS[def.element].glyph.repeat(PRIMAL.stacksConsumed)}</span>`
+        : ''}
       ${key ? `<kbd class="tc-key">${key}</kbd>` : ''}
+    </button>`;
+  }
+
+  /**
+   * A primal you are one bind away from. Not clickable and deliberately not a
+   * `[data-tower]` node, so it can never enter the delegated pick handler or the
+   * per-frame affordability sweep — there is no price to be poor for.
+   */
+  #progressCard(id, have) {
+    const e = ELEMENTS[id];
+    const p = PRIMALS[id];
+    const pips = Array.from({ length: PRIMAL.stacksRequired },
+      (_, i) => `<i class="${i < have ? 'on' : ''}"></i>`).join('');
+    return `<button class="tcard primal locked" data-progress="${id}" aria-disabled="true" tabindex="-1"
+        style="--c:${hex(e.color)};--a:${hex(e.accent)}"
+        title="${esc(p.name)} — bind one more ${e.name} to unlock">
+      <span class="tc-glyph"><b>${e.glyph}</b></span>
+      <span class="tc-name">${esc(p.name)}</span>
+      <span class="tc-prog">${pips}</span>
+      <span class="tc-cost">${have} / ${PRIMAL.stacksRequired}</span>
     </button>`;
   }
 
@@ -317,11 +388,11 @@ export class BuildBar {
 
     const def = towerDefOf(key);
     if (!def) return;
-    const owned = new Set(this.game.state.elements);
-    const { missing } = lockState(def, owned);
+    // Counts, not a Set — lockState needs them to resolve a primal.
+    const { missing, have } = lockState(def, this.game.state.elements);
 
     this.$tip.style.setProperty('--c', hex(def.color));
-    this.$tip.innerHTML = this.#tip(def, missing);
+    this.$tip.innerHTML = this.#tip(def, missing, have);
     this.$tip.classList.add('on');
 
     // Measure, then clamp horizontally to the viewport and flip vertically if
@@ -343,7 +414,7 @@ export class BuildBar {
     this.$tip.classList.remove('on');
   }
 
-  #tip(def, missing = []) {
+  #tip(def, missing = [], have = 0) {
     // The foundation has no weapon, so every stat the normal panel shows is
     // either zero or a division by zero (dps = damage / cooldown = 0 / 0). It
     // gets a panel about what it is FOR instead — which is the information the
@@ -386,9 +457,16 @@ export class BuildBar {
         <span class="tip-title">${def.name}</span>
         <span class="tip-kind">${kindLine}</span>
       </span>
-      ${missing.length
+      ${missing.length && def.kind !== 'primal'
         ? `<span class="tip-locked">Requires ${missing.map((m) =>
             `<b style="color:${hex(ELEMENTS[m].color)}">${ELEMENTS[m].glyph} ${ELEMENTS[m].name}</b>`).join(' and ')}</span>`
+        : ''}
+      ${def.kind === 'primal'
+        ? `<span class="tip-locked tip-stacks">${missing.length
+            ? `Bind <b style="color:${hex(def.color)}">${PRIMAL.stacksRequired - have} more ${ELEMENTS[def.element].name}</b>
+               (${have} of ${PRIMAL.stacksRequired}). `
+            : ''}Spends <b style="color:${hex(def.color)}">${PRIMAL.stacksConsumed} ${ELEMENTS[def.element].name}</b> stacks.
+            The Primal re-locks until you bind ${ELEMENTS[def.element].name} again. Selling returns both.</span>`
         : ''}
       <span class="tip-lore">${summarise(def)}</span>
       <span class="tip-body">
