@@ -527,6 +527,20 @@ export class CreepManager {
     // (fixed in Pathfinder.#buildFlow), creeps parked at the exit forever: no
     // life lost, no despawn, and the queue behind them jammed.
     const leakZ = exitZ - g.cell * 0.5;
+    /**
+     * The leak plane is a DOOR, not the whole bottom edge.
+     *
+     * The test used to be `z >= leakZ` alone, and the last row is walkable across
+     * its full width — only the two goal columns are the portal, the rest is
+     * ordinary buildable ground. So a creep that drifted sideways down there,
+     * which crowd separation does constantly, walked off the board through solid
+     * wall and cost a life several tiles away from the red gate the player was
+     * defending. Outside this span nothing leaks: the flow field keeps pushing
+     * them along the bottom row towards the portal, which is what the ground
+     * shows and what the player expects.
+     */
+    const goalX0 = (g.goal.c - g.cols / 2) * g.cell;
+    const goalX1 = (g.goal.c + 2 - g.cols / 2) * g.cell;
     const neighbours = this._neighbours;
     this.time += dt;
 
@@ -674,7 +688,7 @@ export class CreepManager {
       else if (Math.random() < dt * 2.4) this.#moteTick(i, t);
       if (this.burnT[i] > 0 && Math.random() < dt * 22) this.#emberTick(i, t);
 
-      if (this.z[i] >= leakZ) {
+      if (this.z[i] >= leakZ && this.x[i] >= goalX0 && this.x[i] <= goalX1) {
         if (this.onLeak) this.onLeak(i, this.typeKeys[this.typeIdx[i]]);
         this.kill(i, false);
       }
