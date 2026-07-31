@@ -57,8 +57,40 @@ const BACKOFF_MS = [400, 900, 2000, 4000];
 /** ~2 Hz, per the contract. The server rate-limits and answers RATE_LIMIT. */
 const STATUS_INTERVAL_MS = 500;
 
+/**
+ * The nominal spectate snapshot period: 10 Hz, per docs/MULTIPLAYER.md. Exported
+ * so the streamer paces itself off the same number the transport enforces rather
+ * than a second copy that can drift from it.
+ */
+export const SNAP_INTERVAL_MS = 100;
+
+/**
+ * The FLOOR `snap()` enforces, deliberately below SNAP_INTERVAL_MS.
+ *
+ * A caller aiming at 10 Hz off a 60 fps frame loop lands on 100 ms +/- one frame
+ * (16.7 ms); a floor set exactly at 100 would silently eat every early frame and
+ * turn a 10 Hz stream into ~8 Hz with a visible hitch. 90 ms passes an honest
+ * 10 Hz caller untouched while clamping a caller that forgot to throttle at all
+ * to ~11 Hz - under the server's 12/s snap bucket, so a bug in the streamer
+ * cannot earn a RATE_LIMIT that also throttles the lobby.
+ */
+const SNAP_MIN_INTERVAL_MS = 90;
+
+/**
+ * Skip a snapshot when this much is already queued in the socket.
+ *
+ * Snapshots are cosmetic and self-healing (the format carries a periodic
+ * keyframe), so on a slow uplink the right failure is a picture that drops
+ * frames, never a send queue that grows without bound and eventually delays the
+ * `finished` frame that decides the standings.
+ */
+const SNAP_BACKPRESSURE_BYTES = 48 * 1024;
+
 /** Server message types, so an unknown `t` can be ignored rather than dispatched. */
-const SERVER_TYPES = new Set(['welcome', 'joined', 'lobby', 'go', 'scores', 'over', 'error', 'leaderboard']);
+const SERVER_TYPES = new Set([
+  'welcome', 'joined', 'lobby', 'go', 'scores', 'over', 'error', 'leaderboard',
+  'watching', 'watched', 'snap', 'unwatch',
+]);
 
 export class NetClient {
   constructor() {
@@ -81,13 +113,61 @@ export class NetClient {
     this._wanted = false;
 
     this._lastStatusAt = 0;
+    this._lastSnapAt = 0;
     /** @type {number|null} */
     this._latency = null;
     this._helloAt = 0;
 
     this.id = null;
     this.code = null;
+
+    // -- spectate ------------------------------------------------------------
+    //
+    // Both of these are SERVER-DERIVED and never set optimistically. `watch()`
+    // does not set `watching`; the `watching` frame does. The reason is the whole
+    // point of the counter: a client that assumed it was being watched would
+    // start producing snapshots the server then drops, which is precisely the
+    // "costs nothing when nobody is looking" property the design is built on.
+
+    /** @type {string|null} Player id whose board we are subscribed to. */
+    this.watching = null;
+    /** @type {string|null} That player's name, as the server knows it. */
+    this.watchingName = null;
+    /** How many players are watching OUR board. 0 means: do not build snapshots. */
+    this.watchers = 0;
+
+    /**
+     * Convenience callbacks for the spectate layer, alongside the generic
+     * on('snap') / on('watched') events - both fire, use whichever suits.
+     * @type {?(snap: object) => void}
+     */
+    this.onBoardSnapshot = null;
+    /** @type {?(n: number, streaming: boolean) => void} */
+    this.onWatcherCountChanged = null;
+    /** @type {?(info: {id: string, name: string}) => void} */
+    this.onWatching = null;
+    /** @type {?(info: {id: string|null, reason: string}) => void} */
+    this.onUnwatch = null;
   }
+
+  /**
+   * True while at least one player is subscribed to our board.
+   *
+   * THE GATE THE STREAMER MUST READ. When this is false, do not encode a
+   * snapshot - not "encode it and let send() drop it". Encoding is the expensive
+   * half (a full creep sweep plus a JSON.stringify every 100 ms), and the server
+   * discards an unwatched `snap` before it even looks at it, so a client that
+   * streams unconditionally pays the entire cost for exactly nothing.
+   * @returns {boolean}
+   */
+  get streaming() { return this.watchers > 0; }
+
+  /**
+   * Bytes queued in the socket and not yet on the wire. Used by the snapshot
+   * backpressure rule; 0 when offline.
+   * @returns {number}
+   */
+  get bufferedAmount() { return this._ws?.bufferedAmount ?? 0; }
 
   /** @returns {'offline'|'connecting'|'online'} */
   get state() { return this._state; }
@@ -123,6 +203,13 @@ export class NetClient {
   off(type, fn) {
     this._handlers.get(type)?.delete(fn);
     return this;
+  }
+
+  /** Invoke one of the convenience callbacks with the same isolation as _emit. */
+  _call(name, ...args) {
+    const fn = this[name];
+    if (typeof fn !== 'function') return;
+    try { fn(...args); } catch (err) { console.error(`[net] ${name} threw`, err); }
   }
 
   _emit(type, payload) {
@@ -313,6 +400,11 @@ export class NetClient {
       // across a reconnect means the scoreboard filters "me" by an id nobody has.
       this.id = null;
       this.code = null;
+      // A reconnect gets a NEW player id and, per the contract, comes back
+      // outside its old room - so every subscription in both directions is gone
+      // whether or not we hear about it. Latching `watchers` at its last value
+      // would leave a streamer encoding snapshots for nobody, forever.
+      this._resetWatch();
       this._emit('close', { reason });
     }
     this._retryOrOffline(reason);
@@ -341,8 +433,36 @@ export class NetClient {
       }
     } else if (msg.t === 'joined') {
       this.code = msg.code ?? null;
+      // A room change cannot carry a subscription with it: `watch` is scoped to
+      // one room and the server has already dropped it.
+      this._resetWatch();
     } else if (msg.t === 'lobby') {
       this.code = msg.code ?? this.code;
+    } else if (msg.t === 'watching') {
+      this.watching = msg.id ?? null;
+      this.watchingName = typeof msg.name === 'string' ? msg.name : null;
+      // Untrusted: a name from another machine. Every consumer must escape it
+      // before it reaches the DOM (uikit.js `esc`), same rule as the roster.
+      this._call('onWatching', { id: this.watching, name: this.watchingName });
+    } else if (msg.t === 'unwatch') {
+      // Idempotent on purpose. `leave()` tears the subscription down locally and
+      // the server's `unwatch` arrives a moment later saying the same thing; a
+      // second onUnwatch would make the spectate view unwind twice.
+      if (this.watching) {
+        this.watching = null;
+        this.watchingName = null;
+        this._call('onUnwatch', { id: msg.id ?? null, reason: typeof msg.reason === 'string' ? msg.reason : 'gone' });
+      }
+    } else if (msg.t === 'watched') {
+      const n = Number.isFinite(msg.n) ? Math.max(0, msg.n | 0) : 0;
+      // Fire only on a real change: the server coalesces, but a reconnect or a
+      // duplicate must not restart a streamer that is already running.
+      if (n !== this.watchers) {
+        this.watchers = n;
+        this._call('onWatcherCountChanged', n, n > 0);
+      }
+    } else if (msg.t === 'snap') {
+      this._call('onBoardSnapshot', msg);
     }
 
     this._emit(msg.t, msg);
@@ -443,6 +563,10 @@ export class NetClient {
   leave() {
     const ok = this.send('leave', {});
     this.code = null;
+    // Subscriptions are room-scoped. The server says the same thing a moment
+    // later; doing it here means the spectate view is gone by the time the lobby
+    // overlay reappears rather than one round trip after it.
+    this._resetWatch();
     return ok;
   }
 
@@ -487,6 +611,83 @@ export class NetClient {
       wave: obj?.wave | 0,
       won: !!obj?.won,
     });
+  }
+
+  // -- spectate --------------------------------------------------------------
+
+  /**
+   * Drop both directions of the subscription locally and tell the listeners.
+   * Never sends: it is used on paths where the socket is already gone or where
+   * the server has already made the same decision.
+   */
+  _resetWatch() {
+    const hadWatchers = this.watchers > 0;
+    if (this.watching) {
+      const id = this.watching;
+      this.watching = null;
+      this.watchingName = null;
+      this._call('onUnwatch', { id, reason: 'gone' });
+    }
+    this.watchers = 0;
+    this._lastSnapAt = 0;
+    if (hadWatchers) this._call('onWatcherCountChanged', 0, false);
+  }
+
+  /**
+   * Subscribe to another player's board.
+   *
+   * Does NOT set `this.watching` - the server's `watching` frame does, and until
+   * it lands nothing has been agreed. The subscription is refused (`error`
+   * `BAD_WATCH` / `NO_PLAYER`) unless the target is in your room, the run is
+   * live, and the target has not finished. At most one at a time: a second
+   * `watch` replaces the first, server-side, with no extra frame from you.
+   *
+   * @param {string} id player id, from a `scores`/`lobby` roster entry
+   * @returns {boolean} whether the request left this machine
+   */
+  watch(id) {
+    if (typeof id !== 'string' || !id) return false;
+    return this.send('watch', { id });
+  }
+
+  /**
+   * Stop watching. Answered with `unwatch { reason: 'gone' }`, so the teardown
+   * path is the same one an involuntary stop takes and there is only one place
+   * the spectate view is dismantled.
+   */
+  unwatch() { return this.send('watch', { id: null }); }
+
+  /**
+   * Send one board snapshot to whoever is watching us.
+   *
+   * Three guards, all of them the transport's job rather than the caller's:
+   *
+   *  1. Nobody is watching -> nothing is sent. Callers should ALSO check
+   *     `net.streaming` before encoding, because the expensive half is building
+   *     the payload, not sending it. This is the backstop, not the optimisation.
+   *  2. A floor of SNAP_MIN_INTERVAL_MS, for the same reason `status()` throttles
+   *     at the transport: the call site is a frame loop, and an unthrottled 60 Hz
+   *     snap earns a RATE_LIMIT that throttles the whole client, lobby included.
+   *  3. Backpressure. A snapshot is cosmetic and the format resyncs itself with a
+   *     periodic keyframe, so a slow uplink must drop frames rather than grow a
+   *     queue that eventually delays `finished`.
+   *
+   * The payload is relayed opaquely; the server stamps `from` and never reads
+   * further. Keep it under 8 KB serialised or the server drops the frame and
+   * answers `TOO_BIG`.
+   *
+   * @param {object} payload the snapshot body, per docs/MULTIPLAYER.md
+   * @returns {boolean} whether it actually went out
+   */
+  snap(payload) {
+    if (this.watchers === 0) return false;
+    const t = now();
+    if (t - this._lastSnapAt < SNAP_MIN_INTERVAL_MS) return false;
+    if (this.bufferedAmount > SNAP_BACKPRESSURE_BYTES) return false;
+    // Stamped before the attempt, exactly like status(): when offline the send is
+    // a no-op and stamping only on success would re-test the socket every frame.
+    this._lastSnapAt = t;
+    return this.send('snap', payload);
   }
 
   /** Ask for the global top scores. The reply is a `leaderboard` frame. */

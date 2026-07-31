@@ -140,6 +140,9 @@ async function attempt(label, url, expectOnline = false) {
     c.hello('probe'); c.create(); c.join('ABCD'); c.leave();
     c.ready(true); c.start(); c.status({ lives: 1, score: 2, wave: 3 });
     c.finished({ score: 1, wave: 1, won: false });
+    // The spectate helpers are frame-loop callers too: snap() is driven from the
+    // render loop and reads bufferedAmount off a socket that may not exist.
+    c.watch('p1'); c.snap({ v: 1, n: 0, c: [] }); c.unwatch();
   } catch (e) { sendThrew = e?.message ?? String(e); }
   ok(`${label}: every send helper is safe`, sendThrew === null, sendThrew ?? '');
   c.disconnect();

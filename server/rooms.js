@@ -217,6 +217,16 @@ export function resetRunState(player) {
   player.towers = 0;
   player.finished = false;
   player.won = false;
+  /**
+   * Spectate subscriptions are per-RUN, not per-connection: `watch` is only legal
+   * while a run is live, so carrying either field into the next round would leave
+   * a streamer producing snapshots for a subscription its watcher no longer
+   * believes in. Zeroed here as a floor - index.js still has to send the matching
+   * `unwatch`/`watched` frames BEFORE calling start(), because this module owns no
+   * socket and cannot tell anyone.
+   */
+  player.watching = null;
+  player.watchers = 0;
 }
 
 /**

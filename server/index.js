@@ -55,15 +55,36 @@ const PING_MS = 15000;
 const IDLE_MS = 60000;
 
 /**
- * Two buckets per client, because the two abuse shapes are different.
+ * Three buckets per client, because the abuse shapes are different.
  *
  * `status` has a documented rate (~2 Hz), so its bucket can be tight and any
- * violation is genuinely the client misbehaving. Everything else is
+ * violation is genuinely the client misbehaving. `snap` likewise has a documented
+ * rate (10 Hz) and gets a tight bucket for the same reason. Everything else is
  * user-driven - a player mashing the ready button legitimately produces a short
  * burst - so the general bucket is loose and only exists to stop a script.
+ *
+ * MSG_PER_SEC WENT 20 -> 40 WHEN `snap` LANDED, and that is not padding. A player
+ * who is being watched legitimately produces 10 `snap` + 2 `status` = 12 frames a
+ * second before they touch the keyboard. At 20/s the general bucket would still
+ * have been the binding constraint the moment two things happened at once, and an
+ * honest streamer would collect RATE_LIMIT for playing the game. 40/s is far below
+ * anything a human generates and far below the ~205/s eviction threshold above.
  */
 const STATUS_BURST = 12, STATUS_PER_SEC = 5;
-const MSG_BURST = 40, MSG_PER_SEC = 20;
+const SNAP_BURST = 24, SNAP_PER_SEC = 12;
+const MSG_BURST = 60, MSG_PER_SEC = 40;
+
+/**
+ * Hard byte ceiling on ONE frame, checked before JSON.parse.
+ *
+ * `maxPayload` (16 KB) is what ws will buffer at all; this is what the protocol
+ * will accept. The gap matters because `snap` is a relay: at 16 KB x 12 Hz x 5
+ * subscribers one room emits ~950 KB/s of egress, while the budgeted snapshot is
+ * ~1.7 KB (64 creeps) and ~3 KB on a tower keyframe. 8 KB is 2.6x the largest
+ * legitimate frame and caps that same worst case at 480 KB/s. Every other message
+ * in the contract is under 300 bytes, so nothing else can even approach it.
+ */
+const MAX_FRAME_BYTES = 8 * 1024;
 
 /**
  * A RATE_LIMIT error is itself a frame, so replying to every dropped message
@@ -145,12 +166,33 @@ export function createServer(opts = {}) {
    * single owner of "this room owes a lobby frame".
    */
   const dirty = new Set();
+  /**
+   * Players whose `watchers` count changed and owe a coalesced `watched` frame.
+   *
+   * A SECOND set rather than a flag on the player, for the reason rooms.js spells
+   * out: one owner per flag. It rides the same LOBBY_MS timer because it is the
+   * same job - collapsing a burst of subscription churn into one frame - and
+   * because the value read at flush time is the final one, so watch-spam costs a
+   * bucket token and exactly one broadcast.
+   * @type {Set<object>}
+   */
+  const watchDirty = new Set();
   let lobbyTimer = null;
+
+  function scheduleFlush() {
+    if (!lobbyTimer) lobbyTimer = setTimeout(flushLobby, LOBBY_MS);
+  }
 
   function markDirty(room) {
     if (!room) return;
     dirty.add(room);
-    if (!lobbyTimer) lobbyTimer = setTimeout(flushLobby, LOBBY_MS);
+    scheduleFlush();
+  }
+
+  function markWatched(player) {
+    if (!player) return;
+    watchDirty.add(player);
+    scheduleFlush();
   }
 
   function flushLobby() {
@@ -160,6 +202,77 @@ export function createServer(opts = {}) {
       // Collected between the mark and the flush: there is nobody to tell.
       if (room.empty) continue;
       broadcast(room, { t: 'lobby', code: room.code, players: room.roster() });
+    }
+    for (const p of watchDirty) {
+      watchDirty.delete(p);
+      // send() already guards readyState; the count is read HERE and not at mark
+      // time so N changes inside one window collapse to the final value.
+      send(p, { t: 'watched', n: p.watchers });
+    }
+  }
+
+  // -- spectate subscriptions ------------------------------------------------
+  //
+  // The invariant this section exists to hold: a snapshot reaches exactly the
+  // players who asked for it, and a player nobody asked about is told so, so it
+  // can stop producing snapshots entirely. `player.watching` is a single id (at
+  // most one subscription per socket, by construction rather than by a check) and
+  // `player.watchers` is how many sockets point at this one.
+
+  /** Resolve a subscription id back to a player, within the subscriber's room. */
+  function watchTarget(player) {
+    const id = player.watching;
+    if (!id || !player.room) return null;
+    return player.room.players.find((p) => p.id === id) || null;
+  }
+
+  /**
+   * Point `player` at `target` (or at nothing). Both the old and the new target
+   * owe a `watched` frame: the old one may now be at zero and must stop
+   * producing, the new one may have just crossed zero and must start.
+   */
+  function setWatch(player, target) {
+    const prev = watchTarget(player);
+    if (prev) { prev.watchers = Math.max(0, prev.watchers - 1); markWatched(prev); }
+    player.watching = target ? target.id : null;
+    if (target) { target.watchers += 1; markWatched(target); }
+  }
+
+  /** `player` stops watching whatever it was watching. Tells `player` too. */
+  function releaseWatch(player, reason) {
+    if (!player.watching) return;
+    const id = player.watching;
+    setWatch(player, null);
+    send(player, { t: 'unwatch', id, reason });
+  }
+
+  /**
+   * Everyone watching `target` is unsubscribed. Called the moment the thing they
+   * are watching stops existing as a live board - a finish, a leave, a
+   * disconnect - so a subscription can never outlive its target and leave a
+   * spectator staring at a frozen board with no explanation.
+   */
+  function clearWatchersOf(target, reason) {
+    const room = target.room;
+    if (room) {
+      for (const p of room.players) {
+        if (p.watching !== target.id) continue;
+        p.watching = null;
+        send(p, { t: 'unwatch', id: target.id, reason });
+      }
+    }
+    if (target.watchers !== 0) { target.watchers = 0; markWatched(target); }
+  }
+
+  /** Every subscription in the room drops. Used by `over` and by a new round. */
+  function clearRoomWatches(room, reason) {
+    for (const p of room.players) {
+      if (p.watching) {
+        const id = p.watching;
+        p.watching = null;
+        send(p, { t: 'unwatch', id, reason });
+      }
+      if (p.watchers !== 0) { p.watchers = 0; markWatched(p); }
     }
   }
 
@@ -250,6 +363,23 @@ export function createServer(opts = {}) {
   }
 
   /**
+   * An oversized frame is dropped unparsed and the sender is told, at most once
+   * per RATE_NOTIFY_MS and on a clock of its own.
+   *
+   * Told, rather than dropped in silence, because the realistic sender is an
+   * honest streamer whose board grew past the snapshot budget: silence would make
+   * its spectators see a board that simply stopped, with the cause invisible on
+   * both machines. Throttled for the same reason RATE_LIMIT is - a reply per
+   * dropped frame is an amplifier pointed back at us.
+   */
+  function tooBig(player, now) {
+    if (player.evicted) return;
+    if (now - player.bigAt < RATE_NOTIFY_MS) return;
+    player.bigAt = now;
+    fail(player, 'TOO_BIG', `Frame over ${MAX_FRAME_BYTES} bytes.`);
+  }
+
+  /**
    * Detach a player from whatever room it is in and tell the survivors.
    *
    * Shared by `leave` and by socket close on purpose: a disconnect and an
@@ -259,6 +389,11 @@ export function createServer(opts = {}) {
   function partRoom(player) {
     const room = player.room;
     if (!room) return;
+    // BEFORE room.remove(), while `player` is still in room.players and both
+    // directions are still resolvable. Afterwards `player.room` is null and
+    // clearWatchersOf could not find the survivors to tell.
+    releaseWatch(player, 'gone');
+    clearWatchersOf(player, 'left');
     const wasHost = room.isHost(player);
     const empty = room.remove(player);
     if (empty) {
@@ -319,6 +454,10 @@ export function createServer(opts = {}) {
     // flips BEFORE the broadcast so this cannot fire twice for one run, which is
     // the only thing the old 'over' value was actually load-bearing for.
     room.phase = 'lobby';
+    // Unwatch BEFORE `over`, so a spectator tears its view down and is looking at
+    // its own board when the end card lands. The other order shows the standings
+    // over someone else's tinted board, which reads as a bug.
+    clearRoomWatches(room, 'over');
     broadcast(room, { t: 'over', standings: room.standings() });
   }
 
@@ -420,6 +559,11 @@ export function createServer(opts = {}) {
         // and never learns anything else about the room's state from the reply.
         if (!room.isHost(player)) { fail(player, 'NOT_HOST', 'Only the host can start.'); return; }
         if (room.phase === 'running') { fail(player, 'IN_PROGRESS', 'The run is already going.'); return; }
+        // Before start(), which zeroes both subscription fields with nobody left
+        // to notify. A subscription from the previous round must not survive into
+        // this one: the watcher would keep receiving a board it never asked to
+        // see this time round.
+        clearRoomWatches(room, 'over');
         const go = room.start();
         log('start', room.code, 'seed', go.seed, room.players.length, 'players');
         broadcast(room, go);
@@ -482,8 +626,79 @@ export function createServer(opts = {}) {
         player.won = !!msg.won;
         player.score = int(msg.score);
         player.wave = int(msg.wave);
+        // A finished board stops moving, so its watchers are dropped and its
+        // `watchers` goes to 0 - which is what stops it producing snapshots.
+        // Deliberately NOT symmetric: this player's OWN subscription survives its
+        // own finish, because a dead player watching the survivors race is the
+        // best moment the feature has.
+        clearWatchersOf(player, 'finished');
         room.scoresDirty = true;
         maybeOver(room);
+        return;
+      }
+
+      /**
+       * Subscribe to one player's board stream, or `id: null` to stop.
+       *
+       * At most one subscription per socket, enforced by `player.watching` being
+       * one field: a second `watch` replaces the first, exactly as `create` does
+       * an implicit `leave`. That is what bounds the fan-out - <=5 subscribers
+       * per streamer in a 6-player room, known and constant.
+       */
+      case 'watch': {
+        const room = player.room;
+        // No room is not an error state the client can repair, and there is no
+        // code for it. Same posture as `ready` outside the lobby.
+        if (!room) return;
+
+        if (msg.id == null) { releaseWatch(player, 'gone'); return; }
+        if (typeof msg.id !== 'string') return;
+        if (msg.id === player.id) { fail(player, 'BAD_WATCH', 'You are already on your own board.'); return; }
+        if (room.phase !== 'running') { fail(player, 'BAD_WATCH', 'There is no run to watch yet.'); return; }
+        // Same room only. There is no message anywhere in this protocol that
+        // enumerates rooms or reaches into one you are not in, and `watch` is not
+        // going to become the first.
+        const target = room.players.find((p) => p.id === msg.id);
+        if (!target) { fail(player, 'NO_PLAYER', 'That player is not in this room.'); return; }
+        if (target.finished) { fail(player, 'BAD_WATCH', 'That player has finished.'); return; }
+        // Re-watching the current target is a no-op: no frame, no counter churn,
+        // no `watched` broadcast. Without this, a client polling `watch` would
+        // make the streamer's count flap and cost a broadcast per poll.
+        if (player.watching === msg.id) return;
+        setWatch(player, target);
+        // The server's copy of the name from `hello`, never one the subscriber
+        // supplied - same rule as the leaderboard, for the same reason.
+        send(player, { t: 'watching', id: target.id, name: target.name });
+        return;
+      }
+
+      /**
+       * One board snapshot, relayed to that board's subscribers and to nobody
+       * else. The server is an OPAQUE relay: it never reads past `t`, because
+       * parsing the payload would put the room's CPU under the sender's control,
+       * while bounding its size (MAX_FRAME_BYTES, above the parse) and its rate
+       * (snapBucket) does not. Validation is the spectator's job and it is
+       * documented as a hard gate in docs/MULTIPLAYER.md.
+       */
+      case 'snap': {
+        const room = player.room;
+        if (!room || room.phase !== 'running') return;
+        // THE LINE THAT MAKES THE FEATURE FREE. A player nobody is watching relays
+        // nothing, and this is checked before the bucket so a client that streams
+        // unconditionally is not slowly throttled for it either - it costs one
+        // general-bucket token and stops here. `watched` is what tells that client
+        // to stop bothering; this is what makes it not matter if it ignores it.
+        if (player.watchers === 0) return;
+        if (!player.snapBucket.take(now)) { rateLimited(player, now); return; }
+        // Stamped by us, never trusted from the frame: a client that could name
+        // its own `from` could impersonate another player's board.
+        msg.from = player.id;
+        const frame = JSON.stringify(msg);
+        for (const p of room.players) {
+          // Never echoed to its author, never sent to anyone who did not ask.
+          if (p.watching !== player.id || p.ws.readyState !== 1) continue;
+          try { p.ws.send(frame); } catch { /* see send() */ }
+        }
         return;
       }
 
@@ -512,8 +727,15 @@ export function createServer(opts = {}) {
        * is max(lastStatus, room.startedAt) - see sweepIdle.
        */
       lastStatus: 0,
+      /** Last TOO_BIG notice, throttled on its own clock. See rateLimited. */
+      bigAt: 0,
       msgBucket: new Bucket(MSG_BURST, MSG_PER_SEC),
       statusBucket: new Bucket(STATUS_BURST, STATUS_PER_SEC),
+      snapBucket: new Bucket(SNAP_BURST, SNAP_PER_SEC),
+      /** Player id whose board this socket is subscribed to, or null. */
+      watching: null,
+      /** How many sockets are subscribed to THIS player's board. */
+      watchers: 0,
       ready: false,
       lives: 0, score: 0, wave: 0, killed: 0, leaked: 0, towers: 0,
       finished: false, won: false,
@@ -534,6 +756,11 @@ export function createServer(opts = {}) {
       // Binary frames are not part of the contract at all; a client sending them
       // is not our client.
       if (isBinary) return;
+      // Size gate BEFORE JSON.parse: parsing is the expensive half, and the one
+      // message with a real payload (`snap`) is exactly the one an attacker would
+      // inflate. `data.length` is the decoded frame length and is already in hand
+      // here. See MAX_FRAME_BYTES for why this is tighter than maxPayload.
+      if (data.length > MAX_FRAME_BYTES) { tooBig(player, now); return; }
 
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
@@ -574,6 +801,7 @@ export function createServer(opts = {}) {
     clearInterval(pingTimer);
     if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
     dirty.clear();
+    watchDirty.clear();
     for (const ws of wss.clients) { try { ws.terminate(); } catch { /* already gone */ } }
     return new Promise((resolve) => wss.close(() => resolve()));
   }
