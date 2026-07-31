@@ -1,0 +1,125 @@
+/*
+ * Spectate mode chrome.
+ *
+ * Two jobs, and only two: the banner that names the watched player and carries
+ * the way out, and the fold-away of every surface that would offer to act on a
+ * board that is not yours. The colour wash on the world itself is NOT here — it
+ * is a uniform in the grade pass (RenderPipeline), because tinting only the DOM
+ * would leave the board unchanged, and tinting only the ground would leave the
+ * towers and creeps in their normal colours and read as a rendering bug.
+ */
+
+#spectate-bar {
+  position: absolute;
+  top: 54px;                    /* directly under the status bar — see HUD.js */
+  left: 0;
+  right: 0;
+  height: 34px;
+  z-index: 40;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+
+  padding: 0 14px;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  color: rgba(233, 238, 250, 0.92);
+
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--c, #4aa3ff) 26%, rgba(8, 11, 18, 0.82)),
+    rgba(8, 11, 18, 0.72)
+  );
+  border-bottom: 1px solid color-mix(in srgb, var(--c, #4aa3ff) 55%, transparent);
+  backdrop-filter: blur(7px);
+
+  /* Never intercepts a click by default: the whole point of spectate is that
+     the camera stays live, and a full-width invisible bar over the board would
+     eat the first drag of every orbit. Only the button takes pointer events. */
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+#spectate-bar.on { opacity: 1; transform: none; }
+
+#spectate-bar .sp-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c, #4aa3ff);
+  box-shadow: 0 0 10px var(--c, #4aa3ff);
+  flex: none;
+}
+
+#spectate-bar .sp-text b { font-weight: 700; color: #fff; }
+
+#spectate-bar .sp-stat {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.78;
+}
+
+#spectate-bar .sp-warn {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #12100a;
+  background: #ffc24a;
+}
+
+#spectate-bar .sp-exit {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+#spectate-bar .sp-exit:hover { background: rgba(255, 255, 255, 0.14); border-color: var(--c, #4aa3ff); }
+
+#spectate-bar .sp-exit kbd {
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 3px;
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+/* Narrow viewports: the stat readout is the first thing to go — the name and
+   the way out are the two things that cannot. */
+@media (max-width: 720px) {
+  #spectate-bar .sp-stat { display: none; }
+}
+
+/*
+ * Fold away everything that acts on a board.
+ *
+ * `pointer-events: none` as well as the fade, because a panel at opacity 0 is
+ * still clickable and the failure would be silent: a click that builds nothing
+ * and explains nothing.
+ */
+#ui-root.spectating #dock,
+#ui-root.spectating #codex,
+#ui-root.spectating #inspector,
+#ui-root.spectating #threat,
+#ui-root.spectating #place-hint,
+#ui-root.spectating #held-piece,
+#ui-root.spectating #air-alert {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}

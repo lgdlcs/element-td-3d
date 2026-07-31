@@ -67,6 +67,16 @@ export class TowerManager {
     this.towers = [];
     this.nextId = 0;
     this._elapsed = 0;
+
+    /**
+     * When false, update() targets and fires as usual but writes nothing to the
+     * batch. The spectate view borrows the SAME TowerBatch for the watched
+     * player's towers, so the local board must stop driving it for as long as
+     * someone else's towers are tenanting it — otherwise both boards write
+     * matrices into the same instances on the same frame and the batch renders
+     * whichever of them ran last.
+     */
+    this.renderEnabled = true;
   }
 
   create(key, level, anchorC, anchorR) {
@@ -94,6 +104,11 @@ export class TowerManager {
       kills: 0,
       birth: performance.now() * 0.001,
       mode: 'first',
+      // How many times this TILE has been morphed. Declared here rather than
+      // left undefined so the morph tax is visible state on every tower object;
+      // Game.morphTower carries it across the remove/create pair by hand,
+      // because create() legitimately hands back a fresh object each time.
+      morphCount: 0,
     };
     this.batch.attach(t);
     this.towers.push(t);
@@ -208,7 +223,7 @@ export class TowerManager {
         + t.recoil * t.recoil * (FIRE_PULSE - IDLE_PULSE);
     }
 
-    this.batch.update(this.towers, dt, elapsed);
+    if (this.renderEnabled) this.batch.update(this.towers, dt, elapsed);
   }
 
   /** First-order intercept so fast creeps aren't perpetually missed. */

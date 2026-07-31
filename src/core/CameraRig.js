@@ -271,7 +271,44 @@ export class CameraRig {
     this.#wake();
   }
 
-  addShake(amount) { this.shake = Math.min(1.4, this.shake + amount); }
+  /**
+   * @param {number} amount
+   *
+   * `shakeMuted` is set around the LOCAL simulation while the player is
+   * watching another board: an explosion on a board that is not on screen must
+   * not shake the frame someone else's board is being drawn into. It is a
+   * property rather than a parameter because the callers (creep death, leak,
+   * splash impact) have no idea a spectate mode exists, and should not.
+   */
+  addShake(amount) {
+    if (this.shakeMuted) return;
+    this.shake = Math.min(1.4, this.shake + amount);
+  }
+
+  /**
+   * Capture the framing GOALS, not the current interpolated pose.
+   *
+   * Restoring the pose would fight the springs for a frame and read as a jolt;
+   * restoring the goals lets the same springs walk the camera home, which is
+   * the motion the player already associates with every other camera change.
+   */
+  save() {
+    return {
+      x: this._targetGoal.x, y: this._targetGoal.y, z: this._targetGoal.z,
+      dist: this._distGoal, azimuth: this._azimuthGoal, polar: this._polarGoal,
+      auto: this._autoFrame,
+    };
+  }
+
+  restore(s) {
+    if (!s) return;
+    this._targetGoal.set(s.x, s.y, s.z);
+    this._distGoal = s.dist;
+    this._azimuthGoal = s.azimuth;
+    this._polarGoal = s.polar;
+    this._autoFrame = s.auto;
+    this.#wake();
+  }
 
   update(dt) {
     this._t += dt;

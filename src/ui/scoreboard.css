@@ -329,3 +329,30 @@ body.codex-open #scoreboard { transform: translateX(calc(-100% - 20px)); opacity
   #scoreboard, #scoreboard.on, #scoreboard.crowded, body.codex-open #scoreboard { transform: none; }
   .sb-bar > s { transition: none; }   /* the score bar snaps to its width */
 }
+
+/* ---------------------------------------------------------------------------
+   Watchable rows.
+
+   A row is only decorated while it is genuinely actionable — Scoreboard#render
+   adds and removes `.watchable` as players finish and as the run ends — so the
+   pointer cursor is never a promise the click cannot keep.
+
+   The left border on `.watching` is the SAME seat colour that washes the frame
+   while that player is on screen (see seats.js and RenderPipeline's uSpectate).
+   That is the whole point of them sharing a variable: "the blue player" is one
+   idea in two places, not two decorations that happen to be near each other.
+   --------------------------------------------------------------------------- */
+.sb-row.watchable { cursor: pointer; }
+
+.sb-row.watchable:hover,
+.sb-row.watchable:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+  outline: none;
+}
+
+.sb-row.watchable:focus-visible { box-shadow: 0 0 0 1px var(--sp-c, #4aa3ff) inset; }
+
+.sb-row.watching {
+  box-shadow: inset 3px 0 0 var(--sp-c, #4aa3ff);
+  background: rgba(255, 255, 255, 0.05);
+}

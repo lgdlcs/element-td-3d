@@ -290,3 +290,22 @@ export function availableTowers(ownedElements) {
   }
   return out;
 }
+
+/**
+ * Legal MORPH targets: everything buildable except primals.
+ *
+ * A primal's real price is two element stacks, and a gold formula cannot quote
+ * that: charging stacks inside Game.morphCost would make both illegible, and a
+ * discounted route into the game's ceiling collapses the ceiling. Build one, or
+ * arm a foundation. Foundations are excluded for the mirror-image reason — they
+ * already have convertTower, and two mechanics for one action is how the two
+ * prices end up disagreeing.
+ *
+ * The gate is otherwise the same as convertTower's: a target you could not have
+ * built is a target the element picker never gave you, and morph must not be a
+ * back door around it. Maximum size 6 pures + 15 fusions = 21 (the caller drops
+ * the source's own key, so at most 20 cards ever render).
+ */
+export function morphTargets(ownedElements) {
+  return availableTowers(ownedElements).filter((d) => d.kind !== 'primal');
+}

@@ -55,6 +55,26 @@ export const ECONOMY = {
    * second, unbounded currency and leaks stop meaning anything.
    */
   maxLives: 50,
+
+  /**
+   * Morph. The source tower is credited into the target at `morphCredit` — the
+   * same 0.75 as sellRefund, deliberately, so morphing is never worse than
+   * sell-then-rebuild — and the remainder is then discounted by an amount that
+   * grows with the SOURCE tower's level. Investing in a tower must make
+   * re-purposing it cheaper, not dearer.
+   */
+  morphCredit: 0.75,
+  /** Indexed by the SOURCE tower's level index: 10% / 20% / 30%. */
+  morphDiscount: [0.10, 0.20, 0.30],
+  /**
+   * Per-tile morph tax. Each morph of the same tile multiplies the next one by
+   * (1 + morphTax * morphCount). This exists for exactly one exploit: morph into
+   * the boss counter, morph back after. Prep-phase gating alone does not stop it
+   * (there is a prep before every wave); a flat tax alone lets a player buy the
+   * perfect tower every wave. Both together price the flip-flop honestly.
+   */
+  morphTax: 0.5,
+  morphTaxCap: 4,      // tax saturates at 3.0x
 };
 
 /**
