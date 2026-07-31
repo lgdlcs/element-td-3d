@@ -239,7 +239,16 @@ export class SpectateView {
     p.renderEnabled = false;
     p.update(0);                        // commits one empty frame
 
-    this._buf.length = 0;
+    // Frames go BACK to the pool, never into the bin. The pool is fixed-size
+    // (BUFFER_MAX + 3) and is never refilled, so dropping the two or three
+    // frames that are always in flight at end() leaks them: after six spectates
+    // — or six clicks on another scoreboard row, since begin() calls end() —
+    // the pool is empty, `this._pool.pop() ?? this._buf.shift()` in onSnapshot
+    // yields undefined, and the TypeError is swallowed by NetClient's try/catch.
+    // The symptom is not a crash: towers appear (they are applied before the
+    // frame is filled), no creep ever does, and the banner stays on "loading"
+    // for the rest of the run.
+    while (this._buf.length) this._pool.push(this._buf.pop());
     this._a = null;
     this._b = null;
     this._lastN = 0;

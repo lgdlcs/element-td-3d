@@ -102,7 +102,12 @@ export class Game {
       gold: ECONOMY.startGold,
       lives: ECONOMY.startLives,
       wave: 0,
-      elements: [],          // owned element ids
+      elements: [],          // owned element ids — SPENDABLE, primals eat two
+      // Append-only ledger of every element ever chosen from the picker. Same
+      // contents as `elements` until the first primal is built, and then
+      // deliberately different: `elements` is a resource and rollElementChoices
+      // must not read a resource. See its docblock.
+      picks: [],
       pendingElementPicks: 0,
       // Advances only when a pick is committed — see rollElementChoices.
       pickIndex: 0,
@@ -299,6 +304,7 @@ export class Game {
   chooseElement(id) {
     if (this.state.pendingElementPicks <= 0) return false;
     this.state.elements.push(id);
+    this.state.picks.push(id);
     this.state.pendingElementPicks--;
     this.state.pickIndex++;
     this.audio.play('elementPick');
@@ -355,21 +361,30 @@ export class Game {
    *     single pickN below. Never call rand() inside a branch that depends on
    *     player state, or two clients with different holdings desync every draw
    *     after the first.
-   *  2. The result is a pure function of (seed, pickIndex, the MULTISET of owned
-   *     elements). It must not depend on the ORDER of state.elements: two players
-   *     who took fire-then-water and water-then-fire hold the same thing and must
-   *     see the same offer.
+   *  2. The result is a pure function of (seed, pickIndex, the MULTISET of
+   *     PICKS). It must not depend on the ORDER of the picks: two players who
+   *     took fire-then-water and water-then-fire have chosen the same thing and
+   *     must see the same offer.
+   *  3. It reads state.picks, NOT state.elements. Those two diverge the moment a
+   *     primal is built, because building one spends two stacks — and counting
+   *     the spendable pool made the offer a function of BUILD decisions too. Two
+   *     players who had picked fire three times got different cards purely
+   *     because one of them had placed the tower: fire fell out of the `spare`
+   *     pool back into `echo`, displacing the third fresh element and with it
+   *     every fusion that element unlocks. Silent, and the exact opposite of
+   *     what this docblock promises.
    */
   rollElementChoices() {
     const counts = new Map();
-    for (const id of this.state.elements) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const id of this.state.picks) counts.set(id, (counts.get(id) ?? 0) + 1);
 
     const rand = rngFor(this.seed, 'elements', this.state.pickIndex);
     const order = pickN(rand, ELEMENT_IDS, ELEMENT_IDS.length);   // exactly 6 rand() calls
     const rank = new Map(order.map((id, i) => [id, i]));
 
-    // Pool 1: never held. Pool 2: held, but not yet at a full primal. Pool 3:
-    // already at three or more — dead value right now, so last-resort filler only.
+    // Pool 1: never picked. Pool 2: picked, but not yet enough for a primal.
+    // Pool 3: already picked three or more — the primal is unlocked, so another
+    // copy adds nothing new, hence last-resort filler only.
     const fresh = order.filter((id) => !counts.has(id));
     const echo = order.filter((id) => {
       const n = counts.get(id) ?? 0;
@@ -983,11 +998,28 @@ export class Game {
     this._spectate = null;
     this.spectating = false;
 
-    for (const t of this.towers.towers) this.towers.batch.attach(t);
+    // attach() hands out fresh batch instances whose matrices are still the
+    // identity, and resets `rise` to 0 to replay the placement animation. Both
+    // are wrong here. These towers were already standing before the player
+    // looked away, so seat them SETTLED rather than making the whole maze climb
+    // out of the ground again; and the matrices have to be written NOW, because
+    // batch.update() is only reachable from TowerManager.update() inside #step(),
+    // which FROZEN_PHASES skips — and the two most common ways out of spectate
+    // are #gameOver() and #victory(). Without this the end card comes up over
+    // every local tower stacked at the world origin at identity scale, with the
+    // glow and rune layers still laid out for the opponent's board because
+    // _layoutDirty is only consumed by that same update().
+    for (const t of this.towers.towers) {
+      this.towers.batch.attach(t);
+      t.rise = 1;
+      t.riseY = 0;
+      t.baseDirty = true;
+    }
     this.towers.renderEnabled = true;
     this.projectiles.renderEnabled = true;
     this.creeps.renderEnabled = true;
     this.creeps.setVisible(true);
+    this.towers.batch.update(this.towers.towers, 0, this.elapsed);
 
     this.arena.grid = this.grid;
     this.arena.mask.grid = this.grid;
