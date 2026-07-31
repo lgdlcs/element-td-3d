@@ -34,12 +34,15 @@
  * half, and it rides the same timer.
  */
 
+import { createServer as createHttpServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { pathToFileURL } from 'node:url';
 import { Rooms, cleanName, intCount } from './rooms.js';
 import { Leaderboard } from './leaderboard.js';
+import { serveStatic } from './static.js';
 
 const DEFAULT_PORT = Number(process.env.PORT) || 5274;
+export const WS_PATH = '/ws';
 
 /** Server-owned broadcast rates. Clients cannot influence these. */
 const SCORES_MS = 500;   // the documented ~2 Hz leaderboard
@@ -592,22 +595,37 @@ function isEntryPoint() {
 }
 
 if (isEntryPoint()) {
-  const srv = createServer();
-  // From the `listening` event, and EADDRINUSE exits non-zero. Printed
-  // unconditionally, it lied: a second `PORT=5719 node server/index.js` announced
-  // "listening on ws://localhost:5719", then logged the EADDRINUSE, then exited
-  // with status 0 - so `npm run server` reported success on a port conflict and a
-  // supervisor with restart-on-failure saw a clean voluntary shutdown.
-  srv.wss.on('listening', () => {
-    console.log(`[mp] lobby server listening on ws://localhost:${srv.port}`);
-  });
-  srv.wss.on('error', (err) => {
-    if (err && err.code === 'EADDRINUSE') {
-      console.error(`[mp] port ${srv.port} is already in use; not starting`);
-      process.exit(1);
+  const port = Number(process.env.PORT) || 5274;
+
+  // noServer: ws must not open its own listener. One process, one port, one
+  // certificate — which is the entire reason CORS and mixed-content cannot
+  // happen to this deployment.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
+  const srv = createServer({ wss, leaderboardFile: process.env.LEADERBOARD_FILE || null });
+
+  const http = createHttpServer((req, res) => serveStatic(req, res));
+
+  http.on('upgrade', (req, socket, head) => {
+    let pathname = '';
+    try { pathname = new URL(req.url, 'http://localhost').pathname; } catch { /* falls through to 400 */ }
+    if (pathname !== WS_PATH) {
+      // A bare destroy() leaves the client waiting for the handshake timeout.
+      socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
     }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
-  const bye = () => { srv.close().then(() => process.exit(0)); };
+
+  // 0.0.0.0, not localhost: Render routes to the container's external
+  // interface, and a server bound to 127.0.0.1 answers nothing and reports no
+  // error — the health check just times out.
+  http.listen(port, '0.0.0.0', () => console.log(`[mp] listening on :${port} (ws ${WS_PATH})`));
+  http.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') { console.error(`[mp] port ${port} in use; not starting`); process.exit(1); }
+  });
+
+  const bye = () => { srv.close().then(() => http.close(() => process.exit(0))); };
   process.on('SIGINT', bye);
   process.on('SIGTERM', bye);
 }

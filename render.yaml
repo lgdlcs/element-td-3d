@@ -1,0 +1,27 @@
+# Render Blueprint. One web service: the same node process serves dist/ over
+# HTTP and the lobby socket over the SAME port, so the WebSocket inherits
+# Render's TLS certificate (wss:// for free) and no request is ever
+# cross-origin.
+services:
+  - type: web
+    name: element-td-3d
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeploy: true
+    # --include=dev is NOT optional. `vite` is a devDependency, and npm skips
+    # devDependencies whenever NODE_ENV=production — which is why NODE_ENV is
+    # deliberately absent from envVars below. Without this flag the build fails
+    # with "vite: not found".
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # PORT is injected by Render and already read by server/index.js
+      # (`Number(process.env.PORT) || 5274`). Do not set it here.
+      # LEADERBOARD_FILE is deliberately unset: no persistent disk on the free
+      # plan means an in-memory board is the honest configuration. See the
+      # deployment docs.
