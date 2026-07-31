@@ -299,7 +299,25 @@ export class HUD {
   announceInterest(gold) { if (gold > 0) this.warn(`Interest banked · +${num(gold)} gold`, 'good'); }
   announceBonus(gold) { this.warn(`Early send bonus · +${num(gold)} gold`, 'good'); }
 
+  /**
+   * Fold the build/inspect surfaces away while another player's board is on
+   * screen. A dock that offers to build on someone else's maze is a lie, and
+   * every click it accepts would be refused by a Game that is not looking.
+   *
+   * A class on the root, not per-panel state: each of those panels owns its own
+   * visibility for its own reasons (the codex, the inspector's selection, the
+   * threat rail's collapse), and reaching into four of them from here would mean
+   * restoring four things correctly on the way out.
+   */
+  setSpectating(on) {
+    this.root.classList.toggle('spectating', !!on);
+    if (on) this.showPlacementHint(null);
+  }
+
   floatText(x, y, z, text, color) {
+    // Your own +42 gold labels must not float over someone else's board. The
+    // local simulation keeps producing them the whole time you are watching.
+    if (this.game.spectating) return;
     const el = document.createElement('div');
     el.className = 'float-text';
     el.textContent = text;

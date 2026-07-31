@@ -3,6 +3,9 @@ import { PerfHud } from './ui/PerfHud.js';
 import { NetClient } from './net/NetClient.js';
 import { Lobby } from './ui/Lobby.js';
 import { Scoreboard } from './ui/Scoreboard.js';
+import { SpectateBar } from './ui/SpectateBar.js';
+import { SpectateStreamer } from './game/spectate/SpectateStreamer.js';
+import { SpectateView } from './game/spectate/SpectateView.js';
 import { loadBest, saveBest } from './net/BestScore.js';
 
 /**
@@ -118,6 +121,9 @@ async function start() {
   window.__scoreboard = scoreboard;
   let multiplayer = false;
 
+  const spectate = wireSpectate(game, net, scoreboard);
+  window.__spectate = spectate;
+
   // The cached best is available before any network exists, so the status bar is
   // correct on frame one whether or not a server is ever reached.
   game.hud.setBest(loadBest().score);
@@ -145,6 +151,11 @@ async function start() {
     // to know the wire rate, and a rate decision made here would drift from the
     // one the transport already enforces.
     if (multiplayer) net.status(game.snapshot());
+    // Deliberately NOT guarded by `multiplayer`: the honest guard is
+    // `net.streaming`, which the streamer checks first and which can only be
+    // true inside a running room anyway. One condition, owned by the transport,
+    // instead of two that can disagree.
+    spectate.tick(now);
     perf.update(dt);
     requestAnimationFrame(loop);
   }
@@ -163,6 +174,93 @@ async function start() {
       net.on('over', (m) => scoreboard.showFinal(m.standings ?? [], chosen.you));
     }
   }
+}
+
+/**
+ * Couple the spectate feature to the transport, the game and the leaderboard.
+ *
+ * Like openLobby below, this is the ONLY place that knows both halves.
+ * Game.js knows how to put another board on screen but nothing about rooms or
+ * sockets; NetClient knows how to subscribe but nothing about rendering; the
+ * scoreboard knows who is in the room but not what a snapshot is. All three
+ * stay ignorant of each other, and the coupling is these forty lines.
+ *
+ * @returns {{tick(nowMs: number): void, view: ?SpectateView}}
+ */
+function wireSpectate(game, net, scoreboard) {
+  const bar = new SpectateBar(document.getElementById('ui-root'));
+  const streamer = new SpectateStreamer(game);
+
+  // LAZY. Constructing the view compiles four creep shader programs plus the
+  // projectile billboard and ribbon programs; a solo player, and a multiplayer
+  // player who never clicks a row, must not pay for any of it. Built on the
+  // first `watching` ack and reused for every target after that.
+  let view = null;
+  const ensureView = () => {
+    if (view) return view;
+    view = new SpectateView(game);
+    view.onProtocolError = (why) => {
+      console.warn('[spectate] dropping subscription:', why);
+      game.exitSpectate('protocol');
+    };
+    return view;
+  };
+
+  // Toggle: clicking the row you are already watching stops. The scoreboard
+  // cannot decide that on its own — only the transport knows what is subscribed
+  // — which is why it reports the click rather than acting on it.
+  scoreboard.onWatch = (id) => {
+    if (net.watching === id) net.unwatch();
+    else net.watch(id);
+  };
+  bar.onExit = () => game.exitSpectate('button');
+
+  net.onWatching = ({ id, name }) => {
+    const v = ensureView();
+    const color = scoreboard.seatColor(id);
+    // begin() before enterSpectate(): enterSpectate short-circuits when it is
+    // already spectating precisely so a target switch does not tear down the
+    // board that has just been prepared here.
+    v.begin({ id, name, color });
+    game.enterSpectate(v);
+    scoreboard.setWatching(id);
+    bar.show(name, color);
+  };
+
+  // Every involuntary end — the streamer finished, left, or the room ended —
+  // arrives here. Game.exitSpectate is idempotent, and its own exits (Escape,
+  // the button, the local run ending) come back through onSpectateExit, so
+  // there is exactly one teardown path however the mode ends.
+  net.onUnwatch = ({ reason }) => game.exitSpectate(reason);
+
+  net.onBoardSnapshot = (m) => view?.onSnapshot(m);
+
+  game.onSpectateExit = (reason) => {
+    // 'switch' never reaches here (see enterSpectate), but a future caller
+    // might: dropping the subscription on a switch would cancel the one that is
+    // being set up in the same tick.
+    if (reason === 'switch') return;
+    bar.hide();
+    scoreboard.setWatching(null);
+    // Already null when the SERVER ended it — NetClient clears it before it
+    // calls onUnwatch — so this only fires for the exits we initiated.
+    if (net.watching) net.unwatch();
+  };
+
+  // A new round reuses the socket and the ids, so a streamer that does not
+  // forget what the previous round's watchers were told would send deltas
+  // against a board that no longer exists.
+  net.on('go', () => streamer.reset());
+
+  return {
+    get view() { return view; },
+    tick(nowMs) {
+      streamer.tick(net, nowMs);
+      if (!game.spectating || !view) return;
+      bar.update(view.stats, view.loading);
+      bar.setStalled(view.stalled);
+    },
+  };
 }
 
 /**

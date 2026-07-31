@@ -79,6 +79,17 @@ export class ProjectileManager {
 
     this._time = 0;
     this._hitList = [];
+
+    /**
+     * When false, projectiles fly, home, impact and damage exactly as before but
+     * nothing is written to the billboard/ribbon buffers.
+     *
+     * Guards ONLY the buffer writes, never the simulation: the local run must
+     * keep resolving its own shots while the player watches another board, and a
+     * flag that skipped update() would freeze every projectile in mid-air and
+     * silently stop dealing damage.
+     */
+    this.renderEnabled = true;
   }
 
   /**
@@ -205,7 +216,13 @@ export class ProjectileManager {
     }
 
     this.#updateFades(dt);
-    this.#writeInstances();
+    // One EMPTY write on the frame rendering is switched off, then nothing.
+    // Skipping the write outright would leave the last frame's billboards and
+    // ribbons resident in the buffers, so the local board's shots would hang
+    // frozen in mid-air across the spectated board — the exact artefact the
+    // flag exists to prevent.
+    if (this.renderEnabled) { this.#writeInstances(false); this._drawn = true; }
+    else if (this._drawn) { this._drawn = false; this.#writeInstances(true); }
   }
 
   /** World-space trail sampling: push a node only once we've actually moved. */
@@ -387,11 +404,13 @@ export class ProjectileManager {
 
   // -------------------------------------------------------------------
 
-  #writeInstances() {
+  /** @param {boolean} [empty] commit an empty frame instead of the live one. */
+  #writeInstances(empty = false) {
     const R = this.renderer;
     const rib = this.ribbons;
     R.begin();
     rib.begin();
+    if (empty) { R.end(this._time); rib.end(); return; }
 
     for (let i = 0; i < MAX; i++) {
       if (!this.alive[i]) continue;

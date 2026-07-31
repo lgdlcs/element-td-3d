@@ -105,6 +105,18 @@ export class EffectSystem {
     // 30-tower barrage never turns the screen into soup.
     this.loadEma = 0;
     this._eventsThisFrame = 0;
+
+    /**
+     * Drop every NEW emission while true. Set around the local simulation only,
+     * while the player is watching another board (Game.frame).
+     *
+     * `update()` is deliberately NOT gated by this: particles already in flight
+     * have to finish their arc, and freezing them mid-air is a more obvious
+     * artefact than letting a half-second of the previous board's smoke drift
+     * out. The spectate view emits through this same system a few lines later in
+     * the same frame, which is why the mute wraps the sim rather than the frame.
+     */
+    this.muted = false;
   }
 
   #build() {
@@ -301,6 +313,7 @@ export class EffectSystem {
   emit({ x, y, z, vx = 0, vy = 0, vz = 0, life = 1, size = 0.5, sizeEnd = 0,
          color = [1, 1, 1], drag = 1.5, grav = 0, kind = 0, spin = 0, stretch = 0,
          alphaScale = 1 }) {
+    if (this.muted) return -1;
     const i = this.head;
     this.head = (this.head + 1) % this.max;
     this.stretch[i] = stretch;
@@ -330,6 +343,7 @@ export class EffectSystem {
    * no hint we fall back to a vertical cone and colour-derived family.
    */
   registerSpawnHint(x, y, z, dx, dy, dz, family) {
+    if (this.muted) return;
     const l = Math.hypot(dx, dy, dz) || 1;
     const h = this._hints[this._hintCursor];
     this._hintCursor = (this._hintCursor + 1) % this._hints.length;
@@ -355,6 +369,7 @@ export class EffectSystem {
    * sprite anywhere in here.
    */
   muzzleFlash(x, y, z, colorHex, scale = 1) {
+    if (this.muted) return;
     this._eventsThisFrame++;
     const ident = hexToLinear(colorHex);
     const hint = this.#findHint(x, y, z);
@@ -532,6 +547,9 @@ export class EffectSystem {
    * column, longer-lived ground decal, stronger light.
    */
   impactCore(x, y, z, c, family, scale, heavy, radius = 0) {
+    // The one choke point for impact(), impactElemental() and explosion(): all
+    // three route here, so muting it mutes them without three more guards.
+    if (this.muted) return;
     this._eventsThisFrame++;
     const F = FAMILY_FX[family] ?? FAMILY_FX.light;
     const th = this.throttle;
@@ -730,6 +748,7 @@ export class EffectSystem {
   }
 
   death(x, y, z, colorHex) {
+    if (this.muted) return;
     this._eventsThisFrame++;
     const c = hexToLinear(colorHex);
     const th = this.throttle;
@@ -767,6 +786,7 @@ export class EffectSystem {
    * light contribution at both ends.
    */
   lightning(x0, y0, z0, x1, y1, z1, c) {
+    if (this.muted) return;
     this._eventsThisFrame++;
     const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
     const len = Math.hypot(dx, dy, dz) || 1;
@@ -817,6 +837,7 @@ export class EffectSystem {
 
   /** Soft ground shadow under an arcing projectile. */
   groundShadow(x, z, r, dur = 0.08) {
+    if (this.muted) return;
     this.decals.addMark(x, z, r, r, dur, M_SHADOW, BLACK, 1);
   }
 
