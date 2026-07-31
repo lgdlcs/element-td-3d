@@ -1,0 +1,25 @@
+{
+  "name": "element-td-3d",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite --port 5273",
+    "build": "vite build",
+    "preview": "vite preview --port 5273",
+    "server": "node server/index.js",
+    "dev:mp": "node server/index.js & vite --port 5273"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.185.1",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.0",
+    "vite": "^8.1.5"
+  },
+  "type": "module"
+}

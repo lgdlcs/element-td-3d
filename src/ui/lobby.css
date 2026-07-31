@@ -1,0 +1,420 @@
+/* =========================================================================
+   ELEMENT TD — Convergence · lobby overlay
+   ---------------------------------------------------------------------
+   Same obsidian-and-gold vocabulary as ui.css, borrowed wholesale: it uses
+   the :root custom properties defined there and reuses the boot sigil
+   (.boot-sigil / .boot-ring / .boot-orbit / .boot-core) verbatim so the
+   lobby reads as the second page of the loading screen rather than as a
+   form. ui.css MUST be loaded first — this file defines no tokens of its
+   own, deliberately, so a palette change there lands here too.
+
+   The surface is modelled on #picker and #endcard: a veiled, centred plate
+   over a dimmed board, never a bright box.
+   ========================================================================= */
+
+#lobby {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  /* Above the picker (30), the end card (40) and the tooltip (45); below the
+     boot veil (100), which must stay the outermost thing on screen. */
+  z-index: 60;
+  opacity: 0;
+  transition: opacity var(--t-slow) var(--ease);
+}
+/* `hidden` has to beat `display: grid`, or the overlay stays interactive and
+   swallows every click on the board behind it while "hidden". */
+#lobby[hidden] { display: none; }
+#lobby.open { opacity: 1; }
+
+.lobby-veil {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 68% 58% at 50% 44%, rgba(6, 7, 12, 0.5), rgba(3, 4, 7, 0.96) 76%),
+    linear-gradient(180deg, rgba(3, 4, 7, 0.92), rgba(3, 4, 7, 0.76));
+  backdrop-filter: blur(10px) saturate(0.7);
+  -webkit-backdrop-filter: blur(10px) saturate(0.7);
+}
+
+.lobby-inner {
+  position: relative;
+  width: min(560px, calc(100vw - 36px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 4px;
+  display: grid; gap: 14px;
+  text-align: center;
+  transform: translateY(10px) scale(0.99);
+  transition: transform var(--t-slow) var(--ease);
+}
+#lobby.open .lobby-inner { transform: none; }
+
+/* Focus rings are declared locally rather than inherited from the
+   `#ui-root :focus-visible` rule, because the overlay must keep its rings even
+   if a caller mounts it somewhere other than #ui-root. */
+#lobby :focus { outline: none; }
+#lobby :focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: var(--r-s);
+}
+
+/* =========================================================================
+   HEAD
+   ========================================================================= */
+
+.lobby-head { display: grid; justify-items: center; gap: 0; }
+/* Two thirds of the boot sigil's size: it is a signature here, not the subject.
+   Scaled rather than resized — the orbiting glyphs are positioned with a fixed
+   translateY(-66px) against a 132px box, so shrinking the box alone would fling
+   them outside the rings. transform keeps the whole construction proportional,
+   and the negative margins reclaim the layout space it no longer fills. */
+.lobby-sigil {
+  width: 132px; height: 132px;
+  transform: scale(0.62); transform-origin: 50% 50%;
+  margin: -24px 0 -18px;
+}
+
+.lobby-eyebrow {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.19em;
+  text-transform: uppercase; color: var(--ink-4);
+}
+#lobby-title {
+  font-family: var(--font-display);
+  font-size: clamp(24px, 2.6vw, 32px); font-weight: 400;
+  letter-spacing: 0.22em; text-indent: 0.22em;
+  color: var(--ink);
+  margin-top: 8px;
+  text-shadow: 0 0 60px rgba(229, 189, 121, 0.22);
+}
+#lobby-title::after {
+  content: ''; display: block; width: 78px; height: 1px; margin: 13px auto 0;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+.lobby-sub {
+  margin-top: 12px; font-size: 12.5px; color: var(--ink-3);
+  line-height: 1.5; max-width: 46ch; margin-left: auto; margin-right: auto;
+}
+
+/* =========================================================================
+   STATUS + ERROR
+   ========================================================================= */
+
+.lobby-conn {
+  display: inline-flex; align-items: center; gap: 8px; justify-self: center;
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-4);
+}
+.lc-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--ink-4); box-shadow: none;
+  transition: background var(--t-base), box-shadow var(--t-base);
+}
+.lobby-conn[data-conn='live'] { color: var(--ink-2); }
+.lobby-conn[data-conn='live'] .lc-dot { background: var(--good); box-shadow: 0 0 10px rgba(86, 217, 154, 0.7); }
+.lobby-conn[data-conn='wait'] .lc-dot { background: var(--warn); box-shadow: 0 0 10px rgba(255, 180, 84, 0.6); animation: lbPulse 1.4s ease-in-out infinite; }
+@keyframes lbPulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.lobby-error {
+  font-size: 12px; line-height: 1.45; color: #ffbdb3;
+  padding: 9px 13px; border-radius: var(--r-s);
+  background: rgba(255, 72, 56, 0.09);
+  border: 1px solid rgba(255, 72, 56, 0.32);
+  text-align: left;
+}
+.lobby-error[hidden] { display: none; }
+
+/* =========================================================================
+   CARDS
+   ========================================================================= */
+
+.lobby-card {
+  display: grid; gap: 15px;
+  padding: 17px 17px 18px;
+  border-radius: var(--r-l);
+  text-align: left;
+  /* Deeper than the ambient glass, same reasoning as #codex: this must read as
+     a plate of obsidian over the board, not a frosted grey card. */
+  background: linear-gradient(180deg, rgba(9, 11, 16, 0.95), rgba(6, 7, 11, 0.96));
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+}
+/* One state at a time. Everything is in the DOM so that focus targets and
+   aria-live regions survive a state change instead of being recreated. */
+#lobby.s-idle       #lobby-room,    #lobby.s-idle       #lobby-offline { display: none; }
+#lobby.s-connecting #lobby-room,    #lobby.s-connecting #lobby-offline { display: none; }
+#lobby.s-lobby      #lobby-entry,   #lobby.s-lobby      #lobby-offline { display: none; }
+#lobby.s-offline    #lobby-entry,   #lobby.s-offline    #lobby-room    { display: none; }
+
+/* Connecting is the idle card with its controls locked, not a spinner screen:
+   the player keeps seeing the name they typed and the code they entered, which
+   is what they need if it fails. */
+#lobby.s-connecting #lobby-entry { opacity: 0.55; }
+
+.lobby-legend {
+  display: block;
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.19em;
+  text-transform: uppercase; color: var(--ink-4);
+  margin-bottom: 7px;
+}
+.lobby-note { display: block; font-size: 10.5px; color: var(--ink-4); margin-top: 6px; line-height: 1.4; }
+.lobby-note.wide { text-align: center; }
+.lobby-note.bad { color: var(--warn); }
+.lobby-note code {
+  font-family: var(--font-num); font-size: 10px; color: var(--ink-2);
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.055); border: 1px solid var(--line);
+}
+
+/* --- inputs --- */
+
+#lobby .lobby-input {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit; font-size: 14px;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-s);
+  transition: border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-fast);
+  /* The rest of the UI sets user-select: none on body; a text field that
+     refuses to let you select your own name is indistinguishable from broken. */
+  user-select: text;
+  cursor: text;
+}
+#lobby .lobby-input:hover { border-color: var(--line-3); }
+#lobby .lobby-input:focus { border-color: var(--gold); background: rgba(0, 0, 0, 0.55); box-shadow: 0 0 0 3px rgba(229, 189, 121, 0.1); }
+#lobby .lobby-input::placeholder { color: var(--ink-4); letter-spacing: 0.3em; }
+#lobby .lobby-input:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Over the limit is shown, never enforced by truncation — see #onNameInput. */
+#lobby .lobby-input.over { border-color: var(--warn); }
+
+#lobby .lobby-input.code {
+  font-family: var(--font-num);
+  font-size: 21px; letter-spacing: 0.42em; text-indent: 0.42em;
+  text-transform: uppercase; text-align: center;
+  padding: 9px 8px;
+  color: var(--gold-hi);
+}
+
+.shake { animation: lbShake 380ms var(--ease); }
+@keyframes lbShake {
+  0%, 100% { transform: translateX(0); }
+  22% { transform: translateX(-5px); }
+  55% { transform: translateX(4px); }
+  80% { transform: translateX(-2px); }
+}
+
+/* --- create / join split --- */
+
+.lobby-split { display: grid; grid-template-columns: 1fr auto 1fr; gap: 13px; align-items: start; }
+.lobby-half { display: block; min-width: 0; }
+/* A <button> sizes to fit-content even at display:grid, so inside a plain block
+   column it came out narrower than the field beside it and the two paths looked
+   like different weights of choice. Grid children stretch on their own, which is
+   why the action row is not in this list. */
+#lobby .lobby-half > .lobby-btn { width: 100%; }
+.lobby-joinrow { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+.lobby-or {
+  align-self: stretch; display: grid; justify-items: center;
+  /* The rule runs the full height of the taller column so the two paths read as
+     genuine alternatives rather than as a sequence. */
+  grid-template-rows: 1fr auto 1fr;
+  padding-top: 18px;
+}
+.lobby-or::before, .lobby-or::after {
+  content: ''; width: 1px; min-height: 14px;
+  background: linear-gradient(180deg, transparent, var(--line-3));
+}
+.lobby-or::after { background: linear-gradient(180deg, var(--line-3), transparent); }
+.lobby-or span {
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-4); padding: 5px 0;
+}
+
+/* --- buttons ---
+   Every interactive rule below is scoped `#lobby .thing` rather than `.thing`.
+   ui.css line ~83 has `#ui-root button { border: none; background: none; }`,
+   which is (1,0,1) and out-specifies any bare class — the first render of this
+   overlay had a gold "Create room" label floating on nothing, because the
+   gradient and the border were both being reset by that rule. The `#lobby`
+   prefix makes these (1,1,0) and wins without resorting to !important. */
+
+#lobby .lobby-btn {
+  font: inherit; color: var(--ink-2); cursor: pointer;
+  display: grid; justify-items: center; gap: 2px;
+  padding: 10px 16px;
+  border-radius: var(--r-s);
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.028);
+  font-size: 12.5px;
+  transition: all var(--t-base) var(--ease);
+}
+#lobby .lobby-btn b { font-weight: 550; font-size: 12.5px; color: var(--ink); }
+#lobby .lobby-btn span { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-4); }
+#lobby .lobby-btn:hover:not(:disabled) { border-color: var(--line-3); background: rgba(255, 255, 255, 0.07); color: var(--ink); }
+#lobby .lobby-btn:active:not(:disabled) { transform: scale(0.985); }
+
+#lobby .lobby-btn.primary {
+  border-color: rgba(229, 189, 121, 0.36);
+  background: linear-gradient(180deg, rgba(229, 189, 121, 0.19), rgba(229, 189, 121, 0.06));
+  color: var(--gold-hi);
+}
+#lobby .lobby-btn.primary b { color: var(--gold-hi); }
+#lobby .lobby-btn.primary span { color: rgba(229, 189, 121, 0.6); }
+#lobby .lobby-btn.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--gold-hi), var(--gold));
+  border-color: var(--gold-hi); color: #14100a;
+}
+#lobby .lobby-btn.primary:hover:not(:disabled) b { color: #14100a; }
+#lobby .lobby-btn.primary:hover:not(:disabled) span { color: rgba(20, 16, 10, 0.65); }
+
+#lobby .lobby-btn.ghost { border-color: transparent; color: var(--ink-3); }
+#lobby .lobby-btn.ghost:hover:not(:disabled) { background: rgba(255, 95, 87, 0.12); color: var(--danger); border-color: rgba(255, 95, 87, 0.3); }
+
+/* A disabled control is dimmed but never hidden: the Start button's sibling
+   note explains the block, and a control that vanishes teaches nothing. */
+#lobby .lobby-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#lobby .lobby-btn.on {
+  border-color: rgba(86, 217, 154, 0.45);
+  background: rgba(86, 217, 154, 0.13);
+  color: var(--good);
+}
+#lobby .lobby-btn.on:hover { border-color: rgba(86, 217, 154, 0.7); background: rgba(86, 217, 154, 0.2); color: var(--good); }
+
+/* =========================================================================
+   ROOM CODE  — the invitation
+   ========================================================================= */
+
+.lobby-codeblock { display: grid; justify-items: center; text-align: center; }
+#lobby .lobby-code {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 14px 12px;
+  border-radius: var(--r-m);
+  border: 1px solid rgba(229, 189, 121, 0.28);
+  background: linear-gradient(180deg, rgba(229, 189, 121, 0.1), rgba(229, 189, 121, 0.02));
+  font: inherit; color: inherit; cursor: pointer;
+  transition: all var(--t-base) var(--ease);
+}
+#lobby .lobby-code:hover:not(:disabled) { border-color: var(--gold); background: rgba(229, 189, 121, 0.16); }
+#lobby .lobby-code:disabled { opacity: 0.4; cursor: default; }
+.lobby-code-chars { display: flex; gap: 7px; }
+.lobby-code-chars i {
+  font-style: normal; font-family: var(--font-num);
+  /* Big enough to read across a room and to dictate over a voice call: this one
+     string is the whole invite mechanism, and a code you have to squint at is
+     the difference between the feature being used and not. */
+  font-size: 34px; font-weight: 500; line-height: 1;
+  width: 34px; text-align: center;
+  color: var(--gold-hi);
+  text-shadow: 0 0 30px rgba(229, 189, 121, 0.45);
+}
+.lobby-code-chars i.pending { color: var(--ink-4); text-shadow: none; }
+.lobby-copy-hint {
+  font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: rgba(229, 189, 121, 0.75);
+  padding: 4px 7px; border-radius: 4px; border: 1px solid rgba(229, 189, 121, 0.28);
+}
+#lobby .lobby-code.copied { border-color: var(--good); background: rgba(86, 217, 154, 0.12); }
+#lobby .lobby-code.copied .lobby-copy-hint { color: var(--good); border-color: rgba(86, 217, 154, 0.45); }
+
+/* =========================================================================
+   ROSTER
+   ========================================================================= */
+
+.lobby-rosterhead { display: flex; align-items: baseline; justify-content: space-between; }
+.lobby-rosterhead .lobby-legend { margin-bottom: 0; }
+.lobby-count { font-family: var(--font-num); font-size: 10.5px; color: var(--ink-4); }
+.lobby-rosterwrap { display: grid; gap: 8px; }
+
+.lobby-roster { list-style: none; display: grid; gap: 3px; }
+.lb-row {
+  display: grid; grid-template-columns: 20px 1fr auto auto auto;
+  align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-s);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12.5px;
+  transition: border-color var(--t-base), background var(--t-base);
+}
+.lb-slot { font-family: var(--font-num); font-size: 10px; color: var(--ink-4); }
+.lb-name {
+  color: var(--ink); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lb-state {
+  font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-4);
+}
+.lb-tag {
+  font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 4px;
+  border: 1px solid var(--line-2); color: var(--ink-3);
+}
+.lb-tag.host { color: var(--gold); border-color: rgba(229, 189, 121, 0.36); background: var(--gold-dim); }
+.lb-tag.you { color: var(--ink); border-color: var(--line-3); }
+
+.lb-row.ready { border-color: rgba(86, 217, 154, 0.32); background: rgba(86, 217, 154, 0.07); }
+.lb-row.ready .lb-state { color: var(--good); }
+
+/* Which row is you has to be unmistakable at a glance — the leaderboard uses
+   the same gold spine in-game, so the association is learned once. */
+.lb-row.you { border-color: rgba(229, 189, 121, 0.4); background: rgba(229, 189, 121, 0.07); box-shadow: inset 2px 0 0 var(--gold); }
+
+.lb-row.open {
+  border-style: dashed; border-color: rgba(255, 255, 255, 0.12);
+  background: none; opacity: 0.5;
+}
+.lb-row.open .lb-name { color: var(--ink-4); font-size: 11.5px; }
+
+.lobby-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 7px; }
+/* Hidden, not merely dim: a non-host has no Start button at all, so the row
+   collapses to two controls instead of leaving a dead column. */
+#lobby-start[hidden] { display: none; }
+
+/* =========================================================================
+   OFFLINE + FOOT
+   ========================================================================= */
+
+.lobby-offline-line { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }
+/* Calm, not alarmed: this is a supported state, so it borrows the warm hairline
+   of the tooltip's "locked" note rather than the red of .lobby-error. */
+#lobby-offline { border-color: rgba(255, 180, 84, 0.22); }
+
+.lobby-foot {
+  display: grid; gap: 10px; justify-items: center;
+  padding-top: 2px;
+}
+#lobby .lobby-btn.solo { min-width: 220px; }
+.lobby-keys {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; color: var(--ink-4);
+}
+
+/* =========================================================================
+   RESPONSIVE
+   ========================================================================= */
+
+@media (min-width: 2200px) {
+  .lobby-inner { width: min(680px, calc(100vw - 48px)); gap: 18px; }
+  .lobby-sub { font-size: 14px; }
+  .lobby-code-chars i { font-size: 42px; width: 42px; }
+  .lb-row { font-size: 14px; padding: 10px 12px; }
+  #lobby .lobby-btn { font-size: 14px; padding: 12px 18px; }
+}
+
+/* Two columns of controls stop being two columns before they become unreadable:
+   below this the create/join split stacks and the "or" rule turns horizontal. */
+@media (max-width: 560px), (max-height: 700px) {
+  .lobby-split { grid-template-columns: 1fr; gap: 10px; }
+  .lobby-or { grid-template-rows: none; grid-template-columns: 1fr auto 1fr; padding: 0; align-items: center; }
+  .lobby-or::before, .lobby-or::after { width: auto; height: 1px; background: linear-gradient(90deg, transparent, var(--line-2)); }
+  .lobby-or::after { background: linear-gradient(90deg, var(--line-2), transparent); }
+  .lobby-sigil { display: none; }
+  .lobby-sub { display: none; }
+  .lobby-card { padding: 13px 13px 14px; gap: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shake { animation: none !important; }
+}

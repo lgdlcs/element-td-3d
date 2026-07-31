@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({args:['--use-angle=metal','--enable-unsafe-swiftshader']});
+const p = await b.newPage();
+const logs=[];
+p.on('console',m=>logs.push('['+m.type()+'] '+m.text()));
+p.on('pageerror',e=>logs.push('[pageerror] '+e.message+'\n'+(e.stack||'')));
+await p.goto('http://localhost:5273/?q=ultra',{waitUntil:'load'});
+await p.waitForTimeout(15000);
+console.log('game?', await p.evaluate(()=>!!window.__game));
+console.log(logs.join('\n').slice(0,4000));
+await b.close();

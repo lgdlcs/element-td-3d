@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Screenshots and comparisons
+shots/
+cmp/
+*.png
+
+# Server artifacts
+server/leaderboard.json
+
+# OS
+.DS_Store

@@ -1,0 +1,331 @@
+/* =========================================================================
+   ELEMENT TD — Convergence · live leaderboard
+   ---------------------------------------------------------------------
+   Bottom-left corner: the one edge region the HUD layout contract leaves
+   unowned (top bar / threat rail / inspector / build dock take the rest).
+   Same glass, hairline and monospace-numbers vocabulary as ui.css, which owns
+   all the custom properties used here — this file adds no palette of its own
+   so a change to --gold or --glass moves the leaderboard with everything else.
+   ========================================================================= */
+
+#scoreboard {
+  position: absolute;
+  left: 18px;
+  bottom: 16px;
+  /* 242px matches #threat — one coherent left rail — but only while there is
+     room for it. The build dock is centred, so its left corner marches toward
+     the rail as the viewport narrows: measured left edges are 464px at 1600
+     wide, 384 at 1440, 320 at 1280, 275 at 1101, 263 at 1050, 243 at 1000, 218
+     at 950. It crosses the panel's right edge (18 + 242 = 260) at about 1030px
+     wide. The dock's own width is 514-551px through that band, so half of it
+     plus the panel's 18px offset plus 8px of air is 50vw - 301px; min() pins
+     the panel to the rail's width until that expression is the smaller one.
+     Below ~1000px the panel is therefore narrower than the rail, which costs
+     the name column characters (they ellipsise, full name in the title
+     attribute) — deliberately, because the alternative is the lift this file
+     used to do, and see the note on `.crowded` for what that cost. */
+  width: min(242px, calc(50vw - 301px));
+  padding: 9px 10px 10px;
+  border-radius: var(--r-l);
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+  pointer-events: none;              /* nothing here is clickable; never steal a build click */
+
+  /* visibility, not display:none — the panel has to be able to fade, and
+     `display` is not animatable, so a display toggle would make it pop. Unlike
+     `opacity: 0` alone, `visibility: hidden` also takes it out of hit testing
+     and out of the accessibility tree, which is what "hidden entirely in
+     single-player" has to mean for a screen reader.
+     Deliberately NOT a CSS animation: an animation's filling value beats the
+     plain declarations below it, so the codex-open exit transform would be
+     ignored for as long as the panel was on. */
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--t-slow) var(--ease), transform var(--t-slow) var(--ease),
+              visibility var(--t-slow) step-end;
+}
+
+#scoreboard.on {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--t-slow) var(--ease), transform var(--t-slow) var(--ease),
+              visibility 0s;
+}
+
+/* The codex is a full-width plate and the rails step out of its way; the
+   leaderboard is on the same left edge, so it leaves with them. */
+body.codex-open #scoreboard { transform: translateX(calc(-100% - 20px)); opacity: 0; }
+
+.sb-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 7px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+
+.sb-title {
+  font-family: var(--font-display);
+  font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.sb-n {
+  font-family: var(--font-num);
+  font-size: 9px; letter-spacing: 0.06em;
+  color: var(--ink-4);
+}
+
+/* ---- rows ---------------------------------------------------------------
+   A flex column, but the ranking is NOT expressed with the flex `order`
+   property any more. `order` moved the rows visually and left the <ol> frozen in
+   build order, so a screen reader walking the list read a ranking that had not
+   been true since the first overtake. #render() moves the nodes themselves,
+   which keeps the score bars' transitions running through an overtake just as
+   well — the rows are relocated, never re-emitted. */
+.sb-list {
+  display: flex; flex-direction: column;
+  gap: 3px;
+  list-style: none; margin: 0; padding: 0;
+}
+
+/* One line per player, not two.
+   The first version stacked name above score, which read well but cost 50px a
+   row: six rows plus a header came to 327px, and measured against the live HUD
+   at a 1440x698 viewport that put the top of the panel at y=355 — 71px inside
+   the threat rail, which ends at y=426. A single line is ~22px, which clears
+   the rail with room to spare and reads more like an instrument anyway. */
+.sb-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto auto auto;
+  grid-template-areas: 'rank name mine wave lives score';
+  align-items: center;
+  column-gap: 5px;
+  padding: 3px 5px 4px;
+  border-radius: var(--r-s);
+  border: 1px solid transparent;
+  overflow: hidden;
+  transition: background var(--t-base), border-color var(--t-base), opacity var(--t-base);
+}
+
+.sb-rank {
+  grid-area: rank;
+  font-family: var(--font-num);
+  font-size: 10px; text-align: center;
+  color: var(--ink-4);
+}
+
+.sb-name {
+  grid-area: name;
+  font-size: 11px; font-weight: 500;
+  color: var(--ink-2);
+  /* Names are 1–16 characters of arbitrary text from another machine. Measured
+     in the live HUD, the name column gets ~95–111px, which is about 13
+     characters at this size — a 16-character name cannot fit next to three
+     numeric columns in a 242px rail at any font size worth reading, so it
+     ellipsises and the full name lives in the row's title attribute. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.sb-mine {
+  grid-area: mine;
+  font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--gold);
+  background: var(--gold-dim);
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+.sb-wave, .sb-lives {
+  font-family: var(--font-num);
+  font-size: 9.5px;
+  color: var(--ink-4);
+}
+.sb-wave { grid-area: wave; }
+.sb-lives { grid-area: lives; min-width: 24px; text-align: right; }
+.sb-lives::before { content: '♥'; font-size: 8px; margin-right: 1px; opacity: 0.55; }
+
+.sb-score {
+  grid-area: score;
+  font-family: var(--font-num);
+  font-size: 11.5px; font-weight: 500;
+  color: var(--ink);
+  min-width: 40px; text-align: right;
+  font-variant-numeric: tabular-nums;
+  transition: color var(--t-base);
+}
+
+/* The score animation, and the only one: the fill is scaleX(--frac), and JS sets
+   --frac from the relay at ~2 Hz. The transition is longer than the 500ms relay
+   interval on purpose, so the bar reads as continuous growth instead of two
+   visible steps a second. */
+.sb-bar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.sb-bar > s {
+  display: block; height: 100%;
+  transform-origin: left center;
+  transform: scaleX(var(--frac, 0));
+  background: linear-gradient(90deg, rgba(229, 189, 121, 0.35), var(--gold));
+  transition: transform 560ms var(--ease);
+}
+
+/* ---- you ---------------------------------------------------------------
+   Always distinguishable, in three ways at once (fill, gold edge, brighter
+   ink) so it survives being rank 1, being eliminated, and being greyed out. */
+.sb-row.you {
+  background: rgba(229, 189, 121, 0.09);
+  border-color: rgba(229, 189, 121, 0.3);
+}
+.sb-row.you .sb-name { color: var(--ink); font-weight: 600; }
+.sb-row.you .sb-score { color: var(--gold-hi); }
+.sb-row.you .sb-rank { color: var(--gold); }
+
+.sb-row.lead .sb-rank { color: var(--gold-hi); font-weight: 600; }
+.sb-row.low .sb-lives { color: var(--danger); }
+.sb-row.gain .sb-score { color: var(--good); }
+
+/* ---- connected, not heard from yet -------------------------------------
+   Distinct from `.out` and that distinction is the point: the server seeds a
+   roster entry with lives 0 and wave 0, and this panel used to render exactly
+   that as eliminated — dimmed, struck through, "out" in the lives column — for
+   every player who had not yet sent a status, which is everyone for the first
+   seconds of every run. Waiting is a lighter dim with no strike: the row is
+   there, its numbers are not in yet. */
+.sb-row.waiting { opacity: 0.62; }
+.sb-row.waiting .sb-lives, .sb-row.waiting .sb-wave { color: var(--ink-4); letter-spacing: 0; }
+.sb-row.waiting .sb-lives::before { content: none; }
+
+/* ---- eliminated --------------------------------------------------------
+   Dimmed and struck, never removed. Outlasting someone is the reason this
+   panel exists, so a player who died on wave 12 has to stay on the board at
+   wave 12 with their final score for the rest of your run. */
+.sb-row.out {
+  opacity: 0.46;
+  background: rgba(255, 255, 255, 0.02);
+}
+.sb-row.out .sb-name { text-decoration: line-through; text-decoration-thickness: 1px; }
+.sb-row.out .sb-lives { color: var(--danger); letter-spacing: 0.1em; }
+.sb-row.out .sb-lives::before { content: none; }
+.sb-row.out .sb-bar > s { filter: grayscale(0.7); }
+.sb-row.out.you { opacity: 0.72; }   /* your own row stays readable even dead */
+
+.sb-row.won .sb-lives { color: var(--good); }
+.sb-row.won .sb-name::after { content: ' ★'; color: var(--gold-hi); }
+
+/* ---- final standings ---------------------------------------------------
+   The run is over: the panel stops being a glance and becomes a result, so it
+   gets a solid edge and full-strength rows. */
+#scoreboard.is-final {
+  background: var(--glass-hi);
+  border-color: var(--line-2);
+  box-shadow: var(--shadow-2);
+}
+#scoreboard.is-final .sb-title { color: var(--gold); }
+#scoreboard.is-final .sb-row.out { opacity: 0.8; }
+#scoreboard.is-final .sb-row.out .sb-name { text-decoration: none; }
+
+/* ---- yielding to the threat rail ---------------------------------------
+   THERE USED TO BE A LIFT HERE. `@media (max-width: 1100px) { bottom: 122px }`
+   raised the panel above the dock's height, and it was wrong in both directions.
+   It fired ~70px before the dock could reach anything, and the lift drove the
+   panel into the threat rail instead: measured in the live HUD with six rows, at
+   1100x700 the panel's top went to y=367 against the rail's bottom edge at
+   y=438 — 15376px² of two backdrop-filter glass cards and their text stacked on
+   each other, and the same 71px overlap at 1050, 960 and 950. The file's own
+   comment claimed this "clears the rail with room to spare".
+
+   Lifting can never work while the rail is expanded. On a 700px viewport the
+   rail's bottom is at 438px and the dock's top is at 579px: 141px of gap, and
+   six rows are 211px. So the panel keeps the bottom edge, gives up width to
+   clear the dock (see the width clamp above), and gives up its own height in the
+   tiers below. When even that is not enough it leaves, exactly the way it leaves
+   for the codex — Scoreboard.js#fit() sets `.crowded` from a real box test, so
+   the two cards cannot overlap whatever height the rail has grown to.
+
+   A fade with no slide, unlike the show/hide transition: #fit() measures layout
+   boxes rather than transformed rects, and a translate here would be a lie about
+   where the panel is, on the one code path whose whole job is to answer that. */
+#scoreboard.crowded { opacity: 0; visibility: hidden; }
+
+/* On a short viewport the left column has to carry both the threat rail and six
+   rows of leaderboard, and it cannot: the rail's bottom edge is 426px on a quiet
+   wave and 530px on a boss wave, so 6 rows at 211px want a 767px-tall viewport.
+   These tiers buy back what typography can — the panel survives normal combat
+   down to ~660px instead of ~770px — and #fit() covers the rest.
+
+   The wave column goes first: rank, name and score are what the panel is for,
+   and the wave is legible from the row's position in the order anyway.
+
+   780, not 720: at 1440x760 the room left by a boss rail is 760 - 16 - 518 =
+   226px and the full-size panel is 221px, so the two cards came within 5px of
+   each other and #fit() blanked the panel for every boss wave. The compact tier
+   is ~195px, which clears it. */
+@media (max-height: 780px) {
+  /* Width is untouched here — the constraint on a short viewport is vertical,
+     and narrowing the panel would only clip more names. */
+  #scoreboard { padding: 7px 8px 8px; }
+  .sb-head { padding-bottom: 5px; margin-bottom: 4px; }
+  .sb-list { gap: 2px; }
+  .sb-row { padding: 2px 5px 3px; }
+  .sb-wave { display: none; }
+}
+
+/* The last typographic tier, and it exists for one measured case: 1100x700 with
+   a boss rail leaves 700 - 16 - 530 - 8 = 146px, so six rows have to fit in
+   146px or the panel spends every boss wave blanked. Below this the numbers stop
+   being an instrument, so there is nothing smaller worth having and #fit() is
+   the only thing left. */
+@media (max-height: 700px) {
+  #scoreboard { padding: 5px 8px 6px; }
+  .sb-title { font-size: 10.5px; }
+  .sb-head { padding-bottom: 4px; margin-bottom: 3px; }
+  .sb-list { gap: 1px; }
+  /* line-height is the only lever with real travel left in it: the default
+     ~1.45 puts 16.6px of line box around a 10px glyph, and six rows of that is
+     34px of pure leading. Padding and font size together were worth less. */
+  .sb-row { padding: 0 4px 1px; line-height: 1.15; }
+  .sb-name, .sb-score { font-size: 10px; }
+  .sb-lives { font-size: 9px; }
+}
+
+/* Where the panel is narrower than its columns want to be, the numeric columns
+   yield before the name does: a 149px panel at 901px wide leaves the name 33px
+   with the lives column in place, which is an ellipsis and nothing else. */
+@media (max-width: 1000px) {
+  .sb-wave { display: none; }
+}
+@media (max-width: 940px) {
+  .sb-lives { min-width: 0; }
+  .sb-lives::before { content: none; }   /* the ♥ costs 9px the name wants more */
+  .sb-score { min-width: 32px; }
+  .sb-row { column-gap: 3px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* This branch used to read `#scoreboard.on { animation: none; opacity: 1;
+     transform: none }`: three no-ops. There is no animation to disable (the
+     header comment on #scoreboard says why the panel is transitioned and not
+     animated), and `opacity: 1` / `transform: none` only restate what `.on`
+     already declares. Whatever it was meant to suppress, it suppressed nothing.
+
+     What it was presumably after is the 8px slide, and that is still the only
+     thing here worth suppressing: ui.css:1290 already clamps every
+     transition-duration to 60ms !important under this query, so the fade is
+     effectively instant for everything in the HUD and singling the leaderboard
+     out for `transition: none` would only make it inconsistent with its
+     neighbours. Removing the transform is what removes the MOTION — the panel
+     appears where it will stay, and fades at the HUD's 60ms like everything
+     else. The three overrides are all the states that carry a transform; a
+     bare `#scoreboard` rule loses to `.on` and `.crowded` on specificity. */
+  #scoreboard, #scoreboard.on, #scoreboard.crowded, body.codex-open #scoreboard { transform: none; }
+  .sb-bar > s { transition: none; }   /* the score bar snaps to its width */
+}

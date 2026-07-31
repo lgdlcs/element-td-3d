@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>tower silhouette rig</title>
+<style>html,body{margin:0;background:#fff;overflow:hidden}</style>
+<script type="module">
+/**
+ * Standalone tower silhouette rig.
+ *
+ * `tools/tower-sheet.mjs` boots the whole game, so a syntax error anywhere in
+ * the tree — creeps, terrain, VFX — blocks the one instrument the tower agent
+ * needs. This page imports ONLY `TowerArchetypes` and three, so it keeps
+ * working through a parallel round. It draws the requested set flat black on
+ * white with an orthographic-ish side view: no lights, no post, no material.
+ */
+import * as THREE from 'three';
+import { buildTowerSpec } from '/src/game/towers/TowerArchetypes.js';
+
+const q = new URLSearchParams(location.search);
+const SET = (q.get('set') || 'fire,water,nature,earth,light,dark').split(',');
+const LEVEL = Number(q.get('level') || 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(1);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(1, 1, 1);
+const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+const SPACING = 9.5;
+let maxH = 0;
+const specs = [];
+SET.forEach((key, i) => {
+  const def = { key, kind: 'pure', element: key, color: 0xffffff, accent: 0xffffff };
+  const s = buildTowerSpec(def, LEVEL);
+  specs.push({ key, s });
+  maxH = Math.max(maxH, s.height);
+  const x = (i - (SET.length - 1) / 2) * SPACING;
+  const put = (geo, y) => {
+    if (!geo) return;
+    const m = new THREE.Mesh(geo, black);
+    m.position.set(x, y, 0);
+    scene.add(m);
+  };
+  put(s.base, 0);
+  put(s.head, s.headY);
+  put(s.collar, s.collarY);
+  // halo and orbiting shards deliberately omitted: they are detached VFX, not
+  // part of the tower's own outline, and they float differently every frame.
+});
+
+// A ground line, so "does this thing touch the floor" is visible too.
+const line = new THREE.Mesh(new THREE.BoxGeometry(SET.length * SPACING + 8, 0.05, 4), black);
+line.position.y = -0.03;
+scene.add(line);
+
+// Frame it properly. The ortho frustum's top/bottom are measured from the
+// CAMERA's centre, not from world y=0, so they only frame the towers if the
+// camera sits at the midpoint of the range you want to see. Getting this wrong
+// silently crops the bottom of every tower, which is the one part the "does it
+// touch the ground" check needs.
+const W = SET.length * SPACING;
+const spanY = maxH + 2.6;
+const PX_W = 1920;
+const PX_H = Math.round(PX_W * spanY / W);
+renderer.setSize(PX_W, PX_H, false);
+
+const midY = spanY / 2 - 1.0;
+const yaw = Number(q.get('yaw') || 0.42);   // slight yaw so asymmetric plans show
+const cam = new THREE.OrthographicCamera(-W / 2, W / 2, spanY / 2, -spanY / 2, 0.1, 600);
+cam.position.set(Math.sin(yaw) * 300, midY, Math.cos(yaw) * 300);
+cam.lookAt(0, midY, 0);
+cam.updateProjectionMatrix();
+
+renderer.render(scene, cam);
+window.__silReady = true;
+window.__silInfo = specs.map(({ key, s }) => {
+  s.base.computeBoundingBox();
+  const b = s.base.boundingBox;
+  return {
+    key,
+    height: +s.height.toFixed(2),
+    width: +(b.max.x - b.min.x).toFixed(2),
+    tris: (s.base.attributes.position.count + s.head.attributes.position.count) / 3,
+  };
+});
+</script>

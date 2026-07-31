@@ -1,0 +1,24 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({args:['--use-angle=metal','--enable-unsafe-swiftshader']});
+const p = await b.newPage({viewport:{width:1280,height:720}});
+p.on('pageerror',e=>console.log('[pageerror]',e.message));
+p.on('console',m=>{ if(m.type()==='error') console.log('[err]',m.text()); });
+await p.route('**/@vite/client', r=>r.fulfill({status:200,contentType:'application/javascript',body:'export const createHotContext=()=>({accept(){},prune(){},dispose(){},invalidate(){},on(){},send(){}});export const updateStyle=()=>{};export const removeStyle=()=>{};export const injectQuery=u=>u;'}));
+await p.goto('http://localhost:5273/?q=ultra',{waitUntil:'load'});
+await p.waitForFunction(()=>!!window.__game,null,{timeout:90000});
+console.log(JSON.stringify(await p.evaluate(async ()=>{
+  const g=window.__game, wait=ms=>new Promise(r=>setTimeout(r,ms));
+  for(let n=0;n<120&&document.getElementById('boot');n++) await wait(150);
+  await wait(500);
+  g.state.elements=['fire','water','nature','earth','light','dark']; g.state.pendingElementPicks=0; g.hud.closeElementPicker(); g.state.phase='combat';
+  await wait(300);
+  const fx=g.fx;
+  const before={energyN:fx.energy.n, matterN:fx.matter.n, ribUsed:fx.muzzleRibbons.used, throttle:fx.throttle, loadEma:fx.loadEma};
+  fx.registerSpawnHint(0,3,0, 0,0.1,-1, 'fire');
+  fx.muzzleFlash(0,3,0,0xff5a1f,1.3);
+  const liveMuz=fx.muzzles.items.filter(i=>i.live).length;
+  await wait(50);
+  const after={energyN:fx.energy.n, matterN:fx.matter.n, ribUsed:fx.muzzleRibbons.used, ribDraw:fx.muzzleRibbons.geo.drawRange.count, liveMuzNow:fx.muzzles.items.filter(i=>i.live).length, visible:fx.muzzleRibbons.mesh.visible, ptsVisible:fx.energy.points.visible};
+  return {before, liveMuz, after, camOk: !!fx.camera};
+}),null,1));
+await b.close();

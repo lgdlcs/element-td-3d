@@ -1,0 +1,20 @@
+import { WebSocket } from 'ws';
+const U='ws://localhost:5274';
+const mk=(name)=>new Promise(res=>{
+  const w=new WebSocket(U); const got=[];
+  w.on('message',d=>{ const m=JSON.parse(d.toString()); got.push(m); });
+  w.on('open',()=>{ w.send(JSON.stringify({t:'hello',name})); res({w,got}); });
+});
+const A=await mk('Ada'); const B=await mk('Grace');
+A.w.send(JSON.stringify({t:'create'}));
+await new Promise(r=>setTimeout(r,400));
+const code=A.got.find(m=>m.t==='joined')?.code;
+console.log('room code:', code);
+A.got.length=0;
+B.w.send(JSON.stringify({t:'join',code}));
+await new Promise(r=>setTimeout(r,900));
+console.log("A received after B joined:", JSON.stringify(A.got));
+console.log("B received:", JSON.stringify(B.got.filter(m=>m.t==='joined').map(m=>({t:m.t,n:m.players?.length}))));
+const lob=A.got.find(m=>m.t==='lobby');
+console.log(lob ? `SERVER OK: A got lobby with ${lob.players.length} players` : 'SERVER BUG: A never got a lobby broadcast');
+A.w.close(); B.w.close(); process.exit(0);

@@ -1,0 +1,23 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ args: ['--use-angle=metal','--mute-audio'] });
+const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
+const errs = []; p.on('pageerror', e => errs.push(e.message));
+await p.goto('http://localhost:5273/?q=high', { waitUntil: 'load' });
+await p.waitForFunction(() => !!window.__game, null, { timeout: 90000 });
+await p.waitForTimeout(2500);
+const vis = () => p.evaluate(() => {
+  const el = document.getElementById('perf-hud');
+  return { shown: el && el.style.display !== 'none', text: el ? el.textContent : null };
+});
+console.log('avant  :', JSON.stringify(await vis()));
+await p.click('canvas', { position: { x: 5, y: 5 } }).catch(() => {});
+await p.keyboard.press('KeyG');
+await p.waitForTimeout(1500);
+const on = await vis();
+console.log('apres G:', on.shown ? 'VISIBLE' : 'TOUJOURS CACHE');
+if (on.text) console.log('---\n' + on.text + '\n---');
+await p.keyboard.press('KeyG');
+await p.waitForTimeout(400);
+console.log('apres G a nouveau:', (await vis()).shown ? 'VISIBLE' : 'cache (ok)');
+console.log('errors:', errs.length ? errs : '[]');
+await b.close();

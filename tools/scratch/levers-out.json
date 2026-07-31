@@ -1,0 +1,1239 @@
+{
+ "preset": "high",
+ "base0": {
+  "towers": 21,
+  "pinned": {
+   "pixelRatio": 1,
+   "buf": [
+    1600,
+    900
+   ]
+  },
+  "applied": null,
+  "median": 82.1,
+  "p95": 85.8,
+  "buf2": [
+   1600,
+   900
+  ],
+  "extra": {
+   "buf": [
+    1600,
+    900
+   ],
+   "pixelRatio": 1
+  },
+  "errors": []
+ },
+ "base1": {
+  "towers": 21,
+  "pinned": {
+   "pixelRatio": 1,
+   "buf": [
+    1600,
+    900
+   ]
+  },
+  "applied": null,
+  "median": 82.5,
+  "p95": 85.8,
+  "buf2": [
+   1600,
+   900
+  ],
+  "extra": {
+   "buf": [
+    1600,
+    900
+   ],
+   "pixelRatio": 1
+  },
+  "errors": []
+ },
+ "out": [
+  {
+   "lever": "A msaa-target-format",
+   "label": "A1 resolveDepthBuffer=false on both composer buffers",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "resolveDepthBuffer=false",
+     "samples": [
+      4,
+      4
+     ],
+     "resolveDepth": [
+      false,
+      false
+     ],
+     "type": 1016,
+     "rtSize": [
+      1600,
+      900
+     ],
+     "pixelRatio": 1,
+     "drawingBuffer": [
+      1600,
+      900
+     ],
+     "msaaRTTextension": false,
+     "passes": [
+      "RenderPass",
+      "GTAOPass",
+      "UnrealBloomPass",
+      "DepthOfFieldPass",
+      "ShaderPass",
+      "SMAAPass",
+      "OutputPass"
+     ]
+    }
+   },
+   "median": 80.4,
+   "p95": 83.9,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "A msaa-target-format",
+   "label": "A2 MSAA scene-only (post buffers samples=0 + private 4x target)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "MSAA scene-only",
+     "sceneSamples": 4,
+     "postSamples": [
+      0,
+      0
+     ],
+     "type": 1016,
+     "rtSize": [
+      1600,
+      900
+     ],
+     "pixelRatio": 1,
+     "drawingBuffer": [
+      1600,
+      900
+     ],
+     "msaaRTTextension": false
+    }
+   },
+   "median": 69.6,
+   "p95": 73.9,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "A msaa-target-format",
+   "label": "A3 samples 4 -> 0 on both composer buffers (composer.reset)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "samples=0",
+     "samples": [
+      0,
+      0
+     ],
+     "type": 1016,
+     "maxSamples": 4,
+     "rtSize": [
+      1600,
+      900
+     ],
+     "pixelRatio": 1,
+     "drawingBuffer": [
+      1600,
+      900
+     ],
+     "msaaRTTextension": false
+    }
+   },
+   "median": 58.6,
+   "p95": 62,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "A msaa-target-format",
+   "label": "A4 HalfFloat -> UnsignedByte (RGBA8), samples kept at 4 [DIAGNOSTIC]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "RGBA8 (LDR) diagnostic",
+     "samples": [
+      4,
+      4
+     ],
+     "type": [
+      1009,
+      1009
+     ],
+     "colorSpace": "srgb-linear",
+     "rtSize": [
+      1600,
+      900
+     ],
+     "pixelRatio": 1,
+     "drawingBuffer": [
+      1600,
+      900
+     ]
+    }
+   },
+   "median": 72.9,
+   "p95": 75.9,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "B gtao",
+   "label": "B1 skip duplicated shadow-map render inside GTAO prepass",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "gtao prepass will no longer re-render shadow maps; renderGBuffer=true shadowType=3"
+   },
+   "median": 79.8,
+   "p95": 82.9,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "B gtao",
+   "label": "B2 half-resolution AO (prepass + AO + denoise at 0.5x)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "AO targets now 800x450 (gtaoRT 800x450, normalRT 800x450)"
+   },
+   "median": 79.2,
+   "p95": 82.8,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "B gtao",
+   "label": "B3 ssaoSamples -> 6, pdSamples -> 4",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "SAMPLES 12->6, pdSamples 8->4"
+   },
+   "median": 80.6,
+   "p95": 84.8,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "B gtao",
+   "label": "B4 freeze the G-buffer (_renderGBuffer=false) [DIAGNOSTIC]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "prepass off; normalRT 1600x900 frozen, AO+denoise+copy+blend still running"
+   },
+   "median": 78.9,
+   "p95": 81.9,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "C shadows",
+   "label": "C1 blurSamples 16 -> 6 (VSM kept, map size kept)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "before": 16,
+     "after": 6,
+     "radiusTexels": 2.6,
+     "mapSize": 2048,
+     "shadowMapType": 3
+    }
+   },
+   "median": 81.1,
+   "p95": 85.3,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "C shadows",
+   "label": "C2 VSM -> PCF (map size kept)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "shadowMapType": 1,
+     "mapSize": 2048,
+     "radiusTexels": 2.6,
+     "materialsPatched": 63,
+     "materialsDirty": 63,
+     "droppedFromDepthPass": [
+      {
+       "name": "surround-ground",
+       "frustumCulled": false,
+       "customDepth": false
+      },
+      {
+       "name": "surround-scrub",
+       "frustumCulled": false,
+       "count": 564,
+       "customDepth": false
+      },
+      {
+       "name": "surround-road",
+       "frustumCulled": false,
+       "customDepth": false
+      },
+      {
+       "name": "surround-water",
+       "frustumCulled": false,
+       "customDepth": false
+      },
+      {
+       "name": "ground",
+       "frustumCulled": true,
+       "customDepth": true
+      },
+      {
+       "name": "tufts",
+       "frustumCulled": false,
+       "count": 707,
+       "customDepth": false
+      }
+     ]
+    }
+   },
+   "median": 82.3,
+   "p95": 85.7,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "C shadows",
+   "label": "C3 shadow map -> 1024 (VSM kept, blurSamples 6)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "before": 2048,
+     "after": 1024,
+     "blurSamples": 6,
+     "shadowMapType": 3,
+     "texelsPerWorldUnit": 11.13,
+     "penumbraWorldUnits": 0.234
+    }
+   },
+   "median": 77.5,
+   "p95": 82,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "C shadows",
+   "label": "C4 shadowMap.autoUpdate=false, invalidate every 4th frame [MEDIAN-ONLY]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "autoUpdate": false,
+     "period": 4,
+     "patchedFrame": true,
+     "warning": "MEDIAN-ONLY: 1 frame in 4 still pays the full shadow cost"
+    }
+   },
+   "median": 78.1,
+   "p95": 82.7,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1,
+    "shadowThrottle": {
+     "frames": 162,
+     "shadowUpdates": 41,
+     "period": 4
+    }
+   },
+   "errors": []
+  },
+  {
+   "lever": "D pingpong",
+   "label": "D1 resolveDepthBuffer=false + resolveStencilBuffer=false",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "name": "resolveDepthBuffer=false",
+     "before": "4/true/true 4/true/true",
+     "noop": false,
+     "samples": [
+      4,
+      4
+     ]
+    }
+   },
+   "median": 80.8,
+   "p95": 85.4,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "D pingpong",
+   "label": "D2 three-buffer routing: resolve MSAA scene target once, chain single-sampled",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "name": "3-buffer routing",
+     "S": [
+      1600,
+      900,
+      4
+     ],
+     "A": [
+      1600,
+      900,
+      0
+     ],
+     "passes": "RenderPass -> GTAOPass -> GodRaysPass(off) -> UnrealBloomPass -> DepthOfFieldPass -> ShaderPass -> SMAAPass -> OutputPass"
+    }
+   },
+   "median": 69.1,
+   "p95": 72.8,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "D pingpong",
+   "label": "D3 fold OutputPass (ACES+exposure+sRGB) into the grade shader",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "name": "fold output into grade",
+     "exposure": 1.65,
+     "hasAces": true,
+     "outputEnabled": false
+    }
+   },
+   "median": 80,
+   "p95": 84.3,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "D pingpong",
+   "label": "D4 samples=0 on both composer buffers via rt.dispose() [DIAGNOSTIC]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "name": "msaa off (upper bound on the whole mechanism)",
+     "was": [
+      4,
+      4
+     ],
+     "now": [
+      0,
+      0
+     ]
+    }
+   },
+   "median": 58.7,
+   "p95": 62.5,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "E ground",
+   "label": "E1 ground -> constant-colour ShaderMaterial (displacement kept) [DIAGNOSTIC]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "ground -> constant ShaderMaterial"
+   },
+   "median": 65.7,
+   "p95": 69.4,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "E ground",
+   "label": "E2 anisotropy -> 1 on the 7 ground maps",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "anisotropy -> 1 on 7 ground maps; was: flag.albedo=8 flag.nra=8 road.albedo=8 road.nra=8 decay.albedo=8 decay.nra=8 macro=8"
+   },
+   "median": 82.3,
+   "p95": 86.7,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "E ground",
+   "label": "E3 fetch-count diet: flag variants 3->1, shadow march 4->1 taps, mac4=mac3",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "ground shader patched"
+   },
+   "median": 81.8,
+   "p95": 86.8,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1,
+    "diet": {
+     "miss": [],
+     "fetches": 21
+    }
+   },
+   "errors": []
+  },
+  {
+   "lever": "E ground",
+   "label": "E4 stock MeshStandardMaterial on ground (lights+shadow kept) [DIAGNOSTIC]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": "ground -> stock MeshStandardMaterial"
+   },
+   "median": 71.9,
+   "p95": 76.7,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "F lights",
+   "label": "F1 fx pool point lights off (6 lights)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "F1",
+     "lightsHidden": 6,
+     "before": {
+      "point": 11,
+      "dir": 4,
+      "dirShadow": 1,
+      "hemi": 1,
+      "ambient": 1,
+      "spot": 0,
+      "list": [
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 34,
+        "shadow": true,
+        "parent": "lighting"
+       },
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 0.85,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 1.7798356792212118,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 1.1,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "hemi",
+        "name": "(unnamed)",
+        "intensity": 1.25,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "ambient",
+        "name": "(unnamed)",
+        "intensity": 0.35,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 12.310198668965684,
+        "shadow": false,
+        "parent": "spawn"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 12.310198668965684,
+        "shadow": false,
+        "parent": "goal"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 4.3114115881809525,
+        "shadow": false,
+        "parent": ""
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 2.41615514918994,
+        "shadow": false,
+        "parent": ""
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 4.595159868274357,
+        "shadow": false,
+        "parent": ""
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 8.128691886824782,
+        "shadow": false,
+        "parent": ""
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 6,
+        "shadow": false,
+        "parent": ""
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 9,
+        "shadow": false,
+        "parent": ""
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 46.09934756872794,
+        "shadow": false,
+        "parent": "towers"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 48.00391748861879,
+        "shadow": false,
+        "parent": "towers"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 41.553259260757486,
+        "shadow": false,
+        "parent": "towers"
+       }
+      ]
+     },
+     "after": {
+      "point": 5,
+      "dir": 4,
+      "dirShadow": 1,
+      "hemi": 1,
+      "ambient": 1,
+      "spot": 0,
+      "list": [
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 34,
+        "shadow": true,
+        "parent": "lighting"
+       },
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 0.85,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 1.7798356792212118,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "dir",
+        "name": "(unnamed)",
+        "intensity": 1.1,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "hemi",
+        "name": "(unnamed)",
+        "intensity": 1.25,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "ambient",
+        "name": "(unnamed)",
+        "intensity": 0.35,
+        "shadow": false,
+        "parent": "lighting"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 12.310198668965684,
+        "shadow": false,
+        "parent": "spawn"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 12.310198668965684,
+        "shadow": false,
+        "parent": "goal"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 46.09934756872794,
+        "shadow": false,
+        "parent": "towers"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 48.00391748861879,
+        "shadow": false,
+        "parent": "towers"
+       },
+       {
+        "type": "point",
+        "name": "(unnamed)",
+        "intensity": 41.553259260757486,
+        "shadow": false,
+        "parent": "towers"
+       }
+      ]
+     }
+    }
+   },
+   "median": 57.2,
+   "p95": 60.3,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "F lights",
+   "label": "F2 cumulative: all point lights off (fx + portals + towers)",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "F2",
+     "hidden": {
+      "fx": 6,
+      "portal": 2,
+      "tower": 3,
+      "other": 0
+     },
+     "before": {
+      "point": 11,
+      "dir": 4,
+      "dirShadow": 1,
+      "hemi": 1,
+      "ambient": 1,
+      "list": []
+     },
+     "after": {
+      "point": 0,
+      "dir": 4,
+      "dirShadow": 1,
+      "hemi": 1,
+      "ambient": 1,
+      "list": []
+     }
+    }
+   },
+   "median": 52,
+   "p95": 54.9,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "F lights",
+   "label": "F3 cumulative: F2 + fill/rim/ember directionals off",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "F3",
+     "hidden": {
+      "point": 11,
+      "dir": 3
+     },
+     "before": {
+      "point": 11,
+      "dir": 4,
+      "dirShadow": 1,
+      "hemi": 1,
+      "ambient": 1
+     },
+     "after": {
+      "point": 0,
+      "dir": 1,
+      "dirShadow": 1,
+      "hemi": 1,
+      "ambient": 1
+     }
+    }
+   },
+   "median": 50,
+   "p95": 53.2,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  },
+  {
+   "lever": "F lights",
+   "label": "F4 cumulative: F3 + surround made unlit [DIAGNOSTIC, deletes surround art]",
+   "towers": 21,
+   "pinned": {
+    "pixelRatio": 1,
+    "buf": [
+     1600,
+     900
+    ]
+   },
+   "applied": {
+    "ok": true,
+    "ret": {
+     "recipe": "F4",
+     "swappedCount": 0,
+     "usedFallback": 18,
+     "skipped": 1,
+     "foundGroup": true,
+     "after": {
+      "point": 0,
+      "dir": 1,
+      "hemi": 1,
+      "ambient": 1
+     }
+    }
+   },
+   "median": 50.9,
+   "p95": 53.7,
+   "buf2": [
+    1600,
+    900
+   ],
+   "extra": {
+    "buf": [
+     1600,
+     900
+    ],
+    "pixelRatio": 1
+   },
+   "errors": []
+  }
+ ]
+}
