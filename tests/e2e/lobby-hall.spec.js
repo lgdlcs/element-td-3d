@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { bootGame, settle } from './fixtures.js';
+import { bootGame, settle, silentServer } from './fixtures.js';
 
 /**
  * THE HALL OF RECORDS — the scoreboard beside the lobby plate.
@@ -137,6 +137,13 @@ test.describe('lobby hall', () => {
 
   test('renders a board pushed through the shared feed, and escapes the names on it', async ({ page }) => {
     await seedBest(page, { score: 5000, wave: 12, won: false, at: 1 });
+    // A SILENT server, because this spec PUBLISHES a board and a real one would
+    // overwrite it: on a machine running `npm run dev:mp` the server broadcasts
+    // its own (empty) `leaderboard` through the very entry point used below, and
+    // the three rows became zero rows. Mocked rather than avoided, so the
+    // connection is genuinely live — 'live' vs 'stale' is asserted further down
+    // and both need a socket that exists.
+    await silentServer(page);
     const { errors } = await bootGame(page, { query: 'mp' });
     await settleConnection(page);
 
@@ -236,34 +243,46 @@ test.describe('lobby hall', () => {
  * real, mute server, i.e. the one nobody meets by accident and the only reason
  * the spinner is not infinite.
  *
- * page.clock is what makes that testable without an 8 second wall-clock wait.
+ * `silentServer` is what makes that reachable: a mute server is exactly what a
+ * routeWebSocket mock that never speaks IS, so the state is now produced rather
+ * than forced. This paragraph used to credit page.clock, which the test below
+ * has never used and explains why in place.
  */
 test.describe('lobby hall — the states with no board', () => {
   test('gives up claiming to load after the timeout, and says why', async ({ page }) => {
+    // A SILENT server is this test's entire subject, and it no longer has to be
+    // faked: the socket comes up for real, `requestTop()` goes out and is never
+    // answered, so `topReceived` stays false. That is precisely "a live
+    // connection with NO board published", the only combination that arms the
+    // timer — reached through the shipping code path instead of by writing the
+    // three fields from the outside.
+    //
+    // IT USED TO BE FORCED, AND THE FORCING WAS THE BUG. Lobby.setConnection
+    // clears the hall timer for any state that is not connected, so the offline
+    // verdict at the end of NetClient's backoff ladder disarmed the very timer
+    // under measurement. settleConnection did not protect against it: it returns
+    // on any state other than 'connecting', and 'offline' means "not connected
+    // yet" as well as "gave up" — measured, it returned after 23 ms while the
+    // ladder had 9.8 s left to walk, and the verdict then beat the 8s timer by
+    // 715 ms. See silentServer.
+    await silentServer(page);
     const { errors } = await bootGame(page, { query: 'mp' });
     await expect(page.locator('#lobby')).toBeVisible();
-    // NetClient has to have finished deciding BEFORE the connection is forced:
-    // it emits its own verdict through main.js into setConnection, and a retry
-    // landing mid-test would overwrite the state under measurement. Once the
-    // backoff ladder is exhausted (_goOffline) nothing else fires.
     await settleConnection(page);
 
-    // A live connection with NO board published: the only combination that arms
-    // the timer.
-    await page.evaluate(() => {
-      window.__lobby.topReceived = false;
-      window.__lobby.top = [];
-      window.__lobby.setConnection('online');
-    });
     await expect(page.locator('#lobby')).toHaveAttribute('data-hall', 'loading');
     await expect(page.locator('#lobby-hall-status')).toHaveText('reading…');
     // The skeleton is three inert bars so the panel keeps the height it will
     // have once a board lands.
     expect(await page.locator('#lobby-hall-list .hall-row.skel').count()).toBe(3);
 
-    // Real time, not a faked clock: page.clock.install() would also freeze
-    // NetClient's backoff, so the connection could never settle in the first
-    // place. HALL_TIMEOUT_MS is 8s and the spec budget is 120s.
+    // Real time, not a faked clock. HALL_TIMEOUT_MS is 8s and the spec budget is
+    // 120s, so the wait is affordable and the timer under test is the shipping
+    // one rather than a stand-in. (The old reason given here — that
+    // page.clock.install() would freeze NetClient's backoff and the connection
+    // could never settle — stopped being true with silentServer: there is no
+    // backoff to walk when the socket comes up first time. The choice stands on
+    // its own merits now, not on that.)
     await expect(page.locator('#lobby'))
       .toHaveAttribute('data-hall', 'late', { timeout: 20000 });
     await expect(page.locator('#lobby-hall-status')).toHaveText('no answer');

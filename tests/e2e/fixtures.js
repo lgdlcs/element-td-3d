@@ -104,3 +104,62 @@ export async function bootGame(page, opts = {}) {
 export async function settle(page, ms = 250) {
   await page.waitForTimeout(ms);
 }
+
+/**
+ * Stand a SILENT server in front of the page: the socket connects and the server
+ * never says anything.
+ *
+ * WHY A SPEC WOULD WANT THIS. Two of lobby-hall.spec.js's states are about a
+ * server that is up: "connected, and no board has arrived yet" and "this exact
+ * board arrived". Both used to be forced from the inside — `setConnection('online')`,
+ * `hud.setLeaderboard([…])` — and both were then destroyed by a real transport
+ * event landing afterwards. They failed in OPPOSITE machine configurations, so
+ * there was no way to run the suite green on any machine:
+ *
+ *   with a server on 5274      the injected board is overwritten by the real
+ *                              `leaderboard` frame the server broadcasts
+ *   with nothing on 5274       NetClient's backoff ladder gives up and main.js
+ *                              calls setConnection('offline'), which
+ *                              Lobby.setConnection treats as "not connected" and
+ *                              which therefore CLEARS the 8s hall timer
+ *
+ * The second one is a race, and a close one. Measured with
+ * tools/scratch/_audit-hall.mjs: the timer was armed at t+2 580 ms and would have
+ * fired at t+10 580 ms; the offline verdict landed at t+9 865 ms and disarmed it.
+ * It won by 715 ms. Nothing about that margin is stable across machines, so those
+ * specs were not testing the hall — they were testing whether this laptop lost a
+ * race.
+ *
+ * WHY NOT `settleConnection` FIRST. That guard polls for a lobby state other than
+ * 'connecting', and 'offline' satisfies it — but 'offline' means "not connected
+ * yet" as well as "gave up". Measured, it returned after 23 ms while NetClient
+ * had another 9.8 s of ladder to walk (BACKOFF_MS = [400, 900, 2000, 4000] plus
+ * up to four 2 500 ms open timeouts before `_goOffline`).
+ *
+ * WHY NOT `net.disconnect()` FROM THE PAGE. Tried, and it is silently undone:
+ * main.js publishes `window.__net` at line 99 but does not call `net.connect()`
+ * until line 331, and bootGame returns as soon as `window.__game` exists. A
+ * disconnect issued in that window clears `_wanted`, and the connect that has not
+ * happened yet sets it straight back. It also leaves the lobby reading 'offline',
+ * which is the wrong half of the feature: these two specs are about a LIVE
+ * connection.
+ *
+ * So the server is mocked at the socket instead. A `routeWebSocket` handler that
+ * does not call `connectToServer()` accepts the upgrade and speaks for the server
+ * itself — and this one says nothing, ever. NetClient goes 'online' through its
+ * real code path, `requestTop()` goes out and is never answered, so `topReceived`
+ * stays false and the hall arms its timer exactly as it would against a server
+ * that has no board to send. Nothing can overwrite a board the spec publishes
+ * afterwards, because there is no other publisher.
+ *
+ * MUST BE CALLED BEFORE bootGame — a route cannot be installed on a navigation
+ * that has already happened. A spec whose subject is the real transport must
+ * obviously not call it at all.
+ */
+export async function silentServer(page) {
+  await page.routeWebSocket('**/ws', () => {
+    // Deliberately empty. Not calling connectToServer() is what makes this a
+    // mock rather than a proxy: the upgrade is accepted, and no frame is ever
+    // sent to the page.
+  });
+}

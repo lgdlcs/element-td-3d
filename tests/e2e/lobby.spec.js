@@ -111,7 +111,27 @@ test.describe('lobby', () => {
 
     // Focus always starts inside the overlay (Lobby.#focusFirst), which is what
     // makes the aria-modal claim true.
-    expect(await page.evaluate(() => document.activeElement?.closest('#lobby') !== null)).toBe(true);
+    //
+    // POLLED, AND THE ONE FRAME IS THE WHOLE REASON. #focusFirst does not call
+    // focus() — it schedules it: `requestAnimationFrame(() => target.focus())`,
+    // because "a focus() during the same frame as `hidden = false` is dropped by
+    // Chrome" (Lobby.js:862). toBeVisible() resolves as soon as the element is
+    // laid out, which is exactly the frame BEFORE the one that focuses, so a
+    // one-shot read was racing a deferral the source documents. It lost about
+    // one run in three and passed on retry, which docs/TESTING.md is explicit is
+    // a broken spec rather than an acceptable one.
+    //
+    // The claim is unchanged and can still fail: focus that never lands inside
+    // the overlay still red-lines this line. Only "lands one frame later than
+    // the assertion looked" stops counting as a failure. #focusFirst also
+    // re-targets on the connection verdict ($solo when offline, $name otherwise),
+    // which is a second, later frame in which activeElement legitimately moves —
+    // and it moves between two nodes that are both inside #lobby, so the
+    // predicate below holds across it.
+    await expect.poll(
+      () => page.evaluate(() => document.activeElement?.closest('#lobby') !== null),
+      { message: 'focus never landed inside the lobby overlay' },
+    ).toBe(true);
 
     // Then drop it, so what is measured below is the document-level key shield
     // and not ordinary button behaviour. NOTE, because it surprises people: the
