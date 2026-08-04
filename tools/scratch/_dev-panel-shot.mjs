@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ args: ['--use-angle=metal','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--mute-audio','--hide-scrollbars'] });
+const p = await b.newPage({ viewport: { width: 1600, height: 900 } });
+await p.route('**/@vite/client', (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: 'export default {}' }));
+await p.goto('http://localhost:5273/');
+await p.waitForFunction(() => window.__game && window.__dev, null, { timeout: 90000 });
+await p.evaluate(() => document.getElementById('boot')?.remove());
+await p.waitForTimeout(1500);
+await p.keyboard.press('F9');
+await p.click('#devpanel [data-act="elements"]');
+await p.click('#devpanel [data-act="stacks"]');
+await p.click('#devpanel [data-act="goldinf"]');
+await p.click('#devpanel [data-act="invincible"]');
+await p.click('#devpanel [data-act="wavego"]');
+await p.waitForTimeout(1200);
+await p.screenshot({ path: process.argv[2] });
+await b.close();

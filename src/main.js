@@ -98,6 +98,25 @@ async function start() {
   window.__game = game;   // handy for debugging + automated visual checks
   window.__net = net;
 
+  // THE DEV PANEL — F9, or ² on AZERTY. Gold, lives, every element, jump to any
+  // wave, invincibility, clear the board.
+  //
+  // The guard is `import.meta.env.DEV` and not a query parameter or a flag,
+  // because that is the only form Vite can PROVE at build time: it replaces the
+  // expression with the literal `false` in a production build, the branch
+  // becomes dead code, and src/dev/ is dropped from the bundle entirely. There
+  // is nothing to leave switched on by accident and nothing in dist/ to find.
+  //
+  // Dynamic import for the same reason — a static one would put the module in
+  // the graph whether or not the branch survives. Not awaited: the panel is
+  // summoned by a key, so nothing on the boot path should wait for it, and a
+  // failure to load it must not take the game down with it.
+  if (import.meta.env.DEV) {
+    import('./dev/DevPanel.js')
+      .then(({ DevPanel }) => { window.__dev = new DevPanel(game); })
+      .catch((e) => console.warn('[dev] panel unavailable:', e));
+  }
+
   progress(0.8, 'binding the elements…');
   await frame();
 

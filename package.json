@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --port 5273",
     "build": "vite build",
+    "check:nodev": "vite build && node tools/check-no-dev.mjs",
     "preview": "vite preview --port 5273",
     "server": "node server/index.js",
     "dev:mp": "node server/index.js & vite --port 5273",

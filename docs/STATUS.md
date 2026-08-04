@@ -7,6 +7,21 @@ Blind A/B: `node tools/compare.mjs --a <ours.png> --b reference/<etd2>.jpg --out
 See also **docs/PITFALLS.md** — fourteen classes of bug found the hard way, every
 one invisible to code review. Read it before debugging anything visual.
 
+## The dev panel — **F9**, or **²** on AZERTY
+
+Only on `npm run dev`. Gold (+1k / +10k / infinite), lives (+10 / invincible),
+all six elements (once, or ×3 to unlock every primal), jump to any wave, clear
+the board. Also on `window.__dev` if you would rather script it.
+
+It cannot ship: `src/dev/` is reached only from `if (import.meta.env.DEV)` in
+main.js, which Vite folds to `false` in a production build, so the module never
+enters the graph. `npm run build && node tools/check-no-dev.mjs` proves it
+against the real `dist/` — verified failing when the string is planted, so the
+check is not vacuous.
+
+Not on the key sheet, deliberately: a key that exists only here is not part of
+the contract that panel describes. The dev panel prints its own key instead.
+
 Two capture scenarios exist because nothing else could photograph the feature:
 `--scenario holding` freezes the whole build cursor (grid, 2x2 ghost, range ring,
 cursor hint), and `--scenario primal` puts two level-3 ultimates beside ordinary
