@@ -22,7 +22,9 @@
  * parse checks and, worse, the boot sequence's import order).
  */
 
-import { esc } from './uikit.js';
+import { esc, num } from './uikit.js';
+import { subscribeTop } from './globalTop.js';
+import { loadBest } from '../net/BestScore.js';
 
 /** Contract: max 6 players per room. Empty seats are drawn to invite a fill. */
 const MAX_PLAYERS = 6;
@@ -161,6 +163,58 @@ function cleanName(raw) {
     .trim();
 }
 
+/** How many global entries the hall shows. The server sends up to ten. */
+const HALL_ROWS = 5;
+
+/**
+ * The hall's five states, as the two strings each one needs.
+ *
+ * Written out rather than assembled from conditionals because the whole point
+ * of the panel on a dev machine is the `offline` row: with no `npm run server`
+ * there is no global board and there never will be, and that has to read as a
+ * fact about the world rather than as something broken. Nothing here is red,
+ * nothing here apologises, and the local record above it stays the headline.
+ */
+const HALL_STATUS = {
+  loading: 'reading…',
+  late:    'no answer',
+  live:    'top runs',
+  stale:   'last known',
+  empty:   'nobody yet',
+  offline: 'local only',
+  unknown: 'lost contact',
+};
+
+const HALL_NOTE = {
+  late:    'The server has not sent a board. It may be starting up — it will appear on its own if it does.',
+  empty:   'No score has been posted yet. Finish a run and yours is the first.',
+  stale:   'The server is no longer answering. This is the last board it sent.',
+  offline: 'No server, so no global board. Your record is kept on this machine either way.',
+  // REACHED ONLY WITH AN EMPTY LIST, so it must not talk about "this board".
+  // #hallState() returns 'unknown' after it has already ruled out
+  // `topReceived && top.length`, i.e. there is nothing under the note — the old
+  // sentence ("...so this board may be out of date") described rows that cannot
+  // be on screen. A dead socket that DOES have rows is 'stale', which has its
+  // own sentence two lines up.
+  unknown: 'Lost contact with the server. Nothing to show yet.',
+};
+
+/**
+ * How long a live connection may stay silent before the hall stops claiming to
+ * be loading.
+ *
+ * There is no request/response pairing to hang this off: main.js asks with
+ * `net.requestTop()` on every `open` and the server also broadcasts the board
+ * unprompted, so "my request failed" is not a state anything can observe. What
+ * IS observable is a socket that has been open for a while with no board on it,
+ * and that is a strictly better thing to say than a spinner that never ends.
+ *
+ * One timer, started when the connection goes live and cleared by the first
+ * frame. Deliberately not a retry: re-asking on a timer is the polling this
+ * feature is specified not to do, and the server pushes on every change anyway.
+ */
+const HALL_TIMEOUT_MS = 8000;
+
 /** Drawn in a seat instead of a name the server should never have sent. */
 const UNNAMED = 'unnamed';
 
@@ -247,13 +301,27 @@ export class Lobby {
         <div class="lobby-inner">
 
           <header class="lobby-head">
+            <!-- The six identity hexes, duplicated from ELEMENTS on purpose:
+                 this module may not import from src/game/ (see the wave-count
+                 note below, same rule). That makes them the one thing here that
+                 can rot silently, and one of them already did — nature shipped
+                 as the retired #4fe07a for a round after the palette moved to
+                 #63bd76, so the very first screen a player saw was a neon green
+                 the rest of the game no longer used.
+                 THE BLOCK IS DUPLICATED TWICE: here, and in index.html's #boot,
+                 which is painted FIRST because it is static markup while this
+                 one is built by JS. The round that fixed this copy left that one
+                 neon. Both are now pinned by tests/unit/sigil-colours.test.js,
+                 which reads both files as TEXT (this module still may not import
+                 src/game/ — but a test may import both sides). If you re-author
+                 an element colour, that test goes red; fix both copies. -->
             <div class="boot-sigil lobby-sigil" aria-hidden="true">
               <span class="boot-ring"></span>
               <span class="boot-ring inner"></span>
               <span class="boot-orbit">
                 <i style="--c:#ff5a1f; --a:0deg;   --dl:0s"     >ƒ</i>
                 <i style="--c:#2fa8ff; --a:60deg;  --dl:-0.55s" >≈</i>
-                <i style="--c:#4fe07a; --a:120deg; --dl:-1.1s"  >❀</i>
+                <i style="--c:#63bd76; --a:120deg; --dl:-1.1s"  >❀</i>
                 <i style="--c:#c08a4a; --a:180deg; --dl:-1.7s"  >◈</i>
                 <i style="--c:#fff2c4; --a:240deg; --dl:-2.25s" >✦</i>
                 <i style="--c:#8a4fd6; --a:300deg; --dl:-2.8s"  >●</i>
@@ -344,9 +412,47 @@ export class Lobby {
             <button id="lobby-solo" class="lobby-btn solo">
               <b>Play solo</b><span>no server needed</span>
             </button>
-            <span class="lobby-keys"><kbd>Enter</kbd> confirm · <kbd>Esc</kbd> back</span>
+            <span class="lobby-keys" id="lobby-keys"><kbd>Enter</kbd> confirm<i> · <kbd>Esc</kbd> back</i></span>
+            <!-- THE HALL'S FALLBACK, and the only reason it is a second node.
+                 The gutter panel below needs 1180px of width to exist; under
+                 that the scoreboard used to vanish entirely with nothing saying
+                 a leaderboard was even a thing, on any window a player has not
+                 maximised. This one line lives in the plate's own flow (which
+                 scrolls, so it cannot push anything off screen) and carries the
+                 two numbers that matter. Written by the same #hall() call as the
+                 panel, so the two cannot disagree. -->
+            <p class="hall-mini" id="lobby-hall-mini" aria-live="polite"></p>
           </footer>
         </div>
+
+        <!-- THE HALL.
+             A sibling of .lobby-inner, not a child of it, for two reasons. The
+             plate scrolls ('overflow-y: auto'), which clips anything positioned
+             outside its box, and on a wide screen the hall lives in the empty
+             gutter beside the plate — where it costs the existing layout zero
+             vertical space. It is also read-only on purpose: no button, no tab
+             stop, so #focusables() and the Tab trap are untouched by it.
+
+             It is NOT a '.lobby-card': those three are the mutually exclusive
+             state cards that the '.s-*' rules show one of at a time, and the
+             hall is visible across states.
+
+             NOTE, and this is PITFALLS §12.1: no backticks in this comment. It
+             sits inside a template literal, and one backtick here ends the
+             string and takes the entire app down with a parse error that names
+             a line 70 above. It already did once while this was being written. -->
+        <aside id="lobby-hall" class="hall-card" aria-labelledby="lobby-hall-title">
+          <div class="hall-head">
+            <!-- Two words, not four: at 254px the legend's 0.19em tracking made
+                 "Hall of the Convergence" wrap onto a second line and leave the
+                 status label stranded beside the first. --><span
+              class="lobby-legend" id="lobby-hall-title">Hall of Records</span>
+            <span class="hall-status" id="lobby-hall-status" aria-live="polite"></span>
+          </div>
+          <div class="hall-best" id="lobby-hall-best"></div>
+          <ol class="hall-list" id="lobby-hall-list"></ol>
+          <p class="hall-note" id="lobby-hall-note"></p>
+        </aside>
       </div>`);
 
     const q = (sel) => root.querySelector(sel);
@@ -357,6 +463,7 @@ export class Lobby {
     this.$create = q('#lobby-create');
     this.$join = q('#lobby-join');
     this.$solo = q('#lobby-solo');
+    this.$keys = q('#lobby-keys');
     this.$ready = q('#lobby-ready');
     this.$start = q('#lobby-start');
     this.$startNote = q('#lobby-start-note');
@@ -369,6 +476,22 @@ export class Lobby {
     this.$conn = q('#lobby-conn');
     this.$connText = q('#lobby-conn-text');
     this.$error = q('#lobby-error');
+    this.$hallStatus = q('#lobby-hall-status');
+    this.$hallBest = q('#lobby-hall-best');
+    this.$hallMini = q('#lobby-hall-mini');
+    this.$hallList = q('#lobby-hall-list');
+    this.$hallNote = q('#lobby-hall-note');
+
+    /** Last board pushed by the transport, and whether one ever was. */
+    this.top = [];
+    this.topReceived = false;
+    /** Local personal best, re-read on every show(). */
+    this.best = loadBest();
+    /** Set once the connection goes live; see HALL_TIMEOUT_MS. */
+    this._hallTimer = 0;
+    this._hallLate = false;
+    this._unsubscribeTop = null;
+    this.#subscribeHall();
 
     this.$name.value = initialName;
 
@@ -408,6 +531,11 @@ export class Lobby {
   show() {
     this.visible = true;
     this.$el.hidden = false;
+    // Re-read on the way in rather than once at construction: the overlay can be
+    // shown again after a run has been played and written a new record.
+    this.best = loadBest();
+    this.#subscribeHall();
+    this.#hall();
     // One frame of `hidden` removal before the class, or the entrance
     // transition never runs — the element goes from display:none straight to
     // its final state and the overlay appears to snap in.
@@ -426,11 +554,38 @@ export class Lobby {
     this.visible = false;
     this.$el.classList.remove('open');
     this.$el.hidden = true;
+    // RELEASED HERE, not only in destroy(). destroy() unsubscribes correctly and
+    // nothing calls it — main.js's openLobby finishes with lobby.hide() and the
+    // overlay lives on for the rest of the session, so every `leaderboard` frame
+    // the server pushed kept re-rendering #lobby-hall-list inside a hidden
+    // element, and setConnection could re-arm the 8s timer after the run had
+    // started. Harmless at this scale and indistinguishable from live cleanup
+    // code, which is the actual problem. show() takes it back.
+    this.#releaseHall();
+  }
+
+  /** Drop the hall's subscription and timer. Idempotent. */
+  #releaseHall() {
+    this._unsubscribeTop?.();
+    this._unsubscribeTop = null;
+    this.#clearHallTimer();
+  }
+
+  /** Take the hall's subscription back. Idempotent — show() may run twice. */
+  #subscribeHall() {
+    if (this._unsubscribeTop) return;
+    this._unsubscribeTop = subscribeTop((list, received) => {
+      this.top = list;
+      this.topReceived = received;
+      if (received) this.#clearHallTimer();
+      this.#hall();
+    });
   }
 
   /** Drop the document-level key shield. Call before discarding the overlay. */
   destroy() {
     document.removeEventListener('keydown', this._onKey, true);
+    this.#releaseHall();
     this.$el.remove();
     this.visible = false;
   }
@@ -481,6 +636,16 @@ export class Lobby {
    *                       something rather than vanishing silently.
    */
   setError(code, msg = '') {
+    // TRANSPORT is not a room error, it is the socket failing to open, and
+    // NetClient emits one per attempt (NetClient.js ws.onerror). On the nominal
+    // dev machine — no `npm run server` — that painted a red `role="alert"` box
+    // reading "socket error" across the entry screen, under a pill that already
+    // said "No server reachable" and above a card that already explained the
+    // whole situation calmly. Three narrations of one non-event, one of them in
+    // the colour reserved for things the player did wrong. The connection pill
+    // and the offline card own this state; the alert stays for errors that
+    // answer a click.
+    if (code === 'TRANSPORT') return;
     if (!code) {
       this.$error.hidden = true;
       this.$error.textContent = '';
@@ -501,6 +666,13 @@ export class Lobby {
     const info = CONNECTION[state] || { cls: 'off', text: 'Connection state unknown' };
     this.$conn.dataset.conn = info.cls;
     this.$connText.textContent = info.text;
+    // A socket that has just come up is the only moment "waiting for a board"
+    // starts being true, so that is where the give-up timer is armed. Anything
+    // else — a drop, an offline verdict — cancels it: the hall already has a
+    // sentence for those and a timer firing underneath would fight it.
+    if (CONNECTED_STATES.has(state) && !this.topReceived) this.#armHallTimer();
+    else this.#clearHallTimer();
+    this.#hall();
     this.#sync();
   }
 
@@ -767,6 +939,163 @@ export class Lobby {
     this.$rosterCount.textContent = `${seated.length} / ${MAX_PLAYERS}`;
   }
 
+  // -- the hall ------------------------------------------------------------
+
+  #armHallTimer() {
+    this.#clearHallTimer();
+    this._hallLate = false;
+    this._hallTimer = setTimeout(() => {
+      this._hallTimer = 0;
+      this._hallLate = true;
+      this.#hall();
+    }, HALL_TIMEOUT_MS);
+  }
+
+  #clearHallTimer() {
+    if (this._hallTimer) clearTimeout(this._hallTimer);
+    this._hallTimer = 0;
+    this._hallLate = false;
+  }
+
+  /**
+   * Which of the five things the hall can be saying right now.
+   *
+   * Derived rather than stored, from two facts that are already tracked for
+   * other reasons — the connection label and whether a board frame ever arrived
+   * — so it cannot fall out of step with the pill three lines above it.
+   *
+   * `unknown` IS DEFENSIVE, and this docblock used to claim otherwise.
+   *
+   * It said "main.js passes 'closed' on a socket close". It does not, and cannot:
+   * main.js:319 passes `net.state === 'online' ? 'online' : 'closed'`, while
+   * NetClient emits `close` BEFORE it updates `_state` (NetClient.js:410-421), so
+   * `net.state` still reads 'online' at that instant and 'online' is what
+   * arrives. Nothing in the repo produces a label outside the CONNECTION table,
+   * so this branch is the guard for a transport that grows one — which is exactly
+   * what the CONNECTION docblock 100 lines above already says, and the two
+   * comments contradicted each other (PITFALLS §10, in one file).
+   *
+   * The consequence of the real behaviour is worth naming rather than papering
+   * over: a socket that drops mid-backoff leaves the pill on "Connected" and this
+   * panel on 'live'. That is main.js's deliberate "a close is not necessarily the
+   * end" policy, and changing it is a transport decision, not a hall decision.
+   */
+  #hallState() {
+    // Data first, connection second. A board that has already arrived is worth
+    // more than the socket's current mood: dropping the rows the moment the
+    // link goes down would leave a panel whose note read "this board may be out
+    // of date" with no board under it. It keeps the rows and says they are old.
+    if (this.topReceived && this.top.length) {
+      return CONNECTED_STATES.has(this.connection) ? 'live' : 'stale';
+    }
+    if (this.connection === 'offline') return 'offline';
+    if (!CONNECTION[this.connection]) return 'unknown';
+    if (this.topReceived) return 'empty';
+    if (CONNECTED_STATES.has(this.connection)) return this._hallLate ? 'late' : 'loading';
+    return 'loading';
+  }
+
+  /**
+   * Render the hall.
+   *
+   * The local best is written FIRST and unconditionally. It is the one number
+   * here that needs no server, and on the dev machine (and on anyone's first
+   * evening with the game) it is the only number there is — so it is the
+   * headline of this panel and the global list is what sits under it, not the
+   * other way round.
+   *
+   * Every name comes off a socket from another machine and goes through `esc`
+   * in TEXT position only, exactly like #roster. Scores are coerced to a number
+   * before they are formatted, so a hostile `score` cannot smuggle a string
+   * into the markup either.
+   */
+  #hall() {
+    const state = this.#hallState();
+    this.$el.dataset.hall = state;
+
+    const b = this.best;
+    this.$hallBest.innerHTML = b && b.score > 0
+      ? `<span class="hb-k">Your best</span>
+         <b class="hb-v">${esc(num(b.score))}</b>
+         <span class="hb-sub">wave ${esc(String(b.wave || 1))}${b.won ? ' · survived' : ''}</span>`
+      : `<span class="hb-k">Your best</span>
+         <b class="hb-v none">—</b>
+         <span class="hb-sub">no run finished on this machine yet</span>`;
+
+    this.$hallStatus.textContent = HALL_STATUS[state] ?? '';
+
+    if (state === 'live' || state === 'stale') {
+      const rows = this.#rankedTop();
+      this.$hallList.innerHTML = rows.map((p, i) => {
+        // BOUNDED, for the same reason displayName exists: a value the server
+        // should never have sent must not be drawn verbatim. `Number(x) || 0`
+        // stops NaN and undefined and lets a NEGATIVE through, so a hostile or
+        // buggy frame rendered "Mireward -5" in the hall, and `|| 0` on a missing
+        // wave printed the meaningless "W0" next to it.
+        const score = Math.max(0, Math.round(Number(p?.score)) || 0);
+        const wave = Math.max(0, Math.round(Number(p?.wave)) || 0);
+        return `<li class="hall-row${i === 0 ? ' first' : ''}">
+          <span class="hr-rank">${i + 1}</span>
+          <span class="hr-name">${esc(displayName(p?.name))}</span>
+          <b class="hr-score">${esc(num(score))}</b>
+          ${wave >= 1 ? `<i class="hr-wave">W${esc(String(wave))}</i>` : ''}
+        </li>`;
+      }).join('');
+      this.$hallNote.textContent = state === 'stale' ? HALL_NOTE.stale : this.#standing();
+    } else if (state === 'loading') {
+      // Three inert bars rather than a word: the panel keeps the height it will
+      // have once the board lands, so the plate beside it does not jump when it
+      // does.
+      this.$hallList.innerHTML = '<li class="hall-row skel"></li>'.repeat(3);
+      this.$hallNote.textContent = '';
+    } else {
+      this.$hallList.innerHTML = '';
+      this.$hallNote.textContent = HALL_NOTE[state] ?? '';
+    }
+
+    // The narrow-window fallback, from the same data. textContent, not
+    // innerHTML: the top name comes off a socket.
+    const top = this.#rankedTop()[0];
+    const mine = b && b.score > 0 ? `Your best ${num(b.score)}` : 'No run finished here yet';
+    this.$hallMini.textContent = (state === 'live' || state === 'stale') && top
+      ? `${mine} · Top ${num(Math.max(0, Math.round(Number(top.score)) || 0))} ${displayName(top.name)}`
+      : `${mine} · ${HALL_STATUS[state] ?? ''}`;
+  }
+
+  /**
+   * Where the local best would sit on the board that is on screen, as a
+   * sentence, or '' when there is nothing to compare.
+   *
+   * Only ever computed against the rows actually shown, and phrased as "would
+   * place" — the server keeps twenty and shows ten, so a local score that beats
+   * none of the five visible rows says nothing about the twentieth.
+   */
+  /**
+   * The rows the hall draws: the top HALL_ROWS, sorted highest first.
+   *
+   * The server sorts, and #standing() below reads the list as if it were sorted
+   * (`findIndex(p => mine > score)` only means "your rank" on a descending
+   * list). Sorting a COPY here makes that true by construction instead of by
+   * trusting a frame from another machine, and costs one sort of five entries.
+   */
+  #rankedTop() {
+    return this.top
+      .slice()
+      .sort((a, b) => (Math.max(0, Number(b?.score) || 0)) - (Math.max(0, Number(a?.score) || 0)))
+      .slice(0, HALL_ROWS);
+  }
+
+  #standing() {
+    const mine = this.best?.score ?? 0;
+    if (!mine) return '';
+    const rows = this.#rankedTop();
+    const at = rows.findIndex((p) => mine > (Number(p?.score) || 0));
+    if (at === 0) return 'Your best would take the top of this board.';
+    if (at > 0) return `Your best would place ${at + 1} on this board.`;
+    const last = Number(rows[rows.length - 1]?.score) || 0;
+    return `${num(Math.max(1, last - mine + 1))} more would put you on this board.`;
+  }
+
   /**
    * Why the run cannot begin yet, as a sentence, or '' when it can.
    *
@@ -830,5 +1159,13 @@ export class Lobby {
 
     // Solo is the primary action the moment multiplayer is not on offer.
     this.$solo.classList.toggle('primary', this.state === 'offline' || !live);
+
+    // A CAP THAT PROMISES A DEAD KEY IS WORSE THAN NO CAP. #onKey acts on Escape
+    // only in 'lobby' and 'connecting' — in 'idle' there is nothing to back out
+    // of and in 'offline' (every dev machine, and every first launch without
+    // `npm run server`) the overlay is the boot gate, so Escape must not dismiss
+    // it. Those are precisely the two states a solo player sees, and the footer
+    // advertised "Esc back" in both.
+    this.$keys.classList.toggle('no-esc', !(this.state === 'lobby' || this.state === 'connecting'));
   }
 }

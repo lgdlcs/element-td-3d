@@ -119,10 +119,29 @@ export const FAMILY_FX = {
     decalType: 'frost', glowDecal: 0x8fd8ff, glowDecalLife: 2.6,
   },
   nature: {
-    spark: 0xd6ff8f, soot: 0x182a10, decal: 0x6ad04a,
+    // 0x8ad47f IS ELEMENTS.nature.accent, and re-authored from it deliberately.
+    //
+    // This entry kept 0xd6ff8f — the blown highlighter Elements.js names as the
+    // actual cause of "the nature towers are too flashy" — for a whole round
+    // after the identity colours moved off it. impactCore mixes it half-and-half
+    // with the tower's own colour and emits the flash above the bloom threshold,
+    // so the retired hex was HALF of every nature impact and muzzle burst: the
+    // tower albedo dropped 56% (0.372 -> 0.164 measured through setHex +
+    // convertSRGBToLinear) while the burst dropped 18%. A Worldroot L2 fires
+    // 6.7 times a second, so a wave threw the old neon several times a second
+    // next to a tower that was no longer neon.
+    //
+    // 0.294 against the body's 0.164 is a 1.79x spark/body ratio, which puts
+    // nature between fire (1.52) and earth (2.32) instead of at 4.92, alone off
+    // the end of the scale.
+    //
+    // NO glowDecal: decalType 'poison' reads `decal` and never touches it (only
+    // 'scorch' and 'frost' do). The 0x7ad62a that used to sit here tuned nothing
+    // and read as if it did.
+    spark: 0x8ad47f, soot: 0x182a10, decal: 0x6ad04a,
     sparkCount: 18, sparkSpeed: 7.5, sparkLife: 0.75, grav: -1.6, drag: 2.6,
     smoke: 7, smokeRise: 1.6, smokeAlpha: 0.85, ember: false, shimmer: false,
-    decalType: 'poison', glowDecal: 0x7ad62a, glowDecalLife: 2.4,
+    decalType: 'poison',
   },
   earth: {
     spark: 0xd8b077, soot: 0x2a2016, decal: 0x6b543a,

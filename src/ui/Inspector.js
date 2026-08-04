@@ -74,6 +74,21 @@ export class Inspector {
     this.$el.addEventListener('focusin', preview);
   }
 
+  /**
+   * Where this tower could go, and the ONE place that question is answered.
+   *
+   * The footer button's `disabled`, its <kbd> cap, its aria-keyshortcuts and the
+   * M hotkey all depend on it, and for a round they disagreed: the button was
+   * greyed with "Nothing else is unlocked to morph into yet" while M happily
+   * opened the sheet on an empty target list. An empty array is the whole
+   * answer — inert blocks and primals return one too, since neither has
+   * anywhere to go.
+   */
+  morphTargetsFor(t) {
+    if (!t || t.def.kind === 'inert' || t.def.kind === 'primal') return [];
+    return this.game.morphTargets.filter((d) => d.key !== t.def.key);
+  }
+
   show(t) {
     this.tower = t;
     this.view = 'tower';
@@ -123,9 +138,18 @@ export class Inspector {
     // commit anyway. Chrome fires no mouse events on a disabled button, so a
     // greyed control's `title` never renders, which would make "Morph only
     // between waves" a rule the player could only discover by it not happening.
-    const targets = def.kind === 'primal' ? [] : this.game.morphTargets.filter((d) => d.key !== def.key);
+    const targets = this.morphTargetsFor(t);
     const prep = this.game.state.phase === 'prep';
-    const morphOff = def.kind === 'primal' || targets.length === 0;
+    const morphOff = targets.length === 0;
+    // A CAP THAT PROMISES A DEAD KEY IS WORSE THAN NO CAP — and that applies to
+    // the invisible cap as well. The <kbd>U</kbd> was already dropped on a
+    // fully-forged tower while aria-keyshortcuts="U" stayed on the disabled
+    // button, so a screen reader went on announcing a shortcut for an action no
+    // sighted player was being offered; #insp-morph did the same with M AND kept
+    // its visible cap. Both attributes below are conditional on the same flag as
+    // the button's own `disabled`, and showMorph now refuses an empty target
+    // list — pressing M with one element bound used to render a degenerate card
+    // ("28 DPS NOW -> — AFTER", no destination) over the unavailability message.
     const morphWhy = def.kind === 'primal'
       ? 'A Primal cannot morph — its two element stacks would have to be destroyed or laundered. Sell it and they come back in full.'
       : targets.length === 0 ? 'Nothing else is unlocked to morph into yet'
@@ -139,7 +163,7 @@ export class Inspector {
           <b>${esc(def.name)}</b>
           <span class="insp-lineage">${lineage}</span>
         </div>
-        <button class="insp-close" aria-label="Close (Esc)">✕</button>
+        <button class="insp-close" aria-label="Close (Esc)" aria-keyshortcuts="Escape">✕</button>
       </header>
 
       <div class="insp-hero" style="--c:${hex(def.color)}">
@@ -185,14 +209,14 @@ export class Inspector {
       </div>
 
       <footer class="insp-actions insp-actions-3">
-        <button id="insp-upgrade" class="primary" ${maxed ? 'disabled' : ''}>
+        <button id="insp-upgrade" class="primary" ${maxed ? 'disabled' : 'aria-keyshortcuts="U"'}>
           ${maxed ? 'Fully forged' : `<span>Upgrade</span><em>${num(next.cost)}</em>`}
           ${maxed ? '' : '<kbd>U</kbd>'}
         </button>
-        <button id="insp-morph" class="ghost" ${morphOff ? 'disabled' : ''} title="${esc(morphWhy)}">
-          <span>Morph</span><kbd>M</kbd>
+        <button id="insp-morph" class="ghost" ${morphOff ? 'disabled' : 'aria-keyshortcuts="M"'} title="${esc(morphWhy)}">
+          <span>Morph</span>${morphOff ? '' : '<kbd>M</kbd>'}
         </button>
-        <button id="insp-sell" class="ghost"><span>Sell</span><em>+${num(refund)}</em><kbd>X</kbd></button>
+        <button id="insp-sell" class="ghost" aria-keyshortcuts="X"><span>Sell</span><em>+${num(refund)}</em><kbd>X</kbd></button>
       </footer>`;
 
     this.$el.classList.add('open');
@@ -238,7 +262,7 @@ export class Inspector {
           <b>${esc(def.name)}</b>
           <span class="insp-lineage"><em>Groundwork · unarmed</em></span>
         </div>
-        <button class="insp-close" aria-label="Close (Esc)">✕</button>
+        <button class="insp-close" aria-label="Close (Esc)" aria-keyshortcuts="Escape">✕</button>
       </header>
 
       <div class="insp-inert">
@@ -256,7 +280,7 @@ export class Inspector {
       </div>
 
       <footer class="insp-actions">
-        <button id="insp-sell" class="ghost"><span>Sell</span><em>+${num(refund)}</em><kbd>X</kbd></button>
+        <button id="insp-sell" class="ghost" aria-keyshortcuts="X"><span>Sell</span><em>+${num(refund)}</em><kbd>X</kbd></button>
       </footer>`;
 
     this.$el.classList.add('open');
@@ -285,8 +309,12 @@ export class Inspector {
    */
   showMorph(t) {
     // Reachable from the M hotkey with anything selected, so it has to defend
-    // the same three cases the footer button greys out.
-    if (!t || t.def.kind === 'inert' || t.def.kind === 'primal') return this.show(t);
+    // exactly the cases the footer button greys out — ALL of them. It used to
+    // check `inert` and `primal` and not "nothing is unlocked yet", so a fresh
+    // run with one element bound answered M with a card whose destination
+    // column was an em dash.
+    if (!t) return;
+    if (this.morphTargetsFor(t).length === 0) return this.show(t);
 
     const g = this.game;
     const def = t.def;
@@ -350,7 +378,7 @@ export class Inspector {
           <b>${esc(def.name)}</b>
           <span class="insp-lineage">${lineage}</span>
         </div>
-        <button class="insp-close" aria-label="Close (Esc)">✕</button>
+        <button class="insp-close" aria-label="Close (Esc)" aria-keyshortcuts="Escape">✕</button>
       </header>
 
       <div class="insp-section morph-sheet">
@@ -376,7 +404,7 @@ export class Inspector {
 
       <footer class="insp-actions">
         <button class="primary morph-back"><span>Back to stats</span></button>
-        <button id="insp-sell" class="ghost"><span>Sell</span><em>+${num(sellRefund)}</em><kbd>X</kbd></button>
+        <button id="insp-sell" class="ghost" aria-keyshortcuts="X"><span>Sell</span><em>+${num(sellRefund)}</em><kbd>X</kbd></button>
       </footer>`;
 
     this.$el.classList.add('open', 'morph');

@@ -4,8 +4,14 @@ Run `npm run dev` → http://localhost:5273/
 Capture: `node tools/shot.mjs --out shots/x.png --scenario midgame`
 Blind A/B: `node tools/compare.mjs --a <ours.png> --b reference/<etd2>.jpg --out cmp/x.png`
 
-See also **docs/PITFALLS.md** — nine classes of bug found the hard way, every one
-invisible to code review. Read it before debugging anything visual.
+See also **docs/PITFALLS.md** — fourteen classes of bug found the hard way, every
+one invisible to code review. Read it before debugging anything visual.
+
+Two capture scenarios exist because nothing else could photograph the feature:
+`--scenario holding` freezes the whole build cursor (grid, 2x2 ghost, range ring,
+cursor hint), and `--scenario primal` puts two level-3 ultimates beside ordinary
+towers. Both were added after a round in which the grid and the primal ladder
+were changed and could not be reviewed from any of the twenty existing shots.
 
 ---
 

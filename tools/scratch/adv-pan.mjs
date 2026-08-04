@@ -1,0 +1,24 @@
+import { chromium } from 'playwright';
+const VITE_STUB = 'export const createHotContext = () => ({ accept(){}, acceptExports(){}, prune(){}, dispose(){}, decline(){}, invalidate(){}, on(){}, off(){}, send(){} });export const updateStyle=()=>{};export const removeStyle=()=>{};export const injectQuery=(u)=>u;export const createHotContextLegacy=()=>({accept(){},dispose(){},invalidate(){},on(){},send(){}});';
+const b = await chromium.launch({ args: ['--use-angle=metal', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--mute-audio', '--hide-scrollbars'] });
+const p = await b.newPage({ viewport: { width: 1600, height: 900 } });
+await p.route('**/@vite/client', (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: VITE_STUB }));
+await p.goto('http://localhost:5273/?q=ultra', { waitUntil: 'load' });
+await p.waitForFunction(() => !!window.__game, null, { timeout: 90000 });
+await p.evaluate(() => document.getElementById('boot')?.remove());
+await p.evaluate(() => { const g = window.__game; g.state.pendingElementPicks = 1; g.chooseElement('fire'); g.state.paused = true; });
+await p.waitForFunction(() => !document.getElementById('picker')?.classList.contains('open'));
+const rigKey = await p.evaluate(() => Object.keys(window.__game).find((k) => window.__game[k] && typeof window.__game[k] === 'object' && '_azimuthGoal' in window.__game[k]));
+const aim = () => p.evaluate((k) => { const R = window.__game[k]; return { tx: R._targetGoal.x, tz: R._targetGoal.z, auto: R._autoFrame, dist: R._distGoal }; }, rigKey);
+console.log('rig', rigKey, JSON.stringify(await aim()));
+// kill auto-frame first, like a real player who has zoomed once
+await p.mouse.move(800, 420); await p.mouse.wheel(0, -120); await p.waitForTimeout(120);
+const a = await aim();
+await p.mouse.move(800, 420);
+await p.mouse.down({ button: 'middle' });
+for (let i = 1; i <= 8; i++) await p.mouse.move(800 + i * 20, 420 + i * 6);
+await p.mouse.up({ button: 'middle' });
+const c = await aim();
+console.log('after wheel', JSON.stringify(a));
+console.log('after middle-drag', JSON.stringify(c), 'delta', (c.tx - a.tx).toFixed(3), (c.tz - a.tz).toFixed(3));
+await b.close();

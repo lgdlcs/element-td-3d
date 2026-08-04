@@ -147,87 +147,141 @@ export const FOUNDATION = {
 };
 
 /**
- * Primal towers. Six entries, two levels each.
+ * Primal towers. Six entries, THREE levels each.
  *
- * BALANCE STATEMENT, so nobody re-tunes these blind:
+ * BALANCE STATEMENT, so nobody re-tunes these blind. Every figure below was
+ * recomputed from this table, not carried over — run
+ * `node tools/scratch/primal-logic.mjs` or recompute from `levels` directly;
+ * a number in a comment is a rumour until it is derived from the array under it.
+ *
  *   direct DPS (damage/cooldown), mean of the six
- *     L0  375.2   vs  mean fusion L0  167.1   =  2.25x
- *     L1  981.9   vs  mean fusion L1  447.7   =  2.19x
+ *     L0   375.2  vs mean fusion L0  167.1  =  2.25x
+ *     L1   981.9  vs mean fusion L1  447.7  =  2.19x
+ *     L2  1949.4  vs mean fusion L1  447.7  =  4.35x   (and 1.99x its own L1)
  *   gold efficiency (dps per gold of cumulative cost)
- *     L1  981.9/3100 = 0.317  vs fusion 447.7/1550 = 0.289  =  +9.6%
+ *     L1   981.9/3100 = 0.3167  vs fusion 447.7/1550 = 0.2889  =  +9.6%
+ *     L2  1949.4/6200 = 0.3144  vs the same fusion baseline    =  +8.8%
  *
- * A primal is therefore 2.2x a fusion PER TILE and only 1.1x per gold. That
- * asymmetry is the whole design: late-game boards run out of tiles with good
- * coverage long before they run out of gold, so the primal is the answer to "I
- * have three good tiles left and a boss inbound" and NOT to "how do I out-
- * economy the board". Raising the gold efficiency turns it into the only
- * correct purchase in the game.
+ * A primal is therefore 2.2x a fusion PER TILE at L1 and 4.4x at L2, while
+ * staying inside 1.1x per gold at every level. That asymmetry is the whole
+ * design: late-game boards run out of tiles with good coverage long before they
+ * run out of gold, so the primal is the answer to "I have three good tiles left
+ * and a boss inbound" and NOT to "how do I out-economy the board". Raising the
+ * gold efficiency turns it into the only correct purchase in the game.
  *
- * Cumulative cost is 900 + 2200 = 3 100, exactly 2x a fully-forged fusion
- * (1 550) — the mental model to ship is "a primal costs two fusions in gold and
- * two element stacks on top".
+ * NOTE THE SIGN ON THE THIRD LEVEL: gold efficiency goes DOWN, 0.3167 -> 0.3144.
+ * It is the only upgrade in the game that does. That is deliberate and it is the
+ * entire justification for the tier existing — you buy it because you have run
+ * out of board, never because it is the best use of the next 3 100 gold. If a
+ * future re-tune makes L2 the efficiency peak as well, the tier has stopped
+ * being a tile decision and the design is gone.
  *
- * The six are within +/-4% of each other on direct DPS ON PURPOSE. They are
- * separated by their signature effect, never by raw numbers, so the choice of
- * which primal to chase is a choice about the wave you are facing.
+ * Cumulative cost is 900 + 2200 + 3100 = 6 200, exactly 4x a fully-forged fusion
+ * (1 550), and the L2 step alone (3 100) costs exactly what the whole two-level
+ * primal used to. The mental model to ship is "a primal costs two fusions and
+ * two element stacks to raise, and two more fusions to finish".
+ *
+ * The six are close to each other on direct DPS ON PURPOSE — they are separated
+ * by their signature effect, never by raw numbers, so the choice of which primal
+ * to chase is a choice about the wave you are facing. MEASURED spread, because
+ * this is the one claim in this docblock that has been wrong before:
+ *     L0  -7.9% (Maelstrom) .. +6.6% (Tectonic)   <- historical, NOT +/-4%
+ *     L1  -4.3% (Maelstrom) .. +3.2% (Tectonic)
+ *     L2  -0.3% (Oblivion)  .. +0.4% (Maelstrom)
+ * L0's spread predates this table's current form and is left alone: retuning the
+ * entry price of six towers to chase a comment is a worse trade than recording
+ * what is actually there. The new tier is authored to the rule.
+ *
+ * Levels beyond the build cost GOLD ONLY. PRIMAL.stacksConsumed is the entry
+ * price of the tile, not a per-level price, and Game.sellTower refunds it in
+ * full at any level — see the note on PRIMAL in Config.js.
  */
 const PRIMAL_STATS = {
   // CATACLYSM — a burning field. Fire's pure identity (burn) at 2.5x its best
   // fusion (Blacksmith L1 burns 145/s; this burns 380/s) plus splash, so the
   // burn is applied to the whole pack rather than to one body.
+  // L2 takes the burn to 720/s over a 4.4 radius and holds it half a second
+  // longer: the ground stops being something creeps cross and becomes something
+  // they survive.
   fire: [
     { cost: 900,  damage: 260, cooldown: 0.70, range: 11.5, speed: 44,
       splash: { radius: 3.2, falloff: 0.50 }, burn: { dps: 150, dur: 4 } },
     { cost: 2200, damage: 640, cooldown: 0.65, range: 12.4, speed: 48,
       splash: { radius: 3.8, falloff: 0.50 }, burn: { dps: 380, dur: 4 } },
+    { cost: 3100, damage: 1170, cooldown: 0.60, range: 13.3, speed: 52,
+      splash: { radius: 4.4, falloff: 0.50 }, burn: { dps: 720, dur: 4.5 } },
   ],
   // MAELSTROM — control, taken to its limit. 0.85 slow is the hardest on the
   // board (Well L1 is 0.80) and chain 6 is the widest, so it is the only tower
   // that applies its slow to a whole column at once.
+  // L2 is 0.90 for five seconds across eight targets — 10% of walking speed,
+  // held for longer than most waves take to cross the tower's range. It is
+  // deliberately NOT 1.0: a real stun would delete the pathing read entirely.
   water: [
     { cost: 900,  damage: 190, cooldown: 0.55, range: 12.0, speed: 60,
       slow: { amt: 0.72, dur: 3.5 }, chain: { count: 4, falloff: 0.75 } },
     { cost: 2200, damage: 470, cooldown: 0.50, range: 13.0, speed: 65,
       slow: { amt: 0.85, dur: 4.2 }, chain: { count: 6, falloff: 0.78 } },
+    { cost: 3100, damage: 900, cooldown: 0.46, range: 14.0, speed: 70,
+      slow: { amt: 0.90, dur: 5.0 }, chain: { count: 8, falloff: 0.80 } },
   ],
   // WORLDROOT — 5.9 shots/s, the fastest weapon in the game (Bloom L1 is 3.8),
   // with a stacking poison. Its damage is in the DoT it keeps re-applying, not
   // in the hit, which makes it the anti-swarm answer and terrible against one
   // fat boss. That is the intended weakness.
+  // L2 fires every 0.15s — 6.7 shots/s, and still the fastest thing on the
+  // board by a wide margin. The weakness is untouched on purpose: 292 per hit
+  // against a boss is nothing, the tower lives on the 580/s stacking poison it
+  // re-applies to a pack.
   nature: [
     { cost: 900,  damage: 76,  cooldown: 0.20, range: 10.6, speed: 70,
       poison: { dps: 120, dur: 5, stack: true }, splash: { radius: 1.8, falloff: 0.75 } },
     { cost: 2200, damage: 165, cooldown: 0.17, range: 11.4, speed: 76,
       poison: { dps: 300, dur: 5, stack: true }, splash: { radius: 2.2, falloff: 0.75 } },
+    { cost: 3100, damage: 292, cooldown: 0.15, range: 12.2, speed: 82,
+      poison: { dps: 580, dur: 5, stack: true }, splash: { radius: 2.7, falloff: 0.75 } },
   ],
   // TECTONIC — 1520 in one shell, 2.7x Howitzer's 570, over a 5.4 radius, and
   // it strips 22 armour. The slowest cadence in the game (0.67 shots/s) so it
   // is a siege piece: devastating on a packed lane, wasted on stragglers.
+  // L2 is 2 820 in one shell over a 6.2 radius — three tiles in every direction
+  // — and strips 34 armour. Still the slowest cadence in the game.
   earth: [
     { cost: 900,  damage: 620,  cooldown: 1.55, range: 10.4, speed: 30,
       splash: { radius: 4.6, falloff: 0.40 }, armorPen: 12 },
     { cost: 2200, damage: 1520, cooldown: 1.50, range: 11.2, speed: 32,
       splash: { radius: 5.4, falloff: 0.40 }, armorPen: 22 },
+    { cost: 3100, damage: 2820, cooldown: 1.45, range: 12.0, speed: 34,
+      splash: { radius: 6.2, falloff: 0.40 }, armorPen: 34 },
   ],
   // JUDGEMENT — 17.5 range (the board is 52x40; nothing else exceeds 14.5),
   // pure damage so armour is irrelevant, and the strongest execute in the game.
   // Projectiles.#impact computes dmg *= 1 + missing * execute * 6, so at 90%
   // missing HP this multiplies by 3.6x.
+  // L2 reaches 19.0 — over a third of the board's 52-unit width from one tile —
+  // and its execute multiplies by 1 + 0.9*0.42*6 = 3.27x on a creep at 10% HP.
   light: [
     { cost: 900,  damage: 235, cooldown: 0.62, range: 16.0, speed: 130,
       damageType: 'pure', execute: 0.20, chain: { count: 2, falloff: 0.85 } },
     { cost: 2200, damage: 570, cooldown: 0.58, range: 17.5, speed: 140,
       damageType: 'pure', execute: 0.30, chain: { count: 3, falloff: 0.88 } },
+    { cost: 3100, damage: 1055, cooldown: 0.54, range: 19.0, speed: 150,
+      damageType: 'pure', execute: 0.42, chain: { count: 4, falloff: 0.90 } },
   ],
   // OBLIVION — execute plus the only life recovery in the game. `lifesteal` was
   // declared on earth+nature and implemented NOWHERE; shipping this tower meant
   // implementing it in Projectiles.#impact, which retroactively makes
   // Mushroom's advertised "Leech" true as well.
+  // L2's execute is 4.13x on a creep at 10% HP, the hardest finisher in the
+  // game, and it returns 3 lives a kill. ECONOMY.maxLives (50) is what stops
+  // that being a second unbounded currency — see the note there.
   dark: [
     { cost: 900,  damage: 300, cooldown: 0.80, range: 11.0, speed: 40,
       execute: 0.28, lifesteal: 1, poison: { dps: 90,  dur: 6, stack: true } },
     { cost: 2200, damage: 760, cooldown: 0.76, range: 11.8, speed: 44,
       execute: 0.42, lifesteal: 2, poison: { dps: 230, dur: 6, stack: true } },
+    { cost: 3100, damage: 1400, cooldown: 0.72, range: 12.7, speed: 48,
+      execute: 0.58, lifesteal: 3, poison: { dps: 440, dur: 6, stack: true } },
   ],
 };
 

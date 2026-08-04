@@ -12,5 +12,10 @@ cmp/
 # Server artifacts
 server/leaderboard.json
 
+# Test artifacts (traces, failure screenshots, HTML report)
+test-results/
+playwright-report/
+.playwright/
+
 # OS
 .DS_Store

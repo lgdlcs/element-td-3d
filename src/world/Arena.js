@@ -1027,7 +1027,10 @@ export class Arena {
         uArena: { value: new THREE.Vector2(GRID.width, GRID.height) },
         uOpacity: { value: 0.0 },
         uHover: { value: new THREE.Vector2(-99, -99) },
-        // 0 valid · 1 occupied · 2 would seal the maze · 3 cannot afford.
+        // 0 valid · 1 occupied · 2 a creep is standing there · 3 would seal the
+        // maze · 4 not enough element stacks · 5 cannot afford. One slot per
+        // outcome of Game.placementReason(), because two refusals sharing a code
+        // is two refusals sharing a picture.
         // Was a 0/1 "valid" flag; see setHover for why it is no longer a boolean.
         uHoverState: { value: 0 },
         uRangeCentre: { value: new THREE.Vector2(0, 0) },
@@ -1069,6 +1072,32 @@ export class Arena {
         uniform float uTime, uOpacity, uHoverState, uRange;
         uniform vec3 uRangeColor;
 
+        // Filtered stripe field. 'v' repeats once per unit; 'duty' is how much of
+        // each period is inked (0..1, measured from the stripe centre outward).
+        //
+        // The smoothstep width tracks the on-screen derivative, so when the
+        // camera pulls back and a period drops under a pixel the field converges
+        // to a FLAT tint of the same average density instead of tearing into
+        // moire. Every pattern in this shader goes through it for that reason —
+        // PITFALLS 6 is a whole entry about angular/repeating detail aliasing
+        // into geometry that was never there.
+        float stripe(float v, float duty) {
+          float w = fwidth(v) * 1.4 + 1e-4;
+          float s = abs(fract(v) - 0.5) * 2.0;
+          return 1.0 - smoothstep(duty - w, duty + w, s);
+        }
+
+        // Straight-alpha source-over. Every element of this overlay is a separate
+        // translucent layer stacked in a fixed order, and the previous version
+        // faked that with max()/mix() on a single colour — which is how the range
+        // ring came to overwrite the placement ghost outright. Compositing them
+        // honestly is what lets a later layer sit ON a previous one rather than
+        // instead of it.
+        void over(inout vec3 acc, inout float aAcc, vec3 c, float a) {
+          acc = c * a + acc * (1.0 - a);
+          aAcc = a + aAcc * (1.0 - a);
+        }
+
         void main() {
           // Grid coordinates are anchored to world space, not to the oversized
           // ground quad, so the lines land exactly on the build cells.
@@ -1076,30 +1105,104 @@ export class Arena {
           vec2 f = fract(cell);
           vec2 d = min(f, 1.0 - f);
           float aa = max(fwidth(cell.x), fwidth(cell.y));
+          float ppc = 1.0 / max(aa, 1e-5);          // pixels per cell
 
-          // hairline + a softer outer bloom, so it reads as scribed light
-          float core = 1.0 - smoothstep(0.0, aa * 1.1, min(d.x, d.y));
-          float halo = 1.0 - smoothstep(0.0, aa * 5.5, min(d.x, d.y));
+          // ------------------------------------------------------------------
+          // Line widths are in PIXELS, not in cell units.
+          //
+          // They used to be cell units scaled by fwidth, which is the same thing
+          // under the default camera and a rout at range: the outer halo was
+          // 5.5*fwidth wide, so once a cell fell below ~11px the halo covered the
+          // whole cell and the board turned into a pale slab with the maze
+          // dissolved inside it. Dividing by fwidth up front means every width
+          // below is a promise the shader can keep at any zoom.
+          // ------------------------------------------------------------------
+          float dpx = min(d.x, d.y) * ppc;          // px to the nearest scribe line
+          float npx = length(d) * ppc;              // px to the nearest intersection
 
-          // intersection nodes
-          float node = (1.0 - smoothstep(0.0, aa * 3.2, length(d)));
+          // Under a handful of pixels per cell there is no honest way to draw a
+          // grid; fade rather than alias. A safety valve rather than a look knob
+          // — but the honest numbers, because the previous note here quoted the
+          // board MEDIAN and called the valve dormant. 'aa' takes the max of the
+          // two fwidths, so what matters is the MINIMUM cell coverage anywhere
+          // on the board, which is always the far rows: measured at
+          // dist = CAMERA.maxDist that minimum is 14.5px at 1600x900, 11.6px at
+          // 1280x720 and 10.3px on a 1366x640 laptop viewport. Against the old
+          // smoothstep(4, 13) ramp the far third of a short window was already
+          // being faded to 78-93% while the near third stayed at 100% — i.e. the
+          // overlay quietly weakened exactly where "not visible enough" bites
+          // hardest. The ramp now ends at 9.0, below every supported viewport,
+          // so it is genuinely inactive and only catches a wider board, a
+          // smaller window or a future zoom limit.
+          float room = smoothstep(3.0, 9.0, ppc);
+          float glowW = clamp(ppc * 0.05, 0.6, 2.0);
+          float shadeW = clamp(ppc * 0.025, 0.5, 1.0);
+
+          float core  = 1.0 - smoothstep(0.5, 1.3, dpx);
+          float glow  = 1.0 - smoothstep(1.8, 1.8 + glowW, dpx);
+          float node  = 1.0 - smoothstep(1.6, 2.8, npx);
+          // A dark contour just OUTSIDE the bright core. This is the single
+          // change that makes a 2px line survive both the pale flagstone and the
+          // dark sunken lane: the contrast against the ground is carried by the
+          // shadow, not by the hue, so it also survives a colour-blind eye.
+          float shade = 1.0 - smoothstep(1.2, 1.2 + shadeW, dpx);
 
           // ignition sweep: the lines light up outward from board centre
           float rad = length(vWorld.xz) / (length(uArena) * 0.5);
           float ign = clamp((uOpacity * 2.3 - rad * 1.0), 0.0, 1.0);
-          float shimmer = 0.82 + 0.18 * sin(uTime * 2.2 - rad * 9.0);
+          float shimmer = 0.88 + 0.12 * sin(uTime * 2.2 - rad * 9.0);
 
           vec2 ci = floor(cell);
           vec4 occ = texture2D(uOccupancy, (ci + 0.5) / uGridSize);
-          vec3 base = mix(vec3(0.35, 0.68, 1.0), vec3(1.0, 0.42, 0.22), occ.r);
-          base = mix(base, vec3(1.0, 0.78, 0.32), occ.g * 0.85);
+          float blocked = occ.r;                    // tower footprint / dead terrain
+          float lane = occ.g;                       // protected spawn/exit corridor
 
-          float alpha = (core * 0.42 + halo * 0.10 + node * 0.30) * ign * shimmer;
-          vec3 col = base * (0.9 + core * 1.5 + node * 1.2);
+          // Derivative-dependent fields, all evaluated at top level: calling
+          // fwidth inside a non-uniform 'if' is undefined behaviour, and the
+          // failure mode is a silently wrong pattern rather than an error.
+          float hatchA = stripe((vWorld.x + vWorld.z) * 0.60, 0.34);
+          float hatchB = stripe((vWorld.x - vWorld.z) * 0.60, 0.34);
+          float sealBars = stripe((vWorld.x + vWorld.z) * 0.34 - uTime * 0.42, 0.42);
+
+          vec3 FREE_C  = vec3(0.38, 0.80, 1.00);
+          vec3 BLOCK_C = vec3(1.00, 0.46, 0.24);
+          vec3 LANE_C  = vec3(1.00, 0.74, 0.24);
+          vec3 lineC = mix(FREE_C, BLOCK_C, blocked);
+          lineC = mix(lineC, LANE_C, lane);
+
+          // Ground you cannot build on is HATCHED, not merely tinted a different
+          // hue. Hatching reads over the amber road and over the grey flagstone
+          // alike, it is the difference a red/green-blind player can still see,
+          // and it leaves free cells as the only clean, empty ones on the board —
+          // which is the actual question the build cursor is asking.
+          float washA = (lane * hatchA * 0.50 + blocked * max(hatchA, hatchB) * 0.30) * room;
+          vec3 washC = mix(BLOCK_C, LANE_C, lane) * 0.95;
+          // Non-buildable cells also get a HEAVIER scribe, not just a different
+          // one. Hue alone put the protected corridor and a free cell within a
+          // few percent of each other on a small, distant part of the frame,
+          // which is exactly where the player needs the difference most.
+          float locked = clamp(lane + blocked, 0.0, 1.0);
+
+          vec3 dark = vec3(0.015, 0.02, 0.035);
+          vec3 acc = vec3(0.0);
+          float aAcc = 0.0;
+          over(acc, aAcc, washC, washA);
+          over(acc, aAcc, dark, shade * (0.40 + locked * 0.22) * room);
+          over(acc, aAcc, lineC * 0.70, glow * (0.10 + locked * 0.10) * room);
+          // Line colour is kept UNDER the 2.05 bloom threshold on purpose: the
+          // grid must be crisp, and the ghost and the range ring are the two
+          // things allowed to glow. Push this past 2.05 and every cell edge on
+          // the board enters the bloom pyramid and the maze hazes over.
+          over(acc, aAcc, lineC * 1.30, max(core * (0.74 + locked * 0.22), node * 0.30) * room);
+          // The ignition sweep dims the whole scribe layer. Both accumulators
+          // have to scale together: acc is PREMULTIPLIED, and touching only the
+          // alpha would leave the un-premultiply at the bottom dividing by a
+          // number that no longer matches, i.e. quietly over-bright.
+          acc *= ign * shimmer;
+          aAcc *= ign * shimmer;
 
           // clip cleanly to the play field (the mesh overshoots under the rim)
           vec2 inF = step(vec2(0.0), cell) * step(cell, uGridSize);
-          alpha *= inF.x * inF.y;
 
           // --- cut-off ground -------------------------------------------------
           // occ.b flags every cell that would lose its route to the spawn if the
@@ -1108,61 +1211,154 @@ export class Arena {
           // asserted by a label: the player sees the ground going dark.
           //
           // Diagonal bars, not a flat tint. A flat red over a third of the board
-          // reads as a rendering fault; bars read as "barred off", and they also
+          // reads as a rendering fault; bars read as 'barred off', and they also
           // survive being drawn over the amber road and the blue free cells,
-          // which a wash of either hue would not.
+          // which a wash of either hue would not. The bars now CRAWL: nothing
+          // else on a resting board moves, so motion is what pulls the eye to
+          // the region that is about to be lost.
           if (occ.b > 0.5) {
-            float bars = sin((vWorld.x + vWorld.z) * 1.9 - uTime * 2.6);
-            bars = smoothstep(0.0, 0.55, bars);
-            float breathe = 0.72 + 0.28 * sin(uTime * 3.4);
-            col = mix(col, vec3(1.0, 0.16, 0.13), 0.86);
-            alpha = max(alpha, (0.20 + bars * 0.34) * breathe) * inF.x * inF.y;
+            float breathe = 0.78 + 0.22 * sin(uTime * 3.4);
+            over(acc, aAcc, mix(vec3(0.34, 0.02, 0.02), vec3(1.0, 0.24, 0.15), sealBars),
+                 (0.30 + sealBars * 0.34) * breathe);
           }
 
-          // 2x2 hover footprint
-          vec2 hd = ci - uHover;
-          if (hd.x >= 0.0 && hd.x < 2.0 && hd.y >= 0.0 && hd.y < 2.0) {
-            // One colour per refusal, so the ghost says WHICH rule it broke.
-            // A single red for "no" is what forced the player to guess between
-            // "something is already here", "I am too poor" and "this closes the
-            // maze" — three problems with three different fixes.
-            vec3 hc = vec3(0.40, 1.0, 0.60);                              // valid
-            if (uHoverState > 2.5)      hc = vec3(1.0, 0.80, 0.24);       // poor
-            else if (uHoverState > 1.5) hc = vec3(1.0, 0.14, 0.11);       // seal
-            else if (uHoverState > 0.5) hc = vec3(0.82, 0.78, 0.72);      // occupied
-            float pulse = 0.7 + 0.3 * sin(uTime * 6.0);
-            float inner = min(min(hd.x < 1.0 ? f.x : 1.0, hd.x > 0.0 ? 1.0 - f.x : 1.0),
-                              min(hd.y < 1.0 ? f.y : 1.0, hd.y > 0.0 ? 1.0 - f.y : 1.0));
-            float border = 1.0 - smoothstep(0.0, 0.14, inner);
-            col = hc * (1.2 + border * 1.6);
-            alpha = max(alpha * 0.5, max(0.26 * pulse, border * 0.9 * pulse));
-
-            // A sealing placement additionally gets a hard X across the pad and
-            // a fast pulse. This is the one refusal the player cannot fix by
-            // waiting or by clicking elsewhere nearby, so it is the one that
-            // earns a symbol rather than only a hue.
-            if (uHoverState > 1.5 && uHoverState < 2.5) {
-              vec2 q = (hd + f) * 0.5;              // 0..1 across the 2x2 pad
-              float x1 = abs(q.x - q.y);
-              float x2 = abs(q.x + q.y - 1.0);
-              float cross = 1.0 - smoothstep(0.0, 0.075, min(x1, x2));
-              float fast = 0.55 + 0.45 * sin(uTime * 11.0);
-              col = mix(col, vec3(1.0, 0.94, 0.90), cross * 0.85);
-              alpha = max(alpha, cross * 0.95 * fast);
-            }
-          }
-
-          // range ring
+          // --- range ring -----------------------------------------------------
+          // Drawn BEFORE the hover pad, and its interior is a faint band rather
+          // than a flood. It used to composite with mix(col, ringColour,
+          // step(0.001, fill)) — and that step is 1 across the WHOLE disc, so the
+          // ring replaced the ghost's colour with the tower's colour on every
+          // frame the player was holding a tower. The six refusal hues existed
+          // and not one of them ever reached the screen (PITFALLS 8: the feature
+          // was written, reviewed, and never rendered a pixel).
           if (uRange > 0.0) {
             float rd = distance(vWorld.xz, uRangeCentre);
-            float ring = 1.0 - smoothstep(0.0, 0.26, abs(rd - uRange));
-            float dash = 0.55 + 0.45 * sin(atan(vWorld.z - uRangeCentre.y, vWorld.x - uRangeCentre.x) * 44.0 + uTime * 1.2);
-            float fill = smoothstep(uRange, uRange - 1.6, rd) * 0.05;
-            col = mix(col, uRangeColor * (1.0 + ring), max(ring, step(0.001, fill)));
-            alpha = max(alpha, ring * (0.45 + dash * 0.6) + fill);
+            // Thickness has a floor in world units and another in pixels, so the
+            // ring is never a sub-pixel hairline when the camera is far out.
+            float rw = max(0.20, fwidth(rd) * 1.6);
+            float ring = 1.0 - smoothstep(rw, rw * 2.4, abs(rd - uRange));
+            // Dash count follows the circumference, so dashes stay the same size
+            // on a 6-unit range and on a 16-unit one. A fixed count turns the
+            // small rings into a pinwheel (PITFALLS 6).
+            vec2 rv = vWorld.xz - uRangeCentre;
+            float ang = atan(rv.y, rv.x + 1e-6);
+            float dash = 0.58 + 0.42 * sin(ang * max(24.0, floor(uRange * 3.0)) + uTime * 1.2);
+            // Inner glow hugging the edge: says 'this area is covered' without
+            // washing out the maze the player is reading underneath it.
+            float band = smoothstep(uRange - 2.6, uRange, rd) * step(rd, uRange);
+            over(acc, aAcc, uRangeColor * 1.1, band * 0.13 + step(rd, uRange) * 0.035);
+            over(acc, aAcc, uRangeColor * 2.2, ring * (0.62 + dash * 0.38));
           }
 
-          gl_FragColor = vec4(col, alpha * uOpacity);
+          // --- 2x2 hover footprint (last: nothing may paint over the answer) ---
+          // Pad-local coordinates are continuous (ci + f == cell), so every
+          // derivative below is well defined even though the branch is not.
+          vec2 hd = ci - uHover;
+          vec2 q = (hd + f) * 0.5;                  // 0..1 across the 2x2 pad
+          vec2 pc = q - 0.5;
+          float apx = max(fwidth(q.x), fwidth(q.y));
+          float inner = min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y));
+          float bw = max(0.045, apx * 1.6);
+          float border = 1.0 - smoothstep(bw, bw + apx * 1.8, inner);
+          float mw = 0.028 + apx * 1.2;
+
+          // Every motif is evaluated unconditionally, for the same fwidth reason.
+          // Six of them is a few dozen ALU on one already-cheap overlay mesh.
+          // Corner brackets are drawn from a HEAVIER outline than the thin
+          // continuous one, otherwise 'four corners' and 'a rectangle' are the
+          // same picture and the reticle reading is lost.
+          float heavy = 1.0 - smoothstep(bw * 3.8, bw * 3.8 + apx * 1.8, inner);
+          // FILTERED, not step(). Both of the motifs below used to be raw step()
+          // and were the only derivative-blind edges in the overlay: the VALID
+          // ghost's four brackets and the POOR ghost's whole dashed outline, i.e.
+          // the two states a player sees most often. They staircased at close
+          // camera and crawled frame to frame while every other edge in the same
+          // shader was smooth. 'apx' is already in scope for exactly this.
+          float brackets = heavy * smoothstep(0.30 - apx, 0.30 + apx, min(abs(pc.x), abs(pc.y)));
+          float hatchM = max(stripe((q.x + q.y) * 3.0, 0.38), stripe((q.x - q.y) * 3.0, 0.38));
+          float chevM  = stripe((q.x + q.y) * 3.0 - uTime * 0.9, 0.24);
+          float xM     = 1.0 - smoothstep(mw, mw + apx * 1.5,
+                                          min(abs(q.x - q.y), abs(q.x + q.y - 1.0)) * 0.7071);
+          float rr = length(pc);
+          float discM = max(1.0 - smoothstep(mw, mw + apx * 1.5, abs(rr - 0.27)),
+                            (1.0 - smoothstep(mw, mw + apx * 1.5, abs(q.x - q.y) * 0.7071))
+                            * (1.0 - step(0.29, rr)));
+          float dashB = stripe((q.x + q.y) * 5.0, 0.5);
+
+          if (hd.x >= 0.0 && hd.x < 2.0 && hd.y >= 0.0 && hd.y < 2.0) {
+            // ONE HUE AND ONE SHAPE PER REFUSAL. A single red for 'no' forced the
+            // player to guess between 'something is already here', 'I am too
+            // poor' and 'this closes the maze' — three problems with three
+            // different fixes. The shape is not decoration either: hue alone is
+            // useless to roughly one man in twelve, so each state differs in
+            // motif and in tempo as well as in colour.
+            float slow = 0.78 + 0.22 * sin(uTime * 4.2);
+            float fast = 0.55 + 0.45 * sin(uTime * 11.0);
+            vec3 hc = vec3(0.24, 1.00, 0.40);
+            float mark = brackets;                  // valid: four corner brackets
+            // 'valid' is the only state left mostly OPEN, and that is the shape
+            // cue that survives desaturation: the five refusals all say
+            // 'something is in the way' and are filled, this one says 'nothing is
+            // here' and is an empty pad with four heavy corner brackets. Judged
+            // on the greyscale contact sheet, where hue buys nothing.
+            float body = 0.22;
+            float beat = slow;
+            // Weight of the CONTINUOUS outline. The PAD stays open — filling it
+            // would destroy the open/filled contrast that carries the read in
+            // greyscale — but the frame around it does not have to be faint.
+            // At 0.30 the cyan scribe lines crossing the pad had more visual
+            // weight than the thing the player was aiming with, which is the
+            // literal complaint ("the grid and the tower preview are not visible
+            // enough") pointing at the preview rather than the grid. The brackets
+            // ('heavy', one notch wider above) and this liseré are what carry the
+            // ghost now; 'body' is untouched.
+            float bord = 0.50;
+            float hot = 0.0;                        // white-hot core on the motif
+
+            if (uHoverState > 4.5) {
+              // POOR — gold, DASHED outline, no motif. The placement itself is
+              // legal and only the purse is short, so the ghost has to say
+              // 'later', not 'never'.
+              hc = vec3(1.00, 0.90, 0.34); mark = 0.0; body = 0.26; bord = dashB;
+            } else if (uHoverState > 3.5) {
+              // STACKS — violet no-entry disc. Deliberately NOT red: no amount of
+              // gold and no other tile fixes it, so it must not read as the same
+              // class of refusal as the rest.
+              hc = vec3(0.72, 0.44, 1.00); mark = discM; body = 0.40; bord = 1.0; hot = 0.35;
+            } else if (uHoverState > 2.5) {
+              // SEAL — red X, fast pulse, plus the barred ground above. The one
+              // refusal that cannot be waited out or paid for.
+              hc = vec3(1.00, 0.14, 0.10); mark = xM; body = 0.52; bord = 1.0;
+              beat = fast; hot = 0.55;
+            } else if (uHoverState > 1.5) {
+              // CREEP — amber chevrons SLIDING across the pad. The only refusal
+              // that clears itself in a second or two, so it is the only one that
+              // moves: the picture says 'wait', which is exactly the fix.
+              hc = vec3(1.00, 0.48, 0.06); mark = chevM; body = 0.42; bord = 1.0;
+            } else if (uHoverState > 0.5) {
+              // OCCUPIED — steel, cross-hatched. Reads as solid matter.
+              hc = vec3(0.84, 0.87, 0.94); mark = hatchM; body = 0.36; bord = 1.0;
+            }
+
+            float ink = max(border * bord, mark);
+            // Knock the scribe lines, the seal bars and the range ring DOWN
+            // inside the footprint before painting the answer on top. Without
+            // this the ghost is a 40%-opacity veil over a full-strength grid and
+            // the state colour arrives as a tint rather than as a statement.
+            acc *= 0.42;
+            aAcc *= 0.42;
+            over(acc, aAcc, hc * 0.95, body * beat);
+            // Above the bloom threshold, unlike the grid: the ghost is the one
+            // thing on the board that has to be found without being looked for.
+            over(acc, aAcc, mix(hc * 2.30, vec3(1.15, 1.10, 1.05), hot),
+                 ink * (0.80 + 0.20 * beat));
+          }
+
+          // Un-premultiply BEFORE the clip: acc/aAcc is a convex combination of
+          // the layer colours, so it stays bounded, but only while the pair is
+          // still consistent.
+          vec3 outC = acc / max(aAcc, 1e-4);
+          float outA = clamp(aAcc, 0.0, 1.0) * inF.x * inF.y * uOpacity;
+          gl_FragColor = vec4(outC, outA);
         }
       `,
     });
@@ -1362,9 +1558,24 @@ export class Arena {
    * green — the UI telling the player to click somewhere the game will refuse.
    * Erring toward "invalid" makes any missed call site an annoyance instead of
    * a lie.
+   *
+   * One code per outcome of Game.placementReason(), and the table is deliberately
+   * total over it. 'creep' used to share a code with 'occupied' and 'stacks' had
+   * none at all, so two of the six refusals were painted as a third — the hint
+   * text was the only thing that knew the difference, which is precisely the
+   * "guess which rule you broke" problem the per-state colours were added to
+   * solve. If a seventh reason is ever added, add it here too: the fallback will
+   * silently call it 'occupied'.
+   *
+   * FIVE OF THE SIX ARE REACHABLE BY CLICKING; 'stacks' is not, and that is
+   * deliberate rather than an oversight — see the audit note on
+   * Game.placementReason. It is driven through setBuildSelection() directly by
+   * tests/e2e/grid-preview.spec.js, which also reads back the pixels each code
+   * paints, so "six codes" and "six pictures" are two separate measured facts
+   * rather than one claim.
    */
   setHover(c, r, state = 'none') {
-    const S = { valid: 0, occupied: 1, creep: 1, seal: 2, poor: 3 };
+    const S = { valid: 0, occupied: 1, creep: 2, seal: 3, stacks: 4, poor: 5 };
     this.gridMaterial.uniforms.uHover.value.set(c, r);
     this.gridMaterial.uniforms.uHoverState.value = S[state] ?? S.occupied;
   }

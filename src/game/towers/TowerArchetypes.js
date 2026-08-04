@@ -104,7 +104,66 @@ const HEAVY = { earth: 5, nature: 4, water: 3, fire: 2, dark: 1, light: 0 };
 const PAL = {
   fire:   { stone: 0x7a2416, stone2: 0xbc3c19, metal: 0x37110b, trim: 0xff6a22 },
   water:  { stone: 0x1f6fae, stone2: 0x49a9de, metal: 0x113a5c, trim: 0x46cdf5 },
-  nature: { stone: 0x2e7a2c, stone2: 0x66bc44, metal: 0x154018, trim: 0xaadd3a },
+  // nature.trim IS THE CANOPY, not a metal edge: BODY.nature paints every leaf
+  // mass with `p.trim`, and on a top-heavy silhouette that is the single largest
+  // painted area on the tower. 0xaadd3a — (170,221,58), S=0.74 V=0.87 — was
+  // therefore not a highlight colour, it was six square metres of chartreuse
+  // highlighter, and it is what read as fluorescent from across the board.
+  //
+  // 0x7bb45e is S=0.48 V=0.71 at 100 deg. In sRGB that looks like a small step;
+  // measured through the path the shader actually samples it is a 64% cut in
+  // luminance (0.373 -> 0.134), because `linear()` in TowerParts runs setHex()
+  // AND convertSRGBToLinear(), so an authored value is squared before it reaches
+  // the frame. Every colour in the repo goes through that same path, so the
+  // comparison between families is unaffected — but any value judgement made
+  // from the hex alone will be roughly half of what actually ships. Measure.
+  //
+  // stone / stone2 / metal are UNTOUCHED on purpose — the round-7 note above
+  // records that cool families were deliberately given chroma to survive ACES and
+  // bloom, and the trunks were never the fluorescent surface.
+  //
+  // THAT HAD A CONSEQUENCE, AND IT IS NOT AN ACCIDENT ANY MORE. Holding the
+  // trunks still while the canopy came down by 10x inverted the family's own
+  // ramp: `stone2` (0x66bc44, luminance 0.1587) is now 4.4x brighter than the
+  // trim it carries (0.0362), and BODY.nature paints it on the upper two thirds
+  // of every trunk and on all twelve canopy branches. From the gameplay camera
+  // the read is right — a dark trunk under a broad olive crown — but in a
+  // close-up the brightest surface on the tower is the wood, not the leaves.
+  // That is ACCEPTED: the brief was "the nature towers are too flashy from
+  // across the board", the branches are thin (a few hundred pixels at gameplay
+  // distance against the canopy's thousands), and darkening the trunk pushes it
+  // toward the shadowed flagstones it stands on. If a future round disagrees,
+  // move stone2 toward ~0x4e8f3c and re-shoot `--scenario midgame` PLUS a
+  // close-up, because those two cameras disagree about this value.
+  //
+  // 0x7bb45e WAS NOT ENOUGH, AND THE REASON IS AREA, NOT VALUE.
+  //
+  // Measured on the shipped frame (scenario `static`, 21 towers, hue histogram
+  // over the plateau, pixels with S>0.45 V>0.55): the yellow-green half of the
+  // wheel was 17.6% of the coloured board and the 60-90 deg slice ran at MEAN
+  // LUMINANCE 172-210/255 — the brightest thing in frame, ahead of orange at
+  // 166 with twice the tower count. Meanwhile 0x7bb45e's own linear luminance,
+  // 0.134, was already the second LOWEST trim of the six families. So value was
+  // never the lever: a colour cannot be made calm by darkening it when it covers
+  // three times the pixels of any other. The canopy is the largest painted
+  // surface on the board and it was ONE FLAT VALUE across all of it.
+  //
+  // Two levers, and the second is the one that did the work:
+  //   - 0x4f874d, S=0.43 V=0.53 at 118 deg. Hue deliberately moved 100 -> 118,
+  //     toward ELEMENTS.nature's own 132.7: desaturating alone let the warm key
+  //     drag the rendered canopy toward yellow, which is dead grass rather than
+  //     foliage.
+  //   - BODY.nature dapples the leaf masses between `trim` and `stone` instead
+  //     of painting all twelve with `trim`. See the comment at the canopy loop.
+  //
+  // Paired result, same scenario and camera, before -> after:
+  //     hue 75-90  ("lime")    2544 px @ 172   ->    479 px @ 169   (-81% area)
+  //     hue 60-75  ("citron")  2984 px @ 210   ->   2968 px @ 184   (-26 luma)
+  // and no nature band is the brightest on the board any more. The band that
+  // now tops the list at 45-60 deg is NOT the canopy: repainting nature's trim
+  // magenta as a control leaves 3413 px there at 199, i.e. the light towers and
+  // the lanterns. Run that control before blaming this palette again.
+  nature: { stone: 0x2e7a2c, stone2: 0x66bc44, metal: 0x154018, trim: 0x4f874d },
   earth:  { stone: 0x9c7a2c, stone2: 0xc9a13c, metal: 0x4d3612, trim: 0xefb52c },
   light:  { stone: 0xd8cfae, stone2: 0xf9f1d2, metal: 0x8d7c4e, trim: 0xffd964 },
   dark:   { stone: 0x552b9c, stone2: 0x8a55d8, metal: 0x2b1650, trim: 0xb56cff },
@@ -132,12 +191,17 @@ const TAU = Math.PI * 2;
  *   foot radius the ground-contact debris is scattered to
  *
  * These are the numbers a blind viewer is actually reading. Do not equalise
- * them "for consistency": the spread IS the deliverable. h ranges 0.74 (earth)
- * to 1.46 (light), which is a 2.0x height difference between the shortest and
- * the tallest tower on the board, and the footprints run 4.9 units (earth) to
- * 1.1 (light).
+ * them "for consistency": the spread IS the deliverable. READ THEM OFF THE
+ * TABLE BELOW, not off this paragraph — it stood for a round claiming
+ * "0.74 to 1.46, a 2.0x height difference" and "footprints 4.9 to 1.1" against a
+ * table that has said 0.58 / 1.70 and 2.30 / 0.96 since the round-7 rewrite, and
+ * those are precisely the figures a re-tune of the primal ladder leans on. The
+ * true spread is h 0.58 (earth) to 1.70 (light) = 2.9x, foot 2.30 (water, with
+ * earth just behind at 2.26) to 0.96 (light) = 2.4x.
+ * tests/unit/tower-scale.test.js derives both from this table so the next drift
+ * is a red test rather than a wrong sentence.
  */
-const SHAPE = {
+export const SHAPE = {
   fire:   { h: 0.92, foot: 1.72 },
   water:  { h: 0.98, foot: 2.30 },
   nature: { h: 1.10, foot: 1.34 },
@@ -197,6 +261,191 @@ const SHAFT = 2.45;
 /** Per upgrade level. Was 0.68, which made a level-2 light tower 15 units. */
 const SHAFT_LEVEL = 0.18;
 
+/**
+ * THE PRIMAL LADDER — the one deliberate exception to the constant above.
+ *
+ * Every entry is indexed by LEVEL, so a three-level primal has three of each and
+ * a fourth tier would need a fourth. Read this together with the SHAFT docblock,
+ * because it walks straight into the constraint documented there, on purpose.
+ *
+ *   shaft    multiplies the (compressed) family height — the vertical silhouette
+ *   mass     scales the crown, the halo radii and the head offset
+ *   crownK   how much of the per-family CROWNK spread survives (1 = all of it)
+ *   orbit    the radius the loose shards orbit at, in place of `mass`
+ *   ringH    height of the six ground obelisks; their RADIUS never moves
+ *
+ * WHY BREAKING THE OCCLUSION RULE IS CORRECT HERE, AND ONLY HERE.
+ * The SHAFT docblock's finding is that a tower taller than 4*tan(51.5) = 5.03
+ * units hides the BASE of the tower one row behind it, and that round 6 shipped
+ * 21 OF 21 towers over that line, so the board rendered as one merged mass. The
+ * bug was never "a tall tower"; it was "every tower is tall", which is what
+ * removes the floor between the rows and with it every silhouette. Note that
+ * every tower on the board is over that threshold today too — the shortest is
+ * 4.87 — so the working board is already a question of degree, not of a line.
+ *
+ * A primal costs 900 gold and TWO element stacks to place. A board carries one,
+ * maybe three, against twenty-odd of everything else. One tall object among
+ * twenty short ones is not the round-6 bug; it is the only way an apex reads at
+ * all. Measured, on this table (`node tools/probe-geo.mjs` prints heights):
+ *
+ *   tallest non-primal (light L2)              8.11
+ *   primal L0 band     8.66 (Maelstrom) .. 10.32 (Judgement)
+ *   primal L1 band     9.90              .. 11.88
+ *   primal L2 band    11.25              .. 13.56
+ *
+ * The FLOOR of the primal band clears the CEILING of everything else, at every
+ * level, which it flatly did not before: Maelstrom L0 used to stand 6.08 against
+ * a plain Light tower's 7.09, and against ten of the fifteen fusions.
+ *
+ * BE PRECISE ABOUT HOW MUCH OF THE READ HEIGHT CARRIES, though — this paragraph
+ * used to claim the question was "answerable from the silhouette alone" and that
+ * is only true from L1 up. From L1 the primal floor clears the ordinary ceiling
+ * by 22% (9.90 vs 8.11) and at L2 by 39%, which is unmistakable. At L0 the
+ * margin is 6.8% (8.66 vs 8.11), measured on screen at an identical camera as
+ * 302px against 279px — inside the variation perspective alone introduces
+ * between the front and back rows of a twenty-row board, so a Maelstrom L0 five
+ * rows forward can genuinely look shorter than an upgraded Light tower behind
+ * it. What carries the L0 read is the other four levers, all of which are
+ * family-blind and row-blind: widest radius 3.30 against 3.12, the double halo
+ * band, the six ground obelisks, and a 6.20 glow pool against 4.61.
+ *
+ * THE FAMILY HEIGHT SPREAD IS COMPRESSED, NOT PRESERVED. SHAPE[el].h runs 0.58
+ * to 1.70, a 2.9x spread; applying a flat primal multiplier to that puts
+ * Judgement at 17.0 while Tectonic is still 9.5, which is not one tier, it is
+ * two. H_SPREAD keeps 22% of the family delta around H_MEAN, so the six primals
+ * span 1.2x instead. That is consistent with the rule PAL_PRIMAL already states:
+ * on a primal, the CLASS must read before the element does. The element still
+ * reads — through profile, palette, crown and pool — just not through being the
+ * tallest thing on the board by 80%.
+ *
+ * WHAT THIS TABLE MUST NOT DO IS GET WIDER AT THE GROUND. The footprint is 2x2
+ * (4.0 units) and Grid, the pathfinder and the click test all depend on it.
+ * `ringH` therefore grows while the obelisk radius (1.86) does not, and `crownK`
+ * damps the per-family crown spread so earth — CROWNK 1.20, the widest head in
+ * the game — does not repeat the round-4 accident where a brim overhung both
+ * neighbouring tiles. Measured widest geometry radius over the six primals:
+ *   L0 3.30..3.47   L1 3.47   L2 3.64..4.45
+ * The L2 worst case is Oblivion, whose crown is a ball of spikes radiating in
+ * every direction. RE-MEASURED, because the two numbers this paragraph used to
+ * quote were both wrong and both were the kind a re-tune would lean on: the
+ * tallest non-primal crown is light L2 at 8.11 by the same `spec.height` metric
+ * used fifteen lines above, NOT 5.4, so Oblivion L2's widest spike ring (world
+ * y 9.32, radius 4.45) clears the tallest possible neighbour by ~1.2 units, not
+ * 3.5. It still oversails air rather than stonework, and 1.2 units is still
+ * clearance, but nobody should re-tune PRIMAL_CROWNK believing there is 3.5.
+ *
+ * And the claim that "nothing a primal owns below 2.15 units ever leaves its own
+ * tile" was simply false: scanned in world space, the max radius below 2.15 is
+ * 3.15 (Maelstrom), 3.17 (Tectonic) and 2.45 (Cataclysm), i.e. past the 2.0 tile
+ * half-width at every level. That is the `footing()` debris ring, which every
+ * family has and which is why the "grows UP and not OUT" test in
+ * tests/unit/tower-scale.test.js compares a primal's ground extent against an
+ * ORDINARY tower's rather than against the tile. What genuinely stays on-tile is
+ * the obelisk RING (2.07-2.10 on nature/light/dark).
+ *
+ * If you change these, re-run `node tools/tower-camsil.mjs --modes sil,spread`
+ * with a primal in the set and look at the image.
+ */
+const PRIMAL_SHAFT = [1.92, 2.10, 2.28];
+/** The family-blind primal height, ~the mean of SHAPE[el].h (1.0967). */
+const PRIMAL_H_MEAN = 1.10;
+/** Fraction of the family's own height delta that survives on a primal. */
+const PRIMAL_H_SPREAD = 0.22;
+const PRIMAL_MASS = [1.98, 2.20, 2.44];
+const PRIMAL_CROWNK = [0.55, 0.42, 0.32];
+const PRIMAL_ORBIT = [2.24, 2.36, 2.48];
+const PRIMAL_RING_H = [1.15, 1.62, 2.15];
+/** Level index clamped to the ladder, so an out-of-range level can never NaN. */
+const primalStep = (level) => Math.min(Math.max(level | 0, 0), PRIMAL_SHAFT.length - 1);
+
+/**
+ * PRIMAL RADIANCE DAMPING — why the brightness ladder is not element-blind.
+ *
+ * Every other primal lever above is a pure multiplier, and that is right for
+ * GEOMETRY: a shaft is a shaft whatever colour it is painted. It is wrong for
+ * LIGHT, because a multiplier on emissive is a multiplier on an element's own
+ * radiance, and over the six that spans 25x.
+ *
+ * CORE RADIANCE = albedo luminance x ELEMENTS[el].emissive, measured through the
+ * double-convert path every consumer uses (see the ELEMENTS.nature docblock —
+ * absolute numbers from a hex are not what ships):
+ *
+ *     earth 0.125   dark 0.128   water 0.392   nature 0.459   fire 0.704
+ *     light 3.112
+ *
+ * Light is 4.4x fire and 25x earth before a primal has multiplied anything.
+ * Stack the primal boosts on that — 1.45x emissive, 1.5x pool radius, 1.5x pool
+ * intensity, and a level-3 step on top — and the apex of the light family stops
+ * being a tower. Measured with tools/scratch/_r3-lightblow.mjs (five towers, one
+ * camera, share of pixels over 200 in ALL THREE channels inside each tower's own
+ * column):
+ *
+ *     pure fire L2  1.1%      pure light L2  2.1%     Cataclysm L2  4.3%
+ *     Judgement L0  7.6%      JUDGEMENT L2  28.7%
+ *
+ * i.e. the apex of one family painted 6.7x the blown area of the apex of
+ * another, with its socle, shaft and crown inside a single white blob that also
+ * ate the towers standing behind it. The brief for this tier was BIGGER. Bigger
+ * is not "a larger flare": a flare has no silhouette, and Rule 1 of this file is
+ * that a tower is legible as a black shape.
+ *
+ * So the primal boost is scaled by a factor that falls as the element's radiance
+ * rises, referenced to fire — the primal that photographs as the apex. It is
+ * clamped above at 1, so the five elements at or below the reference are
+ * UNTOUCHED and this constant can only ever remove light, never add it. Only
+ * Judgement is damped at all; the raw ratio for it is 0.23 and the floor is what
+ * actually ships.
+ *
+ * THE FLOOR IS BELOW 1/PRIMAL_EMIS, i.e. a Judgement is dimmer PER PIXEL than a
+ * pure Light tower of the same level, and that is deliberate rather than an
+ * overshoot. Emissive intensity is watts per pixel; what blooms is watts. A
+ * primal carries PRIMAL_MASS 2.44 against an ordinary L2's 1.52 — 1.6x linear,
+ * ~2.6x in emitting AREA — plus six obelisk slivers and a second halo band that
+ * an ordinary tower does not have at all, and a pool of 2.6x the area. Equal
+ * intensity on 2.6x the surface is 2.6x the light.
+ *
+ * The value is measured, not derived, exactly like the palette above. Sweep on
+ * tools/scratch/_r3-lightblow.mjs, white-core pixels (min channel > 232) inside
+ * each tower's own column:
+ *
+ *     floor            1.00      0.69      0.55      0.40
+ *     Judgement L2     2570      1503       959       687
+ *     Judgement L0      462       458       465       372
+ *     pure light L2     146       187       137       134
+ *     Cataclysm L2        0         9         3         7
+ *
+ * 0.55 is where the curve knees: it takes the apex from 5.6x its own L0's core
+ * down to 2.1x, and 0.40 buys only 270 more pixels while starting to eat the
+ * beacon that is the whole point of a Light crown.
+ *
+ * The tier read is not weakened by this, because brightness was never carrying
+ * it: height, mass, the obelisk ring, the double halo and the pool RADIUS are,
+ * and all five are untouched. tests/unit/tower-scale.test.js pins the result as
+ * a radiance ceiling rather than as a factor, because the factor is only true in
+ * units of glow and the complaint was in pixels.
+ */
+const PRIMAL_EMIS = 1.45;
+const PRIMAL_RADIANCE_FLOOR = 0.55;
+
+/** Rec.709 luminance through the exact path TowerParts.linear() uses. */
+const linearLuminance = (hex) => {
+  const c = new THREE.Color().setHex(hex).convertSRGBToLinear();
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+};
+const ELEMENT_RADIANCE = {};
+for (const [id, e] of Object.entries(ELEMENTS)) {
+  ELEMENT_RADIANCE[id] = linearLuminance(e.color) * e.emissive;
+}
+/**
+ * Damping factor for one element's primal, in [PRIMAL_RADIANCE_FLOOR, 1].
+ * Referenced to fire rather than to a literal so re-authoring fire re-calibrates
+ * the tier instead of silently moving five elements against a stale number.
+ */
+const primalRadianceK = (el) => Math.min(1, Math.max(
+  PRIMAL_RADIANCE_FLOOR,
+  ELEMENT_RADIANCE.fire / (ELEMENT_RADIANCE[el] || ELEMENT_RADIANCE.fire),
+));
+
 // ---------------------------------------------------------------------------
 // Foundations — everything below the shaft. Returns the top Y.
 //
@@ -208,27 +457,37 @@ const SHAFT_LEVEL = 0.18;
  * Six free-standing obelisks planted around the footing, canted 8 degrees
  * inward, with an emissive sliver on the inner face. Primals only.
  *
- * This is the primal read that SURVIVES THE CAMERA. The SHAFT docblock below
- * proves that towers occlude each other from ~5 units up, which is precisely why
- * the tell cannot be height — making a primal taller would re-introduce the bug
- * round 7 spent a whole pass removing. The ring instead sits at 1.15 units on a
- * radius the neighbouring tile does not reach, under the additive ground pool,
- * which is visible even when the tower's own body is not.
+ * This is the primal read that SURVIVES THE CAMERA. The SHAFT docblock above
+ * proves that towers occlude each other from ~5 units up, so the ring is the
+ * half of the primal tell that keeps working when the body itself is buried
+ * behind the row in front: it sits on the ground, on a radius the neighbouring
+ * tile does not reach, under the additive pool.
  *
  * 1.86 + 0.19 = 2.05 against a 2.0-unit tile half-width: the ring reaches the
  * tile edge and no further, exactly like earth's 4.42 plinth does today.
+ *
+ * The obelisks GROW WITH THE LEVEL (PRIMAL_RING_H: 1.15 / 1.62 / 2.15) and the
+ * RADIUS NEVER MOVES. That is the whole discipline of this piece — a level-3
+ * primal has to gain visible mass at ground level, and the only direction it is
+ * allowed to gain it in is up. The base of each shard is pinned by shifting `y`
+ * with half the height gain, so the ring rises out of the footing instead of
+ * sinking into it, and the emissive sliver rides the same offset.
  */
 function primalRing(P, x) {
   const p = x.pal;
+  const h = PRIMAL_RING_H[primalStep(x.level)];
+  // shard() is centred on its own origin, so half the growth has to be added
+  // back to keep the foot of the obelisk on the plinth rather than under it.
+  const lift = (h - PRIMAL_RING_H[0]) * 0.5;
   for (let i = 0; i < 6; i++) {
     const a = i / 6 * TAU + 0.26;
     const cx = Math.cos(a) * 1.86, cz = Math.sin(a) * 1.86;
-    P.add(shard(0.19, 1.15, 5, 0.30), {
-      color: p.stone2, mat: MAT.stoneCut, x: cx, z: cz, y: 0.10, ry: a, rz: -0.14,
+    P.add(shard(0.19, h, 5, 0.30), {
+      color: p.stone2, mat: MAT.stoneCut, x: cx, z: cz, y: 0.10 + lift, ry: a, rz: -0.14,
     });
-    P.add(taperBox(0.055, 0.035, 0.72, 0.045, 0.03), {
+    P.add(taperBox(0.055, 0.035, 0.72 + lift * 0.9, 0.045, 0.03), {
       color: x.color, mat: MAT.core, emissive: x.emis * 1.35,
-      x: cx * 0.86, z: cz * 0.86, y: 0.52, ry: a, rz: -0.14,
+      x: cx * 0.86, z: cz * 0.86, y: 0.52 + lift, ry: a, rz: -0.14,
     });
   }
 }
@@ -498,14 +757,38 @@ const BODY = {
         // works if the top is one continuous silhouette.
         // style 0, not the timber style the branches use: at 0.86 radius the
         // vertical grain reads as corrugated planking rather than as foliage.
+        //
+        // DAPPLED, not uniform. Painting all twelve leaf masses with `p.trim`
+        // made the canopy one flat sheet at the palette's brightest green, and
+        // on a top-heavy silhouette that is the largest single-valued area
+        // anywhere on the board — measured, the brightest hue band in the whole
+        // frame, above the four fire towers. Alternating with `p.stone` (the
+        // same green the lower trunk uses) halves that area and gives the crown
+        // the light/shadow structure real foliage has, without touching the hue
+        // that carries nature's identity. `(i + k) % 2` rather than a run of
+        // three: a regular pattern reads as stripes from the gameplay camera, an
+        // offset one reads as depth.
+        //
+        // THE CONTRAST OF THAT ALTERNATION IS 1.6x, NOT 5.8x. This comment said
+        // 5.8x for a round; measured through the path the docblock on PAL
+        // itself prescribes (setHex + convertSRGBToLinear, Rec.709), trim
+        // 0x4f874d is 0.0362 against stone 0x2e7a2c at 0.0231. 5.79x is the
+        // ratio against the INTERMEDIATE trim 0x7bb45e (0.1336) that the PAL
+        // docblock explicitly records as "WAS NOT ENOUGH" and replaced. The
+        // structure is real but it is gentle; anyone re-tuning it should know
+        // there is room, and should raise a fourth leaf value rather than
+        // `p.stone`, which is also the trunk.
         P.add(rock(0.86, 31 + i * 3 + k, 0.34), {
-          color: p.trim, mat: MAT.wood, style: 0, x: Math.cos(ca) * cr, y: cy + 0.22, z: Math.sin(ca) * cr, sy: 0.54, ry: i + k,
+          color: (i + k) % 2 ? p.stone : p.trim,
+          mat: MAT.wood, style: 0, x: Math.cos(ca) * cr, y: cy + 0.22, z: Math.sin(ca) * cr, sy: 0.54, ry: i + k,
         });
       }
       // A second, inner tier that closes the gap between the three trunks so
       // the canopy reads as a single dome rather than three separate bouquets.
+      // Shaded on two trunks out of three: this tier sits UNDER the outer masses
+      // and a lit colour there is light coming from inside a tree.
       P.add(rock(0.94, 71 + i, 0.30), {
-        color: p.trim, mat: MAT.wood, style: 0,
+        color: i ? p.stone : p.trim, mat: MAT.wood, style: 0,
         x: Math.cos(a + lean * 0.5) * 0.62, y: y0 + h * 0.94, z: Math.sin(a + lean * 0.5) * 0.62, sy: 0.52,
       });
       P.add(sphere(0.20, 8, 6), {
@@ -1030,8 +1313,12 @@ export function buildTowerSpec(def, level) {
   // the presence is restored on the pulse instead, because that is the term the
   // firing spike also rides — so raising it lifts idle AND keeps the 10x flash
   // headroom, which raising the geometry term alone would not.
+  //
+  // The primal term is PRIMAL_EMIS damped by the element's own radiance — see
+  // the PRIMAL RADIANCE DAMPING docblock. Five of the six elements come out at
+  // the raw 1.45; light lands on the floor, at 1.45 * 0.55 = 0.80.
   const emis = (ELEMENTS[baseEl]?.emissive ?? 2.6) * (0.34 + level * 0.16)
-    * (primal ? 1.45 : dual ? 1.15 : 1);
+    * (primal ? PRIMAL_EMIS * primalRadianceK(baseEl) : dual ? 1.15 : 1);
 
   // Round 3 scale. Art Bible §5 asks 2.5-3.5x the 2x2 footprint (4 world
   // units); a blind Art Director measured the round-2 towers at ~1x and we lost
@@ -1043,13 +1330,22 @@ export function buildTowerSpec(def, level) {
   // body. Shrinking both would have produced a small version of the same
   // unreadable object.
   //
-  // MASS, NOT HEIGHT, is the primal lever. 1.85 puts the crown ~42% larger than
-  // a fusion's and ~30% larger than a level-2 pure's; the shaft gains only 12%
-  // (hMul below), which keeps the worst case — Primal Light, the tallest family
-  // — at 7.95 units, inside the band the board already occupies. Raising the
-  // shaft instead would walk straight back into the occlusion bug the SHAFT
-  // docblock documents.
-  const mass = (primal ? 1.85 : dual ? 1.42 : 1.30) + level * 0.11;
+  // MASS *AND* HEIGHT are the primal levers, and that is a reversal.
+  //
+  // Rounds 7-8 used mass alone (a flat 1.85 + level*0.11) and a token 1.12 on
+  // the shaft, on the reasoning that a taller primal would re-open the round-6
+  // occlusion bug. Measured on the shipped build, that produced the opposite of
+  // an apex: Maelstrom L0 stood 6.08 units against a plain Light tower's 7.09
+  // and ten of the fifteen fusions, so the most expensive object in the game was
+  // one of the SHORTER things on the board. The PRIMAL_SHAFT docblock records
+  // why one tall tower among twenty short ones is not the round-6 bug.
+  //
+  // Both levers are now ladders indexed by level, so the level-3 tier is the
+  // most imposing and every step is legible from the silhouette.
+  const step = primalStep(level);
+  const mass = primal
+    ? PRIMAL_MASS[step]
+    : (dual ? 1.42 : 1.30) + level * 0.11;
 
   const x = {
     pal: primal ? PAL_PRIMAL[baseEl] : PAL[baseEl],
@@ -1078,7 +1374,13 @@ export function buildTowerSpec(def, level) {
   // At the old value every tower was tall enough to hide the base of the tower
   // behind it, so the board rendered as one merged mass and no profile could
   // reach the frame.
-  const hMul = shp.h * (primal ? 1.12 : 1);
+  //
+  // Primals substitute their own ladder AND compress the family spread toward
+  // PRIMAL_H_MEAN first — see the PRIMAL_SHAFT docblock for why a flat multiplier
+  // on a 2.9x spread produces two tiers rather than one.
+  const hMul = primal
+    ? (PRIMAL_H_MEAN + (shp.h - PRIMAL_H_MEAN) * PRIMAL_H_SPREAD) * PRIMAL_SHAFT[step]
+    : shp.h;
   const bodyTop = plinthTop + (SHAFT + level * SHAFT_LEVEL) * hMul + (dual ? 0.35 : 0);
   BODY[baseEl](B, x, plinthTop, bodyTop);
 
@@ -1097,10 +1399,38 @@ export function buildTowerSpec(def, level) {
   // --- crown --------------------------------------------------------------
   const H = new Parts(headY).setElem(color);
   const sig = dual ? SIGNATURE[def.key] : null;
+  // A primal only keeps PRIMAL_CROWNK[step] of the family's crown spread,
+  // because the crown mass it damps is `PRIMAL_MASS[step] * crownK` and both
+  // terms climb with the level.
+  //
+  // RE-DERIVED FROM THE TABLE, because the paragraph that stood here quoted a
+  // mass of 2.80 that appears nowhere (PRIMAL_MASS tops out at 2.44) and a
+  // "widest crown at 3.15" that the geometry disagrees with by 15% for the tower
+  // it names and by 41% overall. Real numbers, `PRIMAL_MASS[step] * (1 +
+  // (CROWNK[el]-1) * PRIMAL_CROWNK[step])` for earth, the widest family at
+  // CROWNK 1.20:
+  //
+  //     L0 2.198   L1 2.385   L2 2.596      (undamped L2 would be 2.928)
+  //
+  // and measured on the geometry that comes out of it — max XZ radius of
+  // spec.head — Tectonic's brim runs 3.07 / 3.34 / 3.63. The widest crown in
+  // the game is not Tectonic at all: it is Oblivion L2 at 4.45, a ball of spikes
+  // radiating in every direction, which tests/unit/tower-scale.test.js pins ten
+  // lines further down as "the widest thing on the board". So the damping is
+  // buying ~11% on the widest brim, not the 20% the old sentence implied, and
+  // there is far less headroom than it advertised. Re-measure with
+  // tools/probe-geo.mjs before widening anything.
+  //
+  // The other end matters too: the damping keeps the narrowest (light, 0.78)
+  // from turning the needle back into a pin. The family spread is not lost — it
+  // is carried by the shaft and the profile, which is where it is legible.
+  const crownK = primal
+    ? 1 + ((CROWNK[crownEl] ?? 1) - 1) * PRIMAL_CROWNK[step]
+    : (CROWNK[crownEl] ?? 1);
   const crownCtx = {
     ...x,
     pal: primal ? PAL_PRIMAL[crownEl] : PAL[crownEl],
-    mass: mass * (sig ? 1 : (CROWNK[crownEl] ?? 1)),
+    mass: mass * (sig ? 1 : crownK),
   };
   const info = sig ? sig(H, crownCtx) : CROWN[crownEl](H, crownCtx);
 
@@ -1179,10 +1509,12 @@ export function buildTowerSpec(def, level) {
   // wider waist give it thickness from every angle, and cutting the count
   // stops seven of them turning a level-2 dual into confetti.
   // At least one at every level, for the same gate-G6 reason as the halo.
-  // Seven on a primal — two past the cap every other tower obeys, which is the
-  // point: the orbit is visibly denser and the loop below already handles any
-  // count.
-  const nShards = primal ? 7 : Math.min(5, 1 + (dual ? 1 : 0) + level * 2);
+  // Primals run past the cap every other tower obeys, and now climb with the
+  // level as well — 7 / 9 / 11. Round 8 hard-coded 7 regardless of level, so a
+  // fully-forged primal orbited no more debris than a freshly built one and the
+  // upgrade had nothing to show above the crown. The loop below handles any
+  // count; `phase` already divides by nShards.
+  const nShards = primal ? 7 + step * 2 : Math.min(5, 1 + (dual ? 1 : 0) + level * 2);
   for (let i = 0; i < nShards; i++) {
     const S = new Parts(headY).setElem(color);
     const big = i % 2 === 0;
@@ -1191,7 +1523,31 @@ export function buildTowerSpec(def, level) {
     });
     shards.push({
       geo: S.build(),
-      radius: (1.05 + (i % 3) * 0.18) * mass,
+      // Primals orbit on their own radius rather than on `mass`. At mass 2.44
+      // the shared formula throws the outer shards to 3.95 units, which puts
+      // loose glowing debris directly over the CENTRE of the next tile and makes
+      // it unreadable which tower they belong to.
+      //
+      // THE NUMBER TO COMPARE AGAINST IS THE TILE HALF-WIDTH, 2.0 — NOT THE 4.0
+      // PITCH. This comment used to say "3.27, i.e. just inside the 4.0 tile
+      // pitch", which halves the apparent overhang: 3.27 is a radius from the
+      // tower's own axis, so those shards were already oversailing their own tile
+      // by 1.27 units, 82% of the way to the neighbour's axis. The mitigation was
+      // 17%, not a clean fit, and pretending otherwise is how it would creep back.
+      //
+      // Today: 3.50 at the widest (L2), 3.30 at L0. They clear because they sit
+      // at headY — six to thirteen units of air above anything a neighbour owns —
+      // and NOT because they stay on the tile. If a future round wants them
+      // genuinely on-tile, PRIMAL_ORBIT has to top out near 1.4 (1.41 * orbit
+      // <= 2.0), which costs the apex most of its footprint read.
+      //
+      // The floor moved UP this round, 1.90 -> 2.24, for the other half of "the
+      // ultimates should be bigger AND bulkier": at 1.90 the thinnest primal
+      // (Judgement L0, 2.82) was NARROWER than four ordinary towers — a fresh
+      // 900-gold apex was slimmer than a fully-forged Mushroom. tests/unit/
+      // tower-scale.test.js now asserts the floor against the ceiling on both
+      // axes, so this cannot silently come back.
+      radius: (1.05 + (i % 3) * 0.18) * (primal ? PRIMAL_ORBIT[step] : mass),
       y: headY + 0.1 + Math.sin(i * 2.1) * 0.42,
       speed: (i % 2 ? -1 : 1) * (0.55 + (i % 3) * 0.22),
       phase: i / Math.max(1, nShards) * TAU,
@@ -1216,12 +1572,20 @@ export function buildTowerSpec(def, level) {
     // seen on a floor that had just got 2.4x brighter. A 4.5-unit radius spills
     // past the 2x2 footprint and overlaps its neighbours, which is what turns
     // isolated dots into pools between towers.
-    // The primal term is the largest single cue in this function. 6.2 units at
-    // 0.46 intensity is ~1.5x the radius and ~1.8x the intensity of anything
-    // else on the board and spills onto four neighbouring tiles — and per the
-    // finding above, the pool is the one element cue that reads when the tower
-    // itself is occluded.
-    glowRadius: 4.05 + level * 0.28 + (dual ? 0.45 : 0) + (primal ? 2.15 : 0),
+    // The primal term is the largest single cue in this function, and it is a
+    // LADDER rather than a level-linear sum so the top of it stays a number
+    // somebody chose. 6.20 / 6.85 / 7.50 units is ~1.5-1.6x the radius of
+    // anything else on the board, spilling onto four neighbouring tiles at L0
+    // and six at L2 — and per the finding above, the pool is the one element cue
+    // that reads when the tower itself is occluded. It is deliberately the
+    // SLOWEST-growing of the primal ladders: this is additive fill over a
+    // 15-unit patch, and doubling it would wash the flagstones out rather than
+    // make the tower read bigger. RADIUS is the half of the pool that carries
+    // "bigger"; intensity is damped per element below and for five of the six is
+    // ~1.4-1.5x an ordinary tower's.
+    glowRadius: primal
+      ? 6.20 + step * 0.65
+      : 4.05 + level * 0.28 + (dual ? 0.45 : 0),
     // NB: every glowIntensity in rounds 1-2 was tuned against a layer that was
     // back-face culled and therefore never drawn (see createGroundGlowMaterial).
     // These are the first values ever chosen by looking at the thing. Roughly
@@ -1231,7 +1595,18 @@ export function buildTowerSpec(def, level) {
     // dark floor vanishes on a light one. In the reference frames the pool is
     // the single strongest element cue — you can name every tower's element
     // from the ground alone, without seeing the tower.
-    glowIntensity: 0.235 + level * 0.065 + (dual ? 0.035 : 0) + (primal ? 0.22 : 0),
+    //
+    // The primal ladder carries the same radiance damping as `emis` and for the
+    // same reason: the pool is TINTED WITH THE ELEMENT COLOUR (TowerBatch writes
+    // def.color into aColor), so an element-blind intensity is an element-blind
+    // number of watts and a wildly element-dependent number of pixels. Light's
+    // pool came out at 1.52x the brightest pool an ordinary tower can produce;
+    // damped it lands at 0.84x per pixel over 2.6x the area, and the ladder
+    // shape survives because the factor multiplies all three steps
+    // (0.250 / 0.278 / 0.305 for light).
+    glowIntensity: primal
+      ? (0.455 + step * 0.050) * primalRadianceK(baseEl)
+      : 0.235 + level * 0.065 + (dual ? 0.035 : 0),
     runeY: headY + info.top + (level >= 1 ? 0.95 : 0.75),
   };
 }
