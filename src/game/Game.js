@@ -565,17 +565,34 @@ export class Game {
       // A right-click meant for a text field belongs to the field (pasting a room
       // code is the case that matters), and nothing is ever queued behind one.
       if (isTypingTarget(e)) return;
-      // ...and a right-click on a FULL-BLEED PANEL belongs to the panel. This
-      // listener is on `document`, so every one of these veils was transparent to
-      // it: measured, a right-tap in the middle of the open key sheet with a Fire
-      // Tower in hand left selectedBuild null and the sheet still open. The
-      // sheet's own footer says "or click anywhere outside", so a player doing
-      // exactly what it says lost their piece, closed nothing, and saw no
-      // feedback — the veil covers #held-piece. Same over the element offer and
-      // the end card. Panels dismiss on LEFT click (HUD's veil handler); the
-      // right button is the board's cancel gesture and has no business reaching
-      // through them.
-      if (e.target?.closest?.('#help, #codex, #picker, #endcard, #lobby')) return;
+      // A FULL-BLEED PANEL DOES NOT EXEMPT THE GESTURE, and this is the second
+      // decision on the point — the first one exempted #help, #codex, #picker,
+      // #endcard and #lobby, and tests/e2e/cancel.spec.js has asserted the
+      // opposite since the day the gesture moved to `document`. The two shipped
+      // together and contradicted each other; the test is the one that is right.
+      //
+      // The reason is the same one that moved this listener off the canvas. The
+      // veil covers the WHOLE screen, so exempting it does not hand the gesture
+      // to the panel — nothing on any of these panels binds the right button —
+      // it deletes the gesture outright for as long as the panel is up. A player
+      // who opens the key sheet to look up a shortcut, with a tower in hand,
+      // could not put the tower down again by the means the game taught them.
+      // That is a strictly worse outcome than the one the exemption was written
+      // to avoid.
+      //
+      // WHAT IT DOES NOT DO IS CLOSE THE PANEL. #cancelSelection touches the
+      // build cursor and the Inspector and nothing else, so the sheet stays up
+      // and Escape still closes it. The footer's "or click anywhere outside" is
+      // about the LEFT button (HUD's veil handler) and is unaffected.
+      //
+      // The missing-feedback complaint is real and is answered by the veil
+      // rather than by refusing the gesture: #held-piece sits under it, so the
+      // piece vanishing is not visible while the sheet is open. It becomes
+      // visible the moment the sheet closes, and the dock card un-highlights,
+      // which is the same feedback a cancel over the board gives.
+      //
+      // Text fields keep their exemption above — that one is about the native
+      // Paste menu, not about panels.
       // TWO MEASUREMENTS, AND THE SECOND ONE IS THE FIX.
       //
       // The endpoint test alone (|up - down| <= 5) is not a test for "did this
