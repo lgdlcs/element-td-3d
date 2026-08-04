@@ -351,10 +351,35 @@ export async function toastText(page) {
  * box by ~16 units, which is larger than several of the differences these tests
  * exist to detect.
  *
+ * A FIFTH THING MOVES, AND IT IS NOT IN Game.frame() — which is why the loop
+ * below could not reach it and why it went unnoticed for a round. AdaptiveResolution
+ * is driven from main.js's render loop (`game.pipeline.adaptive?.update(dt)`,
+ * main.js:148), one line AFTER game.frame(dt). It watches the median frame time
+ * and calls `renderer.setPixelRatio()` when the scene is too slow — and
+ * `page.screenshot()` is one of the slowest things that can happen to this page.
+ * A spec that takes several captures in a row therefore convinces the controller
+ * that the machine is struggling, and it drops the resolution UNDERNEATH the
+ * test.
+ *
+ * Measured with tools/scratch/_audit-freeze.mjs, running grid-preview.spec.js's
+ * exact sequence: the pixel ratio held at 0.75 (a 1200x675 buffer) across all six
+ * captures and had fallen to 0.60 (960x540) by the control read. Nothing about
+ * the board had changed; the whole scene had been re-rendered at a different
+ * resolution and resampled back up, which moves every edge by a fraction of a
+ * pixel. That is what made `grid-preview.spec.js:364` fail on its own control —
+ * the same hover state, read twice, came back as two different pictures (3.7
+ * against a bar of 2, and 8.7-8.9 against a mean-colour bar of 6).
+ *
+ * With this line in, two reads of the same frozen state come back at 0.000: the
+ * noise floor is exactly zero, so every pixel threshold in this suite is measured
+ * against nothing at all rather than against whatever the GPU was busy with.
+ *
  * `keep` names subsystems to leave running. Freezing `arena.update` also freezes
  * the grid overlay's OPACITY EASE, so a test that has to sample the board before
  * and after the overlay comes up freezes everything except the arena first (so
  * the camera cannot drift between the two reads) and the arena after the ramp.
+ * `keep` deliberately does NOT cover the resolution controller: no test wants a
+ * moving pixel ratio, and there is no read for which it is the subject.
  */
 export async function freezeFrame(page, keep = []) {
   await page.evaluate((keepList) => {
@@ -364,6 +389,9 @@ export async function freezeFrame(page, keep = []) {
       if (keepList.includes(k)) continue;
       if (g[k] && g[k].update) g[k].update = () => {};
     }
+    // Not in the loop above: it hangs off the pipeline, not off the game, and it
+    // is updated outside Game.frame(). See the docblock.
+    if (g.pipeline?.adaptive) g.pipeline.adaptive.enabled = false;
     const grade = g.pipeline?.passes?.grade;
     if (grade?.uniforms?.uGrain) grade.uniforms.uGrain.value = 0;
   }, keep);
