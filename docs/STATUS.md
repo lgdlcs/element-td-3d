@@ -7,11 +7,17 @@ Blind A/B: `node tools/compare.mjs --a <ours.png> --b reference/<etd2>.jpg --out
 See also **docs/PITFALLS.md** — fourteen classes of bug found the hard way, every
 one invisible to code review. Read it before debugging anything visual.
 
-## The dev panel — **F9**, or **²** on AZERTY
+## The dev panel — the **DEV** button in the top bar (or **F9** / **²**)
 
 Only on `npm run dev`. Gold (+1k / +10k / infinite), lives (+10 / invincible),
 all six elements (once, or ×3 to unlock every primal), jump to any wave, clear
 the board. Also on `window.__dev` if you would rather script it.
+
+**The button is the reliable way in.** A key alone was not: F9 is Mission Control
+on macOS and needs Fn on any keyboard whose F-row defaults to media, and AZERTY's
+`²` depends on the layout the browser reports. The key still works — including
+over the lobby, which the button cannot reach (the lobby is z-index 60 and
+outside `#ui-root`, so nothing in the top bar can stack over it).
 
 It cannot ship: `src/dev/` is reached only from `if (import.meta.env.DEV)` in
 main.js, which Vite folds to `false` in a production build, so the module never

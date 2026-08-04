@@ -1,5 +1,6 @@
 /**
- * THE DEV PANEL — F9 (or ² on AZERTY), and only on a dev machine.
+ * THE DEV PANEL — the DEV button in the top bar, or F9 / ², and only on a dev
+ * machine.
  *
  * A run takes forty minutes to reach wave 55 honestly, which makes the late game
  * the least-tested part of the game by a wide margin: every primal, the boss
@@ -11,17 +12,18 @@
  * and Vite replaces that expression with the literal `false` in a production
  * build — the branch is dead code, so the bundler drops both it and this file.
  * There is no runtime flag to leave switched on by accident, no query parameter
- * to guess, and nothing in `dist/` to find. `npm run build` is the check: the
- * string 'DEV PANEL' must not appear in the output. tools/scratch/_dev-panel-check.mjs
- * runs exactly that.
+ * to guess, and nothing in `dist/` to find. `npm run check:nodev` proves it
+ * against a real build — and the check was itself verified by planting the
+ * string in dist/index.html and watching it go red, so it is not passing
+ * vacuously.
  *
  * IT IS NOT ON THE KEY SHEET, and that is deliberate rather than an oversight.
  * help.spec.js asserts that the sheet advertises every key the game binds, by
  * reading a fixed list of source files — src/dev/ is not among them, because a
  * key that exists only on a dev machine is not part of the contract the player's
  * key sheet describes. Advertising it would be advertising a key that does not
- * exist in the build they are holding. The panel advertises itself instead: its
- * own header prints the key, and it is the only way in.
+ * exist in the build they are holding. The panel advertises itself instead: the
+ * DEV button in the top bar opens it, and its header prints the key.
  *
  * EVERYTHING HERE GOES THROUGH PUBLIC STATE AND PUBLIC METHODS. No private field
  * is touched and nothing is monkey-patched except `creeps.onLeak`, which is
@@ -115,6 +117,40 @@ const CSS = `
   border: 1px solid #333b4d; border-radius: 4px; font: inherit; font-size: 11px;
 }
 #devpanel .dev-status { margin-top: 8px; min-height: 14px; color: #63bd76; font-size: 11px; }
+
+/* The top-bar button. Inherits .icon-btn's box from ui.css and only overrides
+   what makes it read as NOT part of the shipping HUD: the orange of the panel,
+   and a letterspaced label instead of a glyph.
+
+   THE Z-INDEX IS LOAD-BEARING. #topbar sets neither z-index nor a transform, so
+   it creates no stacking context and its children stack inside #ui-root (10)
+   alongside the codex (20), the cursor hint (26), the element picker (30) and
+   the key sheet (44). Without a z-index of its own the button sat UNDER the
+   picker's full-bleed veil — measured, the click timed out with "picker-veil
+   intercepts pointer events" — and the picker is open on the very first frame
+   of a run, which is exactly when "give me every element" is the thing you
+   want. 50 clears all four.
+
+   It does NOT clear the lobby, which is z-index 60 and outside #ui-root
+   entirely, so nothing set here can reach over it. That is what F9 is for, and
+   F9 is verified to work with the lobby up and its name field focused. */
+#dev-btn {
+  position: relative;
+  z-index: 50;
+  /* .icon-btn is a 30x30 square built for ONE glyph, and a three-letter label
+     overflowed it — the first build shipped a button reading "DE" with the V
+     spilling past the border. Same escape ui.css already makes for .icon-btn.keyed
+     ("a 30px box cannot hold a glyph and a cap without one of them turning into
+     a smudge"): give up the square, become a pill. */
+  width: auto;
+  padding: 0 8px;
+  color: #ff5a1f;
+  border-color: rgba(255, 90, 31, 0.45);
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+}
+#dev-btn:hover { border-color: rgba(255, 90, 31, 0.9); }
+#dev-btn.on { background: #ff5a1f; border-color: #ff5a1f; color: #120a06; }
 `;
 
 export class DevPanel {
@@ -202,7 +238,19 @@ export class DevPanel {
       // and Cmd+` is macOS's window cycle, and a dev tool that eats either is
       // worse than no dev tool.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTypingTarget(e)) return;
+      // THE TYPING GUARD APPLIES TO BACKQUOTE ONLY, and the first version of
+      // this file applied it to both — which made the panel unopenable for a
+      // human being. Measured: main.js only skips the lobby under
+      // navigator.webdriver, so every automated check started with focus
+      // nowhere, while a person starts with the lobby up and #lobby-name
+      // focused (Lobby.#focusFirst). Both keys reached this listener and both
+      // were dropped by the guard; blurring the field made F9 work instantly.
+      //
+      // F9 is a function key. It cannot type a character, so there is nothing
+      // for it to steal from a text field and no reason to refuse it there.
+      // Backquote can and does type one — `²` on AZERTY, a backtick elsewhere —
+      // and a room code or a player name containing it must reach the field.
+      if (e.code === 'Backquote' && isTypingTarget(e)) return;
       e.preventDefault();
       e.stopPropagation();
       this.toggle();
@@ -215,7 +263,45 @@ export class DevPanel {
     // this only has to stop the event reaching anything that does not.
     this.$wave.addEventListener('keydown', (e) => e.stopPropagation());
 
+    this.#mountButton();
     this._tick = setInterval(() => this.#topUp(), TOPUP_MS);
+  }
+
+  /**
+   * The top-bar button — the way in that cannot fail.
+   *
+   * A KEY IS NOT ENOUGH ON A MAC, which is how this came to exist. F9 is Mission
+   * Control on macOS and needs Fn on any keyboard whose F-row defaults to media,
+   * and the AZERTY `²` sits under a layout the browser reports differently
+   * depending on the keyboard. A button has no layout, no Fn row and no OS
+   * shortcut sitting on top of it: you can see it, and clicking it works.
+   *
+   * INJECTED FROM HERE, not added to HUD.js's template. HUD.js ships. A dev
+   * control written into it would be a control the bundler cannot remove, one
+   * more element in the layout contract, and one more thing to hide by hand on
+   * every capture. Appended to #topbar .controls so it inherits the real HUD's
+   * button styling and sits with the other controls; a no-op if the topbar is
+   * not there, because this must never be the thing that stops the game booting.
+   *
+   * DELIBERATELY WITHOUT `aria-keyshortcuts` and without a <kbd> cap, unlike
+   * every neighbouring button. Those two are what help.spec.js reads to check
+   * that a control advertises the key it answers to — and this control's key is
+   * not on the key sheet, on purpose (see the file docblock). Wearing a cap here
+   * would be promising the sheet a row it must not have.
+   */
+  #mountButton() {
+    const controls = document.querySelector('#topbar .controls');
+    if (!controls) return;
+    const b = document.createElement('button');
+    b.id = 'dev-btn';
+    b.className = 'icon-btn';
+    b.type = 'button';
+    b.textContent = 'DEV';
+    b.title = 'Dev panel · F9 (² on AZERTY)';
+    b.setAttribute('aria-label', 'Dev panel');
+    b.addEventListener('click', () => this.toggle());
+    controls.appendChild(b);
+    this.$btn = b;
   }
 
   // -- lifecycle -----------------------------------------------------------
@@ -231,6 +317,7 @@ export class DevPanel {
   hide() {
     this.open = false;
     this.$el.hidden = true;
+    this.#paint();
   }
 
   /** Undo everything, including the leak wrapper. Used by tests and by HMR. */
@@ -239,6 +326,7 @@ export class DevPanel {
     window.removeEventListener('keydown', this._onKey, true);
     if (this.invincible) this.#setInvincible(false);
     this.$el.remove();
+    this.$btn?.remove();
     this.$style.remove();
   }
 
@@ -418,5 +506,8 @@ export class DevPanel {
   #paint() {
     this.$el.querySelector('[data-act="goldinf"]').classList.toggle('on', this.infiniteGold);
     this.$el.querySelector('[data-act="invincible"]').classList.toggle('on', this.invincible);
+    // The button follows the panel, so "is it open" is answerable from the top
+    // bar alone -- the panel itself can be off screen on a short window.
+    this.$btn?.classList.toggle('on', this.open);
   }
 }

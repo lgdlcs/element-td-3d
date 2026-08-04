@@ -376,7 +376,25 @@ test.describe('right-click cancel', () => {
     // its docblock: the right button is the camera's, and ejecting a player from
     // the board they are watching because an orbit came in under 5px is worse
     // than the inverse. Escape is the way out, and it still is.
-    await page.evaluate(() => { window.__game.spectating = true; });
+    // THE FLAG AND THE VIEW ARE ONE STATE, and setting only the flag was a
+    // landmine. Game.frame runs `if (this.spectating) this._spectate.update(dt)`
+    // every frame, unguarded — so `spectating = true` with `_spectate` still null
+    // throws "Cannot read properties of null (reading 'update')" inside the
+    // render loop, which then dies (the rAF that continues it is the last line of
+    // main.js's loop, after the throw). Whether the test saw it came down to
+    // whether one frame happened to land in the ~200ms this flag is up: it passed
+    // three full suite runs and then failed three standalone runs in a row on the
+    // same commit, with nothing changed. A test that depends on a frame NOT
+    // happening is not testing anything.
+    //
+    // enterSpectate() is not used because it is not the subject: it detaches
+    // every tower from the batch, swaps the creep system and re-points the
+    // terrain, none of which this assertion is about. The smallest thing that
+    // satisfies what the engine actually reads is a view with an update().
+    await page.evaluate(() => {
+      window.__game._spectate = { update() {} };
+      window.__game.spectating = true;
+    });
     await page.evaluate(() => window.__game.setBuildSelection('fire'));
 
     await rightClickCell(page, 10, 8);
@@ -385,7 +403,12 @@ test.describe('right-click cancel', () => {
     expect(await page.evaluate(() => window.__game.selectedBuild)).toBe('fire');
     expect(await page.evaluate(() => window.__game.spectating)).toBe(true);
 
-    await page.evaluate(() => { window.__game.spectating = false; });
+    // Both halves down, in the order the engine reads them: the flag first, so no
+    // frame can find it up with the view already gone.
+    await page.evaluate(() => {
+      window.__game.spectating = false;
+      window.__game._spectate = null;
+    });
     expect(errors, errors.join('\n')).toEqual([]);
   });
 });
