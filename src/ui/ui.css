@@ -91,18 +91,35 @@ html, body {
   border-radius: var(--r-s);
 }
 
+/* THE KEY CAP.
+   One rule for every shortcut badge in the game — dock, inspector, top bar,
+   spectate banner, lobby footer, key sheet — so a key looks the same wherever
+   it is mentioned and the player learns the shape once. Emitted by
+   uikit.js `key()`; the element stays a real <kbd> so assistive tech keeps
+   announcing it as keyboard input.
+
+   It reads as a physical cap rather than as a tag: a top-lit face, a hairline
+   that darkens along the bottom edge, and one pixel of drop shadow under it.
+   min-width squares off single characters so a row of Q W E R T Y is a row of
+   equal caps instead of a ragged line — I is much narrower than W. */
 kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px;
   font-family: var(--font-num);
-  font-size: 9.5px;
+  font-size: 9.5px; font-weight: 500;
   line-height: 1;
   padding: 3px 5px 4px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid var(--line);
-  border-bottom-color: rgba(0, 0, 0, 0.5);
-  color: var(--ink-3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.028));
+  border: 1px solid var(--line-2);
+  border-bottom-color: rgba(0, 0, 0, 0.55);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.42), 0 1px 0 rgba(255, 255, 255, 0.055) inset;
+  color: var(--ink-2);
   letter-spacing: 0.04em;
 }
+/* Embedded inside a button's own label ("[1]×"), where the cap has to sit on
+   the text baseline rather than float beside it. */
+kbd.k-tight { min-width: 13px; padding: 2px 3px 3px; box-shadow: none; }
 
 .legend, .dock-label, .insp-legend, .th-legend, .cx-tier, .picker-eyebrow {
   font-size: 9.5px;
@@ -236,13 +253,21 @@ kbd {
   background: rgba(0, 0, 0, 0.32); border: 1px solid var(--line);
 }
 #speed-buttons button {
-  padding: 6px 10px; font-family: var(--font-num); font-size: 11px; color: var(--ink-3);
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 5px 8px; font-family: var(--font-num); font-size: 11px; color: var(--ink-3);
   transition: background var(--t-fast), color var(--t-fast);
 }
 #speed-buttons button:hover { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
 #speed-buttons button.active {
   background: linear-gradient(180deg, var(--gold-hi), var(--gold));
   color: #14100a; font-weight: 700;
+}
+/* On the gold face a pale cap disappears; it inverts instead of fading. */
+#speed-buttons button.active kbd {
+  color: rgba(20, 16, 10, 0.72);
+  background: rgba(20, 16, 10, 0.13);
+  border-color: rgba(20, 16, 10, 0.26);
+  box-shadow: none;
 }
 
 .icon-btn {
@@ -252,7 +277,16 @@ kbd {
   transition: all var(--t-fast);
 }
 .icon-btn:hover { color: var(--ink); border-color: var(--line-2); background: rgba(255, 255, 255, 0.06); }
-.icon-btn.paused { color: var(--gold); border-color: rgba(229, 189, 121, 0.4); }
+.icon-btn.paused, .icon-btn.active { color: var(--gold); border-color: rgba(229, 189, 121, 0.4); background: var(--gold-dim); }
+/* An icon button that carries its key: it gives up the square and becomes a
+   pill, because a 30px box cannot hold a glyph and a cap without one of them
+   turning into a smudge. */
+.icon-btn.keyed {
+  width: auto; padding: 0 7px 0 9px;
+  display: flex; align-items: center; gap: 6px;
+}
+.icon-btn.keyed .ib-glyph { display: block; min-width: 11px; text-align: center; }
+#help-btn .ib-glyph { font-size: 13px; }
 
 /* =========================================================================
    THREAT RAIL  (left edge)
@@ -366,6 +400,17 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   padding: 9px 12px;
   border-radius: var(--r-l);
   box-shadow: var(--shadow-2);
+  /* An absolutely positioned flex container shrink-to-fits, and Chrome's
+     shrink-to-fit was under-counting one child by ~90px: #send-wave sets
+     `overflow: hidden` (for its width 0 -> auto reveal), which zeroes that
+     item's automatic minimum size, so the dock sized itself as if the button
+     needed only its label and then squeezed the rest away. Everything after
+     "Send wave" — the early-send bonus and the Space cap — was clipped at every
+     viewport width. Asking for max-content explicitly restores the 90px where
+     there is room for it and changes nothing where max-width already binds
+     (measured identical at 1280 and 1366; +89px at 1920, +90px at 2560, with no
+     new overlap against the inspector or the threat rail). */
+  width: max-content;
   max-width: calc(100vw - 36px);
 }
 .dock-group { display: grid; gap: 6px; align-content: start; }
@@ -419,7 +464,11 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 .tc-cost { font-family: var(--font-num); font-size: 10.5px; color: var(--gold); letter-spacing: -0.02em; }
-.tc-key { position: absolute; top: 4px; right: 4px; padding: 1px 3px 2px; font-size: 8px; opacity: 0.55; }
+/* 0.78, not the 0.55 this shipped with: the cap is the only thing that teaches
+   the hotkey exists, and at 0.55 over a dark card it read as a smudge. Still
+   short of full strength so it stays behind the tower's name and price, and
+   still lifts on hover. */
+.tc-key { position: absolute; top: 4px; right: 4px; padding: 1px 3px 2px; font-size: 8px; min-width: 0; opacity: 0.78; }
 .tcard:hover .tc-key { opacity: 1; }
 
 #codex-toggle {
@@ -449,6 +498,44 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
               padding var(--t-base) var(--ease), background var(--t-base), transform var(--t-fast);
 }
 #send-wave.show { opacity: 1; width: auto; padding: 0 17px; border-width: 1px; }
+/* THE SPACE CAP WAS NEVER LEGIBLE.
+   `overflow: hidden` above exists so the label does not spill out while the
+   button is collapsed to width 0 — but it also removes this item's automatic
+   minimum size, so the dock is free to shrink the button below its own content,
+   and does: measured 142px against a 161px content box at 1920, 75 against 161
+   at 1280. What that ate was the right-hand end, i.e. the cap, rendered as a
+   17px sliver at EVERY viewport width since the day it was added.
+
+   Taking the cap out of flow is half the fix: it is the one child that does not
+   need to be on the text baseline, so it stops competing for content width.
+   Same corner and same reasoning as `.tc-key` on a tower card.
+
+   IT WAS ONLY HALF, AND THE OTHER HALF WAS WRITTEN DOWN WRONG. This paragraph
+   used to claim that taking the cap out of flow "costs the button 52px of
+   content width — so the label gets MORE room at 1280 than it has today". It
+   does not: with `overflow: hidden` zeroing the automatic minimum size, the
+   button is still the one child the dock is free to shrink to nothing, and it
+   still absorbs the entire deficit. Measured at 1280x720 with six elements
+   bound: the button was 74px wide, `.sw-label` ran to x=1257 against a right
+   edge at 1249 so the capture read literally "Send wav", and `#sw-bonus` sat at
+   1266..1292 — outside the button AND outside the dock, i.e. the early-send
+   bonus was never visible at that viewport at all. The `Space` cap was the only
+   legible thing on the control.
+
+   The real fix is a shrink POLICY: the button is now `flex: 0 0 auto` with a
+   `max-content` floor so it can never be squeezed below its own label, and the
+   space it needs comes out of the tower rails instead (see the 1360px block at
+   the bottom of this file, which narrows the cards and the dock's own gaps).
+   Verified by capture at 1280, 1366 and 1920 — the arithmetic is what got this
+   wrong last time. */
+#send-wave { position: relative; }
+#send-wave.show { flex: 0 0 auto; min-width: max-content; }
+#send-wave kbd {
+  position: absolute; top: 6px; right: 7px;
+  font-size: 8.5px; padding: 2px 4px 3px; min-width: 0;
+  opacity: 0.75; transition: opacity var(--t-fast);
+}
+#send-wave:hover:not(:disabled) kbd { opacity: 1; }
 #send-wave:hover:not(:disabled) {
   background: linear-gradient(180deg, var(--gold-hi), var(--gold));
   color: #14100a; border-color: var(--gold-hi);
@@ -852,6 +939,149 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 .insp-actions .ghost em { color: var(--ink-2); }
 .insp-actions .ghost:hover { background: rgba(255, 95, 87, 0.12); color: var(--danger); }
 .insp-actions .ghost:hover em { color: var(--danger); }
+
+/* =========================================================================
+   KEY SHEET  (player-invoked; H / ? / the topbar button)
+   ---------------------------------------------------------------------
+   Modelled on #codex — an obsidian plate with a gold hairline — but veiled
+   like #picker. The veil is not decoration: it is what makes "click outside
+   to close" safe, since outside a centred plate is the board, and a click
+   that reached the board would place a tower on the way out.
+
+   z-index 44 puts it over the codex (20), the cursor hint (26), the picker (30)
+   and THE END CARD (40) — and under only the tooltip (45) and the lobby (100).
+   This block used to say "under the end card (50-ish)", which was a guess at
+   another file's constant and was wrong by ten: the sheet went over both modals
+   and its veil ate their clicks.
+   Nothing in the stack fixes that, so HUD.setHelp does: it REFUSES to open while
+   the end card is showing or the picker is up, which is the mirror of
+   HUD.showEnd closing it on the way in. HUD.update used to close the sheet on
+   EVERY frame outside prep, which made H and the ? button look broken for the
+   whole of combat: the panel went up for one frame and tore itself down again.
+   ========================================================================= */
+
+#help {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  opacity: 0; pointer-events: none;
+  /* visibility as well as opacity, borrowed from #scoreboard: the sheet has a
+     close button in it, and `opacity: 0` alone leaves that button in the tab
+     ring and in the accessibility tree — so Tab from the top bar would land on
+     an invisible control on a closed panel. `step-end` keeps the fade-out
+     visible and takes it out of the tree only once the fade has finished. */
+  visibility: hidden;
+  transition: opacity var(--t-base) var(--ease), visibility var(--t-base) step-end;
+  z-index: 44;
+}
+#help.open {
+  opacity: 1; pointer-events: auto; visibility: visible;
+  transition: opacity var(--t-base) var(--ease), visibility 0s;
+}
+
+/* Lighter than #picker's veil, and deliberately so. The picker is a decision
+   that replaces the board for a moment; this is a reference card held over a
+   board the player is in the middle of reading, and at the picker's opacity the
+   arena went to near-black behind it. It only has to subordinate the board and
+   catch the click, not erase it. */
+.help-veil {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 72% 62% at 50% 50%, rgba(6, 7, 12, 0.3), rgba(3, 4, 7, 0.72) 82%),
+    linear-gradient(180deg, rgba(3, 4, 7, 0.5), rgba(3, 4, 7, 0.42));
+  backdrop-filter: blur(4px) saturate(0.85);
+  -webkit-backdrop-filter: blur(4px) saturate(0.85);
+}
+
+.help-sheet {
+  position: relative;
+  width: min(880px, calc(100vw - 44px));
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+  padding: 19px 22px 15px;
+  border-radius: var(--r-l);
+  /* Denser than #codex's 0.95/0.96: that panel sits on an unveiled board, this
+     one sits on a veil that has already been lightened so the arena stays
+     readable, and at 0.96 the tower emissives underneath showed through the
+     middle of the text block. */
+  background: linear-gradient(180deg, rgba(9, 11, 16, 0.985), rgba(6, 7, 11, 0.99));
+  border: 1px solid rgba(229, 189, 121, 0.16);
+  box-shadow: var(--shadow-3);
+  transform: translateY(12px) scale(0.985);
+  transition: transform var(--t-base) var(--ease);
+}
+#help.open .help-sheet { transform: none; }
+.help-sheet::before {
+  content: ''; position: absolute; left: 16%; right: 16%; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(229, 189, 121, 0.5), transparent);
+}
+
+.help-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 15px; }
+.help-head h3 {
+  margin-top: 3px;
+  font-family: var(--font-display); font-size: 18px; font-weight: 400;
+  letter-spacing: 0.1em; color: var(--ink);
+}
+.help-close {
+  width: 26px; height: 26px; border-radius: var(--r-s); font-size: 11px; color: var(--ink-3);
+  border: 1px solid var(--line); flex: none;
+  /* NOT `transition: all`, and this is a correctness fix rather than tidying.
+     `all` includes `visibility`, which this button INHERITS from #help — so on
+     open, the parent flipped to visible instantly while the button was still
+     computing `hidden` mid-transition. HUD.setHelp focuses it on that same tick
+     to honour aria-modal="true", and focus() on a visibility:hidden element is
+     a silent no-op: focus stayed on whatever was behind the veil and the Tab
+     trap had nothing to hold. Measured — the parent read `visible` and the
+     button read `hidden` in the same getComputedStyle pass. */
+  transition: color var(--t-fast), background var(--t-fast), border-color var(--t-fast);
+}
+.help-close:hover { color: var(--ink); background: rgba(255, 255, 255, 0.07); border-color: var(--line-2); }
+
+/* COLUMNS, NOT A GRID, and the difference is 164px of height.
+   This was `grid-template-columns: repeat(auto-fit, minmax(322px, 1fr))` with a
+   comment promising "three columns on a wide screen to one on a narrow one".
+   Neither half was true. .help-sheet is capped at min(880px, 100vw - 44px) and
+   three tracks need 3*322 + 2*24 = 1014px, so the grid measured TWO columns at
+   every viewport from 1024 to 1920 — 405px each at 1920, 411px at 1280.
+   Worse, a grid aligns its items into ROWS and a row is as tall as its tallest
+   member. The five groups are 182 / 88 / 98 / 189 / 107 px tall at 1440x620, so
+   the layout was 182 + 189 + 107: 94px of dead space under "The run", 91px
+   under "Camera", and "Elsewhere" — the last group, the one nobody scrolls to —
+   69px below the fold, in a panel whose own media query below says it must fit
+   WITHOUT an internal scrollbar.
+   Multi-column packs instead of aligning: the same five blocks, the same width,
+   the sum of their heights split in two. `columns: 322px 2` keeps the same
+   minimum track the grid asked for, so the sheet still falls to one column on a
+   narrow frame; `break-inside: avoid` is what stops a group being cut in half
+   across the gutter. Reading order changes from across-then-down to
+   down-then-across, which is the correct order for a list of groups anyway. */
+.help-cols {
+  columns: 322px 2;
+  column-gap: 24px;
+}
+.help-group { break-inside: avoid; margin-bottom: 14px; }
+.help-group:last-child { margin-bottom: 0; }
+.help-group ul { list-style: none; display: grid; gap: 1px; margin-top: 7px; }
+/* 130px is the width of the widest row in the sheet — six caps for Q W E R T Y
+   — measured, not guessed: at 116px the Y wrapped to a second line and the
+   group read as a ragged block instead of a column of keys. */
+.help-group li {
+  display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: baseline;
+  padding: 4px 7px; border-radius: 6px;
+  transition: background var(--t-fast);
+}
+.help-group li:hover { background: rgba(255, 255, 255, 0.035); }
+.help-group li.wide kbd { min-width: 0; letter-spacing: 0.02em; }
+.hk-keys { display: flex; flex-wrap: wrap; gap: 2px; }
+.hk-keys kbd { min-width: 16px; padding: 3px 3px 4px; }
+.hk-label { font-size: 11.5px; color: var(--ink); line-height: 1.35; }
+.hk-label i { display: block; font-style: normal; font-size: 10px; color: var(--ink-4); margin-top: 1px; line-height: 1.35; }
+
+.help-foot {
+  margin-top: 14px; padding-top: 11px;
+  border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  font-size: 10.5px; color: var(--ink-4);
+}
 
 /* =========================================================================
    ELEMENT PICKER
@@ -1316,6 +1546,32 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 }
 
 @media (max-height: 860px) {
+  /* The key sheet has to fit WITHOUT an internal scrollbar, because the last
+     group of shortcuts is a group nobody scrolls to — and it grew this round by
+     four rows (the three pointer gestures it had been omitting, plus the element
+     picker's arrows). Measured at 1280x720 before this block: 88px of overflow.
+     Everything here is padding and leading, not content: the panel exists to be
+     complete, so shortening the list to make it fit would be solving the wrong
+     problem.
+     THIS BLOCK ALONE WAS NOT ENOUGH, and it could not have been: it trims the
+     leading inside a layout that was wasting 185px on grid row alignment. That
+     is fixed at .help-cols (multi-column); measured at 1440x620, 69px of
+     overflow before and 0 after, with the sheet 517px tall against 548 of room.
+     Both halves are kept — this one is what buys the margin at 1280x660. */
+  .help-sheet { padding: 14px 18px 11px; }
+  .help-head { margin-bottom: 10px; }
+  .help-head h3 { font-size: 16px; }
+  /* column-gap, not `gap`: .help-cols is a multi-column box now and its row
+     rhythm is .help-group's own margin. `gap: 9px 20px` set a row-gap nothing
+     reads. */
+  .help-cols { column-gap: 20px; }
+  .help-group { margin-bottom: 9px; }
+  .help-group ul { margin-top: 5px; }
+  .help-group li { padding: 2px 6px; }
+  .hk-label { font-size: 11px; line-height: 1.25; }
+  .hk-label i { line-height: 1.2; }
+  .help-foot { margin-top: 9px; padding-top: 8px; }
+
   #codex { bottom: 128px; padding: 12px 13px 10px; }
   .codex-head { margin-bottom: 10px; }
   .codex-head p { display: none; }
@@ -1331,16 +1587,74 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   .picker-sub { margin-bottom: 22px; }
 }
 
-@media (max-width: 1360px) {
+/* The dock's shrink policy at a narrow frame. #send-wave is `flex: 0 0 auto`
+   with a max-content floor (see its block above), so the room it needs has to
+   come from somewhere that can afford it: eleven-odd tower cards at 4px each
+   plus the dock's own gaps and padding is ~66px, against a measured 61px
+   deficit at 1280x720. The breakpoint is 1440 and not the 1360 it inherited
+   because 1366x768 is a real laptop and measured FAIL at 1360 — the button
+   overflowed the dock by 40px, taking the bonus with it. Measured after: the
+   button goes 74px -> 135px, the label
+   stops being clipped, and "+118" lands inside the button instead of 43px past
+   the edge of the dock. */
+@media (max-width: 1440px) {
   #threat { width: 218px; }
   #inspector { width: 274px; }
-  .tcard { width: 66px; }
+  .tcard { width: 62px; }
+  .tc-name { font-size: 9.5px; }
+  #dock { gap: 10px; padding: 8px 10px; }
   .picker-cards { gap: 14px; }
+}
+
+/* THE SECOND SHRINK TIER, AND WHY 1440 WAS NOT ENOUGH.
+   The block above buys ~140px once, at 1440. Below that the dock's content is a
+   CONSTANT: #dock is `width: max-content` and #send-wave is `flex: 0 0 auto`
+   with a max-content floor, so nothing in the row is allowed to give while
+   `max-width: calc(100vw - 36px)` keeps closing in. Measured with six elements
+   bound (tools/scratch/adv-dock.mjs — scrollWidth against clientWidth):
+
+     1280  need 1242  have 1244   fits, by two pixels
+     1240  need 1229  have 1204   +25
+     1200  need 1229  have 1162   +67
+     1152  need 1229  have 1114   +115
+     1024  need 1229  have  986   +243
+
+   `overflow` on #dock is `visible`, so past the knee the button is simply
+   painted outside its own plate and then cut off by the window: at 1200 the
+   right edge of #send-wave sat at x=1248, 48px past the viewport, taking the
+   Space cap (1241) and the early-send bonus (1231) with it. The block above
+   says "Verified by capture at 1280, 1366 and 1920" — all three are above the
+   knee, which is how this shipped.
+
+   Everything below is size, never content: the cards keep their glyph, name and
+   price down to 900px, where the fusion rail is dropped by the block after this
+   one. The Tower Table's counter line is the one exception — it is the only
+   string in the dock that is duplicated inside the panel it opens. */
+@media (max-width: 1280px) {
+  .tcard { width: 54px; padding: 7px 3px 6px; }
+  .tc-name { font-size: 9px; }
+  .tc-cost { font-size: 10px; }
+  #dock { gap: 8px; padding: 7px 8px; }
+  .dock-rail { gap: 4px; }
+}
+
+@media (max-width: 1180px) {
+  .tcard { width: 48px; }
+  .tc-glyph { font-size: 15px; }
+  #dock { gap: 6px; padding: 7px 7px; }
+  .dock-rail { gap: 3px; }
+  .ct-text i { display: none; }
+  #codex-toggle { padding: 0 9px; gap: 7px; }
 }
 
 @media (max-width: 1120px) {
   .picker-cards { gap: 12px; }
   .pcard { width: 244px; }
+  .tcard { width: 44px; }
+  .dock-label { font-size: 8.5px; }
+  .ct-text b { font-size: 10.5px; }
+  #send-wave.show { padding: 0 12px; }
+  .sw-label { font-size: 11.5px; }
 }
 
 /* Below ~900px the two rails would start crowding the board: the threat rail

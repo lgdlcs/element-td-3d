@@ -8,6 +8,13 @@
  * asserts the DOM actually changed. Any regression here breaks the game.
  */
 import { chromium } from 'playwright';
+// The tower count is asserted against the constant that DEFINES it, not against
+// a literal. This check spent a round red because it still demanded 21 after the
+// six primals landed and took the table to 27 — a stale number in the safety net
+// is worse than no net, because a real failure hides behind a FAIL everyone has
+// learned to ignore. uikit.js imports nothing that needs a DOM or a GL context,
+// so plain node can load it.
+import { TOWER_TOTAL } from '../src/ui/uikit.js';
 
 const browser = await chromium.launch({
   args: ['--use-angle=metal', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--mute-audio', '--hide-scrollbars'],
@@ -110,7 +117,8 @@ await check('F toggles the tower table, Escape closes it', async () => {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
   const closed = await ev(() => !document.querySelector('#codex').classList.contains('open'));
-  return (open && closed && cells === 21) || `open=${open} closed=${closed} cells=${cells}`;
+  return (open && closed && cells === TOWER_TOTAL)
+    || `open=${open} closed=${closed} cells=${cells} (want ${TOWER_TOTAL})`;
 });
 
 await check('openInspector() renders stats and upgrade delta', async () => {

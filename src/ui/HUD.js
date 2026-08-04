@@ -1,5 +1,9 @@
 import * as THREE from 'three';
-import { ELEMENTS, ELEMENT_ORDER, PRIMALS, PRIMAL, hex, num, clamp, esc, PLACEMENT_TEXT } from './uikit.js';
+import {
+  ELEMENTS, ELEMENT_ORDER, PRIMALS, PRIMAL, hex, num, clamp, esc, PLACEMENT_TEXT,
+  key, keyRow, SHORTCUTS,
+} from './uikit.js';
+import { isTypingTarget } from '../util/dom.js';
 import { waveDef, TOTAL_WAVES } from '../game/Waves.js';
 import { towerDef } from '../game/TowerDefs.js';
 import { CREEP_TYPES } from '../game/Creeps.js';
@@ -7,6 +11,7 @@ import { BuildBar } from './BuildBar.js';
 import { Picker } from './Picker.js';
 import { Inspector } from './Inspector.js';
 import { Threat } from './Threat.js';
+import { publishTop } from './globalTop.js';
 
 /**
  * DOM overlay HUD.
@@ -47,6 +52,9 @@ export class HUD {
       airAlert: this.$('#air-alert'),
       held: this.$('#held-piece'),
       best: this.$('#stat-best'),
+      pauseGlyph: this.$('#pause-btn .ib-glyph'),
+      help: this.$('#help'),
+      helpBtn: this.$('#help-btn'),
     };
 
     /** Personal best, injected by main.js from local storage. */
@@ -82,6 +90,182 @@ export class HUD {
       this.refreshTop();
     });
     this.$('#restart-btn').addEventListener('click', () => window.location.reload());
+
+    // ---- key sheet ------------------------------------------------------
+    this.nodes.help.innerHTML = HELP_TEMPLATE;
+    this.nodes.helpBtn.addEventListener('click', () => this.toggleHelp());
+    // Any click that is not on the sheet itself dismisses it. The full-bleed
+    // veil is what makes that safe: without it, "outside" means the board, and
+    // dismissing the sheet would also queue a build on whatever tile was under
+    // the cursor. The veil eats the click instead.
+    this.nodes.help.addEventListener('click', (e) => {
+      if (!e.target.closest('.help-sheet') || e.target.closest('.help-close')) this.setHelp(false);
+    });
+
+    /**
+     * THE MODAL SHIELD — what `aria-modal="true"` actually costs.
+     *
+     * #help declares role="dialog" aria-modal="true", traps Tab, takes focus and
+     * lays a full-bleed veil that eats every click. All of that was true for the
+     * MOUSE and none of it was true for the keyboard: this listener consumed
+     * H, ?, Escape and Tab and returned, so BuildBar's window listener and
+     * Game.js's switch went on running behind the veil. Measured with the sheet
+     * open and focus on .help-close: Space sent wave 1 and moved state.phase
+     * from 'prep' to 'combat', P un-paused, 3 set the speed, Q armed a Fire
+     * Tower — and NONE of it was visible, because the veil (z-index 44) covers
+     * #held-piece and the dock. Sending a wave early is irreversible. The panel
+     * built to MAKE THE SHORTCUTS OBVIOUS was the one panel that fired them
+     * while you were reading it.
+     *
+     * Capture on document, exactly like Lobby.js's shield and for the same
+     * reason. A `stopImmediatePropagation` from the listener below cannot work:
+     * BuildBar is constructed BEFORE HUD.#wire runs, so its window listener is
+     * registered first and has already fired by the time this one is reached.
+     * Capture on document precedes every bubble-phase listener on window
+     * whatever the order they were added in.
+     *
+     * WHAT STILL GETS THROUGH, and the line the list is drawn on: keys that only
+     * decide WHICH REFERENCE PANEL IS ON SCREEN. H and ? toggle this sheet, Esc
+     * closes it, Tab is its own focus trap, and F swaps it for the Tower Table —
+     * which the sheet itself advertises two rows above, and which BuildBar.
+     * setCodex already resolves by closing this panel, so the two can never
+     * share the screen. A cap that promises a dead key is worse than no cap.
+     * Everything else is swallowed, INCLUDING its default action, because those
+     * keys spend gold, sell towers and send waves. Space would also scroll the
+     * veil.
+     */
+    this._onKeyShield = (e) => {
+      if (!this.helpOpen) return;
+      if (isTypingTarget(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.code === 'KeyH' || e.key === '?' || e.code === 'Escape'
+        || e.key === 'Tab' || e.code === 'KeyF') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    document.addEventListener('keydown', this._onKeyShield, true);
+
+    /**
+     * The sheet's own key listener.
+     *
+     * Deliberately a fourth listener rather than a case in Game.js's switch:
+     * Game owns the simulation's keys, BuildBar owns the dock's, CameraRig owns
+     * the camera's, and none of them may reach into a panel. The typing guard is
+     * the shared `isTypingTarget` (util/dom.js) rather than a fifth private copy of
+     * `instanceof HTMLInputElement`: this is the first of the four listeners to
+     * preventDefault a PRINTABLE letter, so it is the first that would eat a
+     * keystroke out of a textarea nobody has written yet.
+     *
+     * ESCAPE IS CONSUMED WHEN THE SHEET IS OPEN. It did not used to be, and two
+     * strings on screen at the same moment each promised the whole key: the
+     * sheet's footer says "Esc closes it" and the #held-piece chip says "Esc or
+     * right-click to cancel". One press did both — closed the sheet AND dropped
+     * the piece — and the sheet is precisely the surface a player opens WHILE
+     * holding something, to check a key before placing it. First Escape closes
+     * the panel, second Escape drops the piece.
+     */
+    window.addEventListener('keydown', (e) => {
+      if (isTypingTarget(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      // `?` is the key everyone tries first and it is Shift+/ on a US layout,
+      // Shift+, on a French one — a physical code cannot describe it, so this is
+      // the one place a `key` test is the correct test. `KeyH` is the physical
+      // fallback that works on every layout.
+      if (e.code === 'KeyH' || e.key === '?') {
+        e.preventDefault();
+        this.toggleHelp();
+        return;
+      }
+      if (!this.helpOpen) return;
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        // stopImmediatePropagation, NOT stopPropagation: Game.js's switch is a
+        // second listener on the SAME target (window), and stopPropagation only
+        // stops other NODES. It has to be this listener that runs first, which
+        // it does — Game's constructor is `this.hud = new HUD(this)` and then
+        // `#wirePointer()`, so HUD (and BuildBar, built inside HUD) register
+        // ahead of it. That ordering is a real dependency and it is asserted, not
+        // assumed: tests/e2e/help.spec.js presses Escape with a piece in hand and
+        // requires the piece to survive the first press.
+        e.stopImmediatePropagation();
+        this.setHelp(false);
+        return;
+      }
+      // The Tab trap `aria-modal="true"` promises. Without it the attribute was a
+      // lie: measured, six Tabs from the open sheet walked focus onto the three
+      // speed buttons, #pause-btn, #restart-btn and #help-btn — all behind the
+      // veil, all Space/Enter-activatable, and #restart-btn reloads the page. A
+      // keyboard player reading the shortcut sheet could destroy their own run
+      // with Tab x5 + Enter. Lobby.js solves the identical problem the identical
+      // way (its #onKey Tab trap); this is that pattern, minus the ring, because
+      // the sheet has exactly one focusable child.
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        this.nodes.help.querySelector('.help-close')?.focus();
+      }
+    });
+  }
+
+  // ---- key sheet ---------------------------------------------------------
+
+  get helpOpen() { return this.nodes.help.classList.contains('open'); }
+
+  toggleHelp() { this.setHelp(!this.helpOpen); }
+  closeHelp() { this.setHelp(false); }
+
+  setHelp(open) {
+    // A MODAL THAT DEMANDS AN ANSWER OUTRANKS A REFERENCE SHEET.
+    //
+    // The comment over #help in ui.css claimed the stack put it "under the
+    // tooltip (45) and the end card (50-ish)". Measured, #endcard is z-index 40
+    // and #picker is 30 — so the sheet went OVER both, and its veil swallowed
+    // their clicks: after a defeat, H put the sheet on top of the end card and
+    // `document.elementFromPoint` at the centre of "Play again" returned
+    // .help-cols. Same during the wave-1 element offer, which is a forced
+    // choice. Recoverable (Esc / H / a click outside) but it is a reference
+    // panel blocking a decision panel.
+    //
+    // Refusing the open is the half that was missing: showEnd() has always
+    // closed the sheet on the way in, so the other direction was the asymmetry.
+    // The z-index is deliberately NOT the fix — raising #endcard past 44 would
+    // leave the picker, and PITFALLS §10 is exactly about one file asserting
+    // another file's constant.
+    if (open && (this.nodes.endcard.classList.contains('show') || this.picker.open)) return;
+    // Two full-bleed sheets at once is one too many, and the codex is the one
+    // with an owner: it stays the surface you were reading, this one steps back.
+    if (open) this.build.setCodex(false);
+    const was = this.helpOpen;
+    this.nodes.help.classList.toggle('open', open);
+    this.nodes.help.setAttribute('aria-hidden', String(!open));
+    this.nodes.helpBtn.classList.toggle('active', open);
+    this.nodes.helpBtn.setAttribute('aria-expanded', String(open));
+
+    // The other half of the modality promise (see the Tab trap in #wire): put
+    // focus INSIDE the dialog on the way in and give it back on the way out.
+    // Only on a real transition — setHelp(false) runs on every codex open, and
+    // stealing focus back to #help-btn from wherever the player actually is
+    // would be its own bug.
+    if (open && !was) {
+      // Flush the style change first. #help is `visibility: hidden` when closed,
+      // and focus() consults the RENDERED state: called in the same task as the
+      // class toggle it sees the stale `hidden` and silently does nothing, so
+      // focus stayed on <body> and the Tab trap had nothing to trap. Reading
+      // offsetWidth forces the recalc, same trick as pulseLives.
+      void this.nodes.help.offsetWidth;
+      this.nodes.help.querySelector('.help-close')?.focus();
+    } else if (!open && was) {
+      // ALWAYS the button that owns the panel, never "wherever focus was".
+      //
+      // Restoring the previous element is the textbook move and it is wrong
+      // here: the sheet is opened by a GLOBAL shortcut, so "the previous
+      // element" is usually <body> (i.e. nowhere, which leaves the next Tab
+      // starting from the top of the page) or a leftover control on a panel
+      // that has since been dismissed — measured, a sheet opened just after the
+      // wave-1 element offer handed focus back to a .pcard behind a closed
+      // picker, and neither `isConnected` nor `checkVisibility` reliably called
+      // that one dead. #help-btn is always rendered, always focusable, and is
+      // the control the panel belongs to, so it is both the safe answer and the
+      // discoverable one.
+      this.nodes.helpBtn.focus();
+    }
   }
 
   // ---- top bar ---------------------------------------------------------
@@ -101,7 +285,10 @@ export class HUD {
       b.setAttribute('aria-pressed', String(on));
     });
     this.nodes.pause.classList.toggle('paused', s.paused);
-    this.nodes.pause.innerHTML = s.paused ? '▶' : '❚❚';
+    // The GLYPH node, not the button: the button also carries its `P` key cap
+    // and this runs every frame, so writing innerHTML on the button would delete
+    // the cap on the first tick and nobody would ever see it.
+    this.nodes.pauseGlyph.textContent = s.paused ? '▶' : '❚❚';
     this.nodes.pause.setAttribute('aria-label', s.paused ? 'Resume' : 'Pause');
 
     const want = s.elements.join(',');
@@ -251,9 +438,17 @@ export class HUD {
     this.nodes.best.textContent = this.best ? num(this.best) : '—';
   }
 
-  /** Global top scores from the server: [{ name, score, wave }]. */
+  /**
+   * Global top scores from the server: [{ name, score, wave }].
+   *
+   * Also republished on the shared feed, because the lobby shows the same board
+   * before the run and main.js routes the transport to exactly this method. See
+   * the docblock in globalTop.js for why the lobby cannot simply be handed a
+   * callback.
+   */
   setLeaderboard(list) {
     this.leaderboard = Array.isArray(list) ? list : [];
+    publishTop(this.leaderboard);
   }
 
   /**
@@ -282,14 +477,19 @@ export class HUD {
       el.style.setProperty('--c', hex(held.def.color));
       el.innerHTML = `<span class="hp-glyph">${held.def.glyph}</span>
         <span class="hp-text"><b>Foundation selected</b>
-        <i>Click any tower in the bar below to arm it — discounted</i></span>`;
+        <i>Click any tower in the bar below to arm it — discounted, or ${key('Esc')} to let it be</i></span>`;
     } else {
       const def = towerDef(buildKey);
       if (!def) { el.classList.remove('on'); return; }
       el.style.setProperty('--c', hex(def.color));
+      // CANCEL_HINT names two ways out because the chip is the only place either
+      // is written down. Right-click is the neighbouring change in Game.js's
+      // pointer wiring (button 2, below the 5px drag threshold, so it does not
+      // fight CameraRig's orbit); if that ever comes back out, this string is
+      // the one line to edit.
       el.innerHTML = `<span class="hp-glyph">${def.glyph}</span>
         <span class="hp-text"><b>${esc(def.name)} in hand</b>
-        <i>Click the board to place · Esc to drop</i></span>`;
+        <i>Click the board to place &nbsp;·&nbsp; ${key('Esc')} or right-click to cancel</i></span>`;
     }
     el.classList.remove('on');
     void el.offsetWidth;
@@ -311,7 +511,16 @@ export class HUD {
    */
   setSpectating(on) {
     this.root.classList.toggle('spectating', !!on);
-    if (on) this.showPlacementHint(null);
+    // The two full-bleed panels are the exception to the class-only rule above,
+    // and the codex is here because leaving it out cost an Escape press. The
+    // .spectating rule in spectate.css takes #codex to opacity 0 and leaves
+    // BuildBar.codexOpen true, so BuildBar's Escape branch — which consumes the
+    // event with stopImmediatePropagation, and is registered BEFORE Game's
+    // window listener — went on closing an already-invisible panel. Measured:
+    // open the Tower Table, click a scoreboard row to spectate, press Escape,
+    // and nothing happens on screen while the SpectateBar says "Back to your
+    // board [Esc]". It took two presses. Closing it here restores one.
+    if (on) { this.showPlacementHint(null); this.setHelp(false); this.build.setCodex(false); }
   }
 
   floatText(x, y, z, text, color) {
@@ -329,6 +538,14 @@ export class HUD {
 
   showEnd(won) {
     const s = this.game.state;
+    // The two reference surfaces step aside for the result. This used to happen
+    // by accident for the key sheet — HUD.update closed it on every non-prep
+    // frame — and that accident was the blocker fixed in this round, so the two
+    // panels now stand down HERE, where the reason is "the run is over" rather
+    // than "the phase changed". Without it a full-bleed sheet would sit under the
+    // end card with nothing but a z-index between them.
+    this.setHelp(false);
+    this.build.setCodex(false);
     // `best` is whatever was loaded at boot, so a run that beat it is a new
     // record even though the store is written by main.js after this renders.
     const record = s.score > this.best;
@@ -388,6 +605,22 @@ export class HUD {
 
     const prep = s.phase === 'prep';
     this.build.setPrep(prep, prep ? Math.round(s.prepTimer * 2) : 0);
+
+    // NO PHASE GUARD HERE, AND THAT IS THE FIX FOR A SHIPPED BLOCKER.
+    //
+    // This used to close the sheet on every frame whose phase was not prep /
+    // lobby / pickElement, on the theory that it is a between-waves surface.
+    // `combat` is where a run spends most of its time, so during a wave H and
+    // the ? button both put the sheet up for exactly one frame and then tore it
+    // down again: measured `open` immediately, `false` 120ms later. That does
+    // not read as a refusal, it reads as a crash — and it made the panel built
+    // to answer "the shortcuts are not visible enough" unreachable for most of
+    // the game. The codex (F) has never had such a guard and stays up through a
+    // wave, so the two reference surfaces disagreed as well.
+    //
+    // A player who opens a full-bleed sheet mid-fight asked for it and has three
+    // ways out (H, Escape, a click anywhere outside). Taking the decision off
+    // them one frame later is the worse of the two failures.
 
     if (this._toastTimer > 0) {
       this._toastTimer -= dt;
@@ -459,17 +692,65 @@ const TEMPLATE = /* html */`
 
     <div class="controls">
       <div id="owned-elements" class="pips" aria-label="Bound elements"></div>
+      <!-- The digit IS the key, so it wears the cap instead of being repeated
+           beside one: the button reads "[1]×" and the cap is what says "this is
+           on your keyboard". Same trick would not work on the pause button,
+           whose glyph has no letter in it. -->
       <div id="speed-buttons" role="group" aria-label="Game speed">
-        <button data-speed="1" class="active" aria-pressed="true">1×</button>
-        <button data-speed="2" aria-pressed="false">2×</button>
-        <button data-speed="3" aria-pressed="false">3×</button>
+        <button data-speed="1" class="active" aria-pressed="true" aria-keyshortcuts="1" title="Normal speed · key 1">${key('1', 'tight')}×</button>
+        <button data-speed="2" aria-pressed="false" aria-keyshortcuts="2" title="Double speed · key 2">${key('2', 'tight')}×</button>
+        <button data-speed="3" aria-pressed="false" aria-keyshortcuts="3" title="Triple speed · key 3">${key('3', 'tight')}×</button>
       </div>
-      <button id="pause-btn" class="icon-btn" aria-label="Pause">❚❚</button>
-      <button id="restart-btn" class="icon-btn" aria-label="Restart run">⟳</button>
+      <button id="pause-btn" class="icon-btn keyed" aria-label="Pause" aria-keyshortcuts="P" title="Pause · key P">
+        <span class="ib-glyph">❚❚</span>${key('P')}
+      </button>
+      <button id="restart-btn" class="icon-btn" aria-label="Restart run" title="Restart this run">⟳</button>
+      <button id="help-btn" class="icon-btn keyed" aria-label="Keyboard shortcuts"
+              aria-keyshortcuts="H" aria-expanded="false" aria-controls="help" title="Every shortcut · key H">
+        <span class="ib-glyph">?</span>${key('H')}
+      </button>
     </div>
   </header>
 
   <div id="announce" aria-live="polite"></div>
   <div id="toast" role="status"></div>
+  <div id="help" aria-hidden="true"></div>
   <div id="endcard"></div>
+`;
+
+/**
+ * The key sheet.
+ *
+ * Built once from SHORTCUTS and never re-rendered — the keyboard does not
+ * change during a run. It is a player-invoked surface, so it is allowed into
+ * the playable centre (same licence as the tower table and the element picker),
+ * and it takes a full-bleed veil for one reason: an "outside click" that lands
+ * on the board would otherwise place a tower on the way out.
+ */
+const HELP_TEMPLATE = /* html */`
+  <div class="help-veil" aria-hidden="true"></div>
+  <section class="help-sheet" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <header class="help-head">
+      <div>
+        <span class="legend">Controls</span>
+        <h3 id="help-title">Every key on the board</h3>
+      </div>
+      <button class="help-close" aria-label="Close (Escape)">✕</button>
+    </header>
+    <div class="help-cols">
+      ${SHORTCUTS.map((g) => `<div class="help-group">
+        <div class="legend">${esc(g.title)}</div>
+        <ul>
+          ${g.rows.map((r) => `<li${r.wide ? ' class="wide"' : ''}>
+            <span class="hk-keys">${keyRow(r.keys)}</span>
+            <span class="hk-label">${esc(r.label)}${r.note ? `<i>${esc(r.note)}</i>` : ''}</span>
+          </li>`).join('')}
+        </ul>
+      </div>`).join('')}
+    </div>
+    <footer class="help-foot">
+      ${key('H')} opens and closes this sheet &nbsp;·&nbsp; ${key('Esc')} closes it &nbsp;·&nbsp;
+      or click anywhere outside
+    </footer>
+  </section>
 `;

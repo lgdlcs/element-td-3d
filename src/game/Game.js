@@ -17,6 +17,7 @@ import { ELEMENT_IDS, ELEMENTS } from './Elements.js';
 import { rngFor, pickN } from '../core/Rng.js';
 import { HUD } from '../ui/HUD.js';
 import { PLACEMENT_TEXT } from '../ui/uikit.js';
+import { isTypingTarget } from '../util/dom.js';
 import { AudioEngine } from '../audio/AudioEngine.js';
 
 /** Scratch vector for world→screen projection (audio panning). */
@@ -478,6 +479,12 @@ export class Game {
   #wirePointer() {
     const el = this.canvas;
 
+    /** Where the right button went down, or null. Carries its own last sample. */
+    this._cancelDownAt = null;
+    /** Total path travelled since that press, in CSS pixels. */
+    this._cancelTravel = 0;
+    this._pointerDownAt = null;
+
     el.addEventListener('pointermove', (e) => {
       this._ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
       this._ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
@@ -487,6 +494,10 @@ export class Game {
       this.#updateHover();
     });
 
+    // ---- the LEFT button: the board's own click, canvas only ---------------
+    // Deliberately still bound to the canvas and not to the document: a left
+    // click on the dock is a dock click, and letting it reach #onClick would
+    // build a tower under whatever panel the player was aiming at.
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.shiftKey) return;
       this._pointerDownAt = { x: e.clientX, y: e.clientY };
@@ -496,21 +507,146 @@ export class Game {
       if (e.button !== 0 || e.shiftKey) return;
       const d = this._pointerDownAt;
       if (!d) return;
-      // Ignore drags (camera pan) — only treat as a click if the pointer barely moved.
+      // Displacement, and deliberately not the path length the right button
+      // uses: plain left-drag is bound to nothing (pan is the middle button,
+      // orbit is Shift or the right button), so a left press that wanders and
+      // comes back is a click on the cell it started and ended on.
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) { this._pointerDownAt = null; return; }
       this._pointerDownAt = null;
       this.#onClick();
     });
 
+    el.addEventListener('pointercancel', () => { this._pointerDownAt = null; });
+
+    // ---- the RIGHT button: "drop it", document-wide ------------------------
+    //
+    // ON THE DOCUMENT, NOT ON THE CANVAS, and that is a fix rather than a
+    // convenience. Bound to the canvas, the gesture was dead over every pixel of
+    // #ui-root: measured, a right-click on #dock, #pause-btn or #threat dropped
+    // nothing and served the OS context menu instead. The dock is a full-width
+    // band along the bottom of the screen and is exactly where the cursor is one
+    // instant after taking a piece off it, so "right-click to cancel" failed in
+    // its single most common position. With the key sheet up it was worse: the
+    // veil covers the whole screen, so nowhere at all worked.
+    //
+    // ONE listener, not one per surface. Two of them would each call
+    // #cancelSelection for the same release, and since that function undoes ONE
+    // thing per call, a right-click over the board would have silently undone
+    // two.
+    //
+    // The right button stays SHARED with CameraRig, which starts an orbit drag
+    // on it (CameraRig.#bind, canvas). Neither stops propagation; the drag rule
+    // below is the whole of what keeps them out of each other's way.
+    const rightDown = (e) => {
+      if (e.button !== 2) return;
+      this._cancelDownAt = { x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY };
+      this._cancelTravel = 0;
+    };
+
+    const rightMove = (e) => {
+      const c = this._cancelDownAt;
+      if (!c) return;
+      // PATH LENGTH, not displacement — see rightUp. Summed from our own previous
+      // sample rather than from e.movementX/Y, which is not populated identically
+      // across pointer-capture implementations and would make the rule depend on
+      // the browser.
+      this._cancelTravel += Math.hypot(e.clientX - c.lastX, e.clientY - c.lastY);
+      c.lastX = e.clientX;
+      c.lastY = e.clientY;
+    };
+
+    const rightUp = (e) => {
+      if (e.button !== 2) return;
+      const c = this._cancelDownAt;
+      const travel = this._cancelTravel;
+      this._cancelDownAt = null;
+      this._cancelTravel = 0;
+      if (!c) return;
+      // A right-click meant for a text field belongs to the field (pasting a room
+      // code is the case that matters), and nothing is ever queued behind one.
+      if (isTypingTarget(e)) return;
+      // A FULL-BLEED PANEL DOES NOT EXEMPT THE GESTURE, and this is the second
+      // decision on the point — the first one exempted #help, #codex, #picker,
+      // #endcard and #lobby, and tests/e2e/cancel.spec.js has asserted the
+      // opposite since the day the gesture moved to `document`. The two shipped
+      // together and contradicted each other; the test is the one that is right.
+      //
+      // The reason is the same one that moved this listener off the canvas. The
+      // veil covers the WHOLE screen, so exempting it does not hand the gesture
+      // to the panel — nothing on any of these panels binds the right button —
+      // it deletes the gesture outright for as long as the panel is up. A player
+      // who opens the key sheet to look up a shortcut, with a tower in hand,
+      // could not put the tower down again by the means the game taught them.
+      // That is a strictly worse outcome than the one the exemption was written
+      // to avoid.
+      //
+      // WHAT IT DOES NOT DO IS CLOSE THE PANEL. #cancelSelection touches the
+      // build cursor and the Inspector and nothing else, so the sheet stays up
+      // and Escape still closes it. The footer's "or click anywhere outside" is
+      // about the LEFT button (HUD's veil handler) and is unaffected.
+      //
+      // The missing-feedback complaint is real and is answered by the veil
+      // rather than by refusing the gesture: #held-piece sits under it, so the
+      // piece vanishing is not visible while the sheet is open. It becomes
+      // visible the moment the sheet closes, and the dock card un-highlights,
+      // which is the same feedback a cancel over the board gives.
+      //
+      // Text fields keep their exemption above — that one is about the native
+      // Paste menu, not about panels.
+      // TWO MEASUREMENTS, AND THE SECOND ONE IS THE FIX.
+      //
+      // The endpoint test alone (|up - down| <= 5) is not a test for "did this
+      // gesture move" — it is a test for "did it end where it began". The
+      // commonest camera gesture there is, spin the board round to look and spin
+      // it back, releases within a pixel or two of its own origin, so it was read
+      // as a tap: measured, a right-drag out to +168px and back orbited 48
+      // degrees AND dropped the tower in hand on release, with no visible cause.
+      // Accumulating the path travelled is what tells the two apart, because an
+      // orbit-and-return has a long path and a zero displacement while a tap has
+      // neither.
+      //
+      // Both tests still have to pass. Travel alone would let a slow arc that
+      // ends 300px away through, on a hand that never exceeded the threshold
+      // between two samples.
+      if (travel <= 5 && Math.hypot(e.clientX - c.x, e.clientY - c.y) <= 5) {
+        this.#cancelSelection();
+      }
+    };
+
+    // A drag that leaves the window, or a gesture the browser takes over, fires
+    // pointercancel instead of pointerup. Without this the stale down-point
+    // survives and the NEXT right-click-release cancels the selection from a
+    // measurement taken minutes earlier.
+    const rightAbort = () => { this._cancelDownAt = null; this._cancelTravel = 0; };
+
+    document.addEventListener('pointerdown', rightDown);
+    document.addEventListener('pointermove', rightMove);
+    document.addEventListener('pointerup', rightUp);
+    document.addEventListener('pointercancel', rightAbort);
+
+    // THE BROWSER MENU, EVERYWHERE THE GESTURE IS. CameraRig suppresses it on the
+    // canvas so an orbit drag does not end in a popup; that left every HUD
+    // surface serving one. A context menu over the dock eats the next click as
+    // well as looking broken.
+    //
+    // Text fields are the deliberate exception: the lobby's name and room-code
+    // inputs need Paste, and there is nothing to cancel while they have focus.
+    document.addEventListener('contextmenu', (e) => {
+      if (isTypingTarget(e)) return;
+      e.preventDefault();
+    });
+
     window.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement) return;
+      // Shared guard (uikit.isTypingTarget): Space is in the switch below and a
+      // space typed into a field must reach the field, not launch a wave.
+      if (isTypingTarget(e)) return;
       // Escape means "get me out of the biggest thing I am in", and while
       // watching someone else's board that is the mode, not the cursor. Placed
       // above the switch rather than inside the Escape case so it cannot be
       // reordered into second place by a later edit.
       if (e.code === 'Escape' && this.spectating) { this.exitSpectate('key'); return; }
       switch (e.code) {
-        case 'Escape': this.setBuildSelection(null); this.selectTower(null); break;
+        case 'Escape': this.#cancelSelection(true); break;
         case 'Space': e.preventDefault(); this.startWaveNow(); break;
         case 'KeyP': this.state.paused = !this.state.paused; this.hud.refreshTop(); break;
         case 'Digit1': this.setSpeed(1); break;
@@ -526,6 +662,48 @@ export class Game {
         default: break;
       }
     });
+  }
+
+  /**
+   * Drop whatever the player is currently holding or inspecting.
+   *
+   * Shared by Escape and by a right-click that did not turn into a camera orbit.
+   * The two are the same gesture with different ergonomics, and keeping them one
+   * function is the only way they cannot drift: the placement hint, the 2x2
+   * ghost, the range ring, the build-grid overlay and the Inspector all have to
+   * go together, and they are torn down by setBuildSelection(null) /
+   * selectTower(null) rather than by anything here.
+   *
+   * @param {boolean} [both] clear the tower selection as well as the queued
+   *   build. Escape passes true (it means 'clear everything'); the right-click
+   *   passes false so one click undoes one thing — the piece in hand first, the
+   *   inspected tower only if there was no piece.
+   *
+   * THE TWO FIELDS ARE MUTUALLY EXCLUSIVE IN PRACTICE and the parameter still
+   * earns its keep. setBuildSelection(key) calls selectTower(null) on its way in
+   * (and selectTower is only ever called with a live id while selectedBuild is
+   * null), so no player action reaches this function with both set. What `both`
+   * therefore changes on a real board is the NOTHING-SELECTED case: Escape runs
+   * both teardowns regardless, which is what guarantees an orphaned ghost or
+   * range ring cannot survive a state the code did not predict, while a
+   * right-click on an empty board does nothing at all. tests/e2e/cancel.spec.js
+   * asserts that difference, and asserts the documented ordering by writing the
+   * unreachable pair directly — a test that only ever sees the reachable states
+   * cannot fail if someone collapses the two branches into one.
+   *
+   * Spectating is a no-op rather than an exit. Escape DOES leave spectate (see
+   * the keydown handler above), but the right button is the camera's, and a
+   * player who orbits someone else's board must not be ejected from it by a
+   * drag the rig decided was under 5px.
+   */
+  #cancelSelection(both = false) {
+    if (this.spectating) return;
+    // Escape is unconditional on purpose: it is also the panic button, and
+    // running both teardowns even when nothing is selected is what guarantees no
+    // orphaned ghost or range ring can survive a state the code did not predict.
+    if (both) { this.setBuildSelection(null); this.selectTower(null); return; }
+    if (this.selectedBuild) { this.setBuildSelection(null); return; }
+    if (this.selectedTower !== null) this.selectTower(null);
   }
 
   #groundPoint() {
@@ -544,6 +722,19 @@ export class Game {
    * would send them off to earn gold for a placement that will still be refused.
    * A stack shortfall sits above 'poor' for the same reason and one stronger: no
    * amount of gold fixes it, so quoting a price would be a lie.
+   *
+   * 'stacks' IS A GUARD, NOT A STATE THE DOCK CAN PRODUCE. Audited 2026-08-04
+   * and worth writing down, because it reads like a live branch: state.elements
+   * only ever shrinks in #spendStacks, whose two callers (build, convertTower)
+   * both leave selectedBuild null on the way out, and availableTowers gates the
+   * primal card on the same >= stacksRequired test this line makes — so no
+   * sequence of clicks and hotkeys puts a primal in hand while the count is
+   * short. What CAN produce it is setBuildSelection('primal_*') called directly,
+   * which is a real public entry point and the one a future feature would use.
+   * The branch stays, and tests/e2e/grid-preview.spec.js drives it that way and
+   * reads the pixels it paints, so the sixth picture is measured rather than
+   * assumed. Do not "simplify" it away on the grounds that clicking cannot reach
+   * it: the point is the day something else can.
    */
   placementReason(c, r) {
     if (!this.grid.canPlaceTower(c, r)) return 'occupied';

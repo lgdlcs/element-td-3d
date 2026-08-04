@@ -25,6 +25,8 @@
  * comparison.
  */
 
+import { isTypingTarget } from '../util/dom.js';
+
 const N = 120;   // ~2 seconds at 60fps
 
 export class PerfHud {
@@ -51,7 +53,7 @@ export class PerfHud {
 
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'KeyG' && e.code !== 'F8') return;
-      if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       this.toggle();
     });

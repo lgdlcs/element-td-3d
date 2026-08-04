@@ -119,6 +119,79 @@ await page.evaluate(async ({ scenario, settle }) => {
       g.state.wave = 3;
       break;
 
+    /**
+     * THE BUILD CURSOR, which twenty scenarios could not photograph.
+     *
+     * The grid overlay only comes up while something is queued (Game.#updateHover
+     * calls arena.setGridVisible(true) under `selectedBuild`), and not one case
+     * here ever put a piece in hand — so "is the quadrillage readable" and "does
+     * the 2x2 ghost read louder than the lines it sits on" had to be judged with
+     * an out-of-tree probe every time. This freezes the whole cursor in one
+     * frame: grid, hover ghost, range ring and the cursor hint.
+     *
+     * The reason it hunts for a cell instead of hardcoding one: placementReason
+     * returns 'valid' (NOT 'ok'), and the answer depends on the maze that was
+     * just built, so a fixed pair of coordinates would silently start
+     * photographing a REFUSAL the day MAZE changes.
+     */
+    case 'holding': {
+      giveAll();
+      buildMaze(MAZE);
+      g.state.gold = 4820;
+      g.state.wave = 21;
+      g.setBuildSelection('fire');
+      let cell = null;
+      for (let r = 2; r < 18 && !cell; r += 2) {
+        for (let c = 2; c < 22; c += 2) {
+          if (g.placementReason(c, r) === 'valid') { cell = { c, r }; break; }
+        }
+      }
+      if (cell) {
+        const p = g.grid.towerCentreToWorld(cell.c, cell.r, {});
+        const V = g.camera.position.constructor;
+        const v = new V(p.x, 0, p.z).project(g.camera);
+        const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
+        const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+        // Straight into Game's own pointer path: a synthetic pointermove is what
+        // sets the hover cell, the ghost state and the range ring together.
+        g.canvas.dispatchEvent(new PointerEvent('pointermove', {
+          clientX: Math.round(sx), clientY: Math.round(sy), bubbles: true,
+        }));
+      }
+      await wait(600);
+      break;
+    }
+
+    /**
+     * A PRIMAL AT ITS TOP LEVEL, next to ordinary towers.
+     *
+     * giveAll() binds each element once, and a primal needs PRIMAL.stacksRequired
+     * copies of one — so no scenario could show one at all, let alone the third
+     * level this round added. Built beside the normal maze on purpose: "is that
+     * one an ultimate" is a question about a tower's neighbours, not about a
+     * tower on an empty board.
+     */
+    case 'primal': {
+      giveAll();
+      buildMaze(MAZE.slice(0, 12));
+      g.state.elements = ['fire', 'water', 'nature', 'earth', 'light', 'dark',
+        'fire', 'fire', 'light', 'light', 'water', 'water'];
+      g.state.gold = 999999;
+      g.hud.refreshBuildBar();
+      for (const [key, c, r] of [['primal_fire', 8, 13], ['primal_light', 14, 13]]) {
+        if (!g.build(key, c, r)) continue;
+        const t = g.towers.towers[g.towers.towers.length - 1];
+        g.towers.upgrade(t.id);
+        g.towers.upgrade(t.id);
+      }
+      g.state.wave = 34;
+      // Far enough back that the ordinary maze is in the same frame: the whole
+      // question is relative size, and a close-up of a primal answers nothing.
+      g.rig.focus(0, 4, 62);
+      await wait(900);
+      break;
+    }
+
     case 'midgame':
     case 'combat': {
       giveAll();
@@ -334,8 +407,10 @@ await page.evaluate(async ({ scenario, settle }) => {
         light:  { damage: 1, armorPen: 3 },
         dark:   { damage: 1, execute: 0.1 },
       };
-      const COLOR = { fire: 0xff5a1f, water: 0x2fa8ff, nature: 0x4fe07a, earth: 0xc08a4a, light: 0xfff2c4, dark: 0x8a4fd6 };
-      const ACC = { fire: 0xffd166, water: 0xa8e8ff, nature: 0xd6ff8f, earth: 0xf0d6a8, light: 0xffffff, dark: 0xdca8ff };
+      // Identity hexes, mirrored from ELEMENTS. `nature` sat at the retired
+      // 0x4fe07a here for a round after the palette moved.
+      const COLOR = { fire: 0xff5a1f, water: 0x2fa8ff, nature: 0x63bd76, earth: 0xc08a4a, light: 0xfff2c4, dark: 0x8a4fd6 };
+      const ACC = { fire: 0xffd166, water: 0xa8e8ff, nature: 0x8ad47f, earth: 0xf0d6a8, light: 0xffffff, dark: 0xdca8ff };
       // Impacts + chain lightning are re-triggered on a loop so they are
       // guaranteed to be ~0.15s old at capture time rather than expired.
       const pulse = () => {
@@ -410,7 +485,7 @@ await page.evaluate(async ({ scenario, settle }) => {
       giveAll();
       g.state.phase = 'combat';
       const els = ['fire', 'water', 'nature', 'earth', 'light', 'dark'];
-      const COLOR = { fire: 0xff5a1f, water: 0x2fa8ff, nature: 0x4fe07a, earth: 0xc08a4a, light: 0xfff2c4, dark: 0x8a4fd6 };
+      const COLOR = { fire: 0xff5a1f, water: 0x2fa8ff, nature: 0x63bd76, earth: 0xc08a4a, light: 0xfff2c4, dark: 0x8a4fd6 };
       const fire = () => {
         for (let k = 0; k < els.length; k++) {
           const x = -13 + k * 5.2, y = 2.4, z = 2;

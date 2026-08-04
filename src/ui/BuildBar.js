@@ -18,6 +18,7 @@ import {
   lockState, countElements,
   hex, num, dps, dotDps, specialsOf, summarise, esc,
 } from './uikit.js';
+import { isTypingTarget } from '../util/dom.js';
 import { towerDef as towerDefOf, FOUNDATION } from '../game/TowerDefs.js';
 
 const HOTKEYS = ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY'];
@@ -73,12 +74,12 @@ export class BuildBar {
           <div class="dock-rail" id="dock-primal"></div>
         </div>
         <div class="dock-rule"></div>
-        <button id="codex-toggle" aria-expanded="false" aria-controls="codex">
+        <button id="codex-toggle" aria-expanded="false" aria-controls="codex" aria-keyshortcuts="F">
           <span class="ct-mark">▤</span>
           <span class="ct-text"><b>Tower Table</b><i id="ct-count">0 of ${TOWER_TOTAL}</i></span>
           <kbd>F</kbd>
         </button>
-        <button id="send-wave" class="primary">
+        <button id="send-wave" class="primary" aria-keyshortcuts="Space">
           <span class="sw-label">Send wave</span>
           <span class="sw-bonus" id="sw-bonus"></span>
           <kbd>Space</kbd>
@@ -155,9 +156,19 @@ export class BuildBar {
   }
 
   #onKey(e) {
-    if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isTypingTarget(e) || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.code === 'KeyF') { e.preventDefault(); this.toggleCodex(); return; }
-    if (e.code === 'Escape' && this.codexOpen) { this.setCodex(false); return; }
+    // Consumed, like HUD.setHelp's Escape: one press closes the panel you are
+    // reading, the next drops the piece in hand. Letting it through to Game's
+    // switch as well made a single Escape do two things the UI advertised
+    // separately.
+    if (e.code === 'Escape' && this.codexOpen) {
+      // stopImmediatePropagation for the same reason as HUD's — Game.js listens
+      // on the same target, and stopPropagation does not stop a sibling listener.
+      e.preventDefault(); e.stopImmediatePropagation();
+      this.setCodex(false);
+      return;
+    }
     if (e.code === 'KeyB') {
       e.preventDefault();
       const k = FOUNDATION.key;
@@ -182,6 +193,10 @@ export class BuildBar {
   toggleCodex() { this.setCodex(!this.codexOpen); }
 
   setCodex(open) {
+    // Both are full-bleed reference surfaces; whichever the player just asked
+    // for is the one that stays. HUD.setHelp closes the codex on the way in for
+    // the same reason, so the pair can never both be up.
+    if (open) this.game.hud?.closeHelp?.();
     this.codexOpen = open;
     this.$codex.classList.toggle('open', open);
     this.$codex.setAttribute('aria-hidden', String(!open));

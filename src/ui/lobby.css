@@ -15,6 +15,10 @@
 #lobby {
   position: absolute; inset: 0;
   display: grid; place-items: center;
+  /* The plate's width, as a token, because the hall in the gutter has to be
+     placed against its edge and a second literal 560 would drift the day one of
+     them changed. The 2200px block below overrides this one value. */
+  --lobby-w: min(560px, calc(100vw - 36px));
   /* Above the picker (30), the end card (40) and the tooltip (45); below the
      boot veil (100), which must stay the outermost thing on screen. */
   z-index: 60;
@@ -37,7 +41,7 @@
 
 .lobby-inner {
   position: relative;
-  width: min(560px, calc(100vw - 36px));
+  width: var(--lobby-w);
   max-height: calc(100vh - 40px);
   overflow-y: auto;
   padding: 4px;
@@ -390,13 +394,154 @@
   display: flex; align-items: center; gap: 6px;
   font-size: 10px; color: var(--ink-4);
 }
+.lobby-keys i { display: contents; font-style: normal; }
+/* Escape only does something in 'lobby' and 'connecting' (Lobby.#onKey); in
+   'idle' there is nothing to back out of and in 'offline' the overlay is the
+   boot gate. Advertising a key that does nothing is worse than not advertising
+   it, so the half of the cap that names it goes away with its behaviour.
+   Driven from #sync(), which already switches on state. */
+.lobby-keys.no-esc i { display: none; }
+
+/* =========================================================================
+   THE HALL  — personal best + the server's global board
+   ---------------------------------------------------------------------
+   It lives in the gutter beside the plate, absolutely positioned against
+   #lobby rather than in the plate's flow, because the plate is already the
+   tallest thing that fits: measured before this landed, `.lobby-inner` was
+   686px against 680px of room at 1280x720 in the idle state and 937px in a
+   room. Anything added to that column pushes "Play solo" under the fold.
+   In the gutter it costs the existing layout nothing at all.
+
+   Read-only by construction: no button, no link, no tabindex, so the Tab
+   trap in #focusables() does not have to know it exists.
+   ========================================================================= */
+
+#lobby-hall {
+  position: absolute;
+  top: 50%;
+  /* Half the plate, plus a gutter. --lobby-w keeps this honest at 2200px. */
+  left: calc(50% + var(--lobby-w) / 2 + 22px);
+  transform: translateY(-50%);
+  width: 254px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  display: grid; gap: 10px;
+  padding: 14px 15px 15px;
+  border-radius: var(--r-l);
+  text-align: left;
+  background: linear-gradient(180deg, rgba(9, 11, 16, 0.9), rgba(6, 7, 11, 0.93));
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+}
+
+.hall-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hall-head .lobby-legend { margin-bottom: 0; }
+.hall-status {
+  font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-4); white-space: nowrap;
+}
+/* Only two of the six states get a colour, and neither is red: "no server" is
+   the supported case (see #lobby-offline) and "lost contact" is the one thing
+   here a player might want to act on. */
+#lobby[data-hall='offline'] .hall-status { color: rgba(255, 180, 84, 0.75); }
+#lobby[data-hall='unknown'] .hall-status,
+#lobby[data-hall='stale'] .hall-status,
+#lobby[data-hall='late'] .hall-status { color: var(--warn); }
+/* A board that is only being kept for reference reads dimmer than a live one. */
+#lobby[data-hall='stale'] .hall-list { opacity: 0.62; }
+#lobby[data-hall='live'] .hall-status { color: var(--gold); }
+
+/* The headline. It is the local record on purpose: it is the only number on
+   this panel that exists with no server, which on a dev machine — and on
+   anyone's first evening — is every number there is. */
+.hall-best {
+  display: grid; gap: 1px;
+  padding: 9px 11px 10px;
+  border-radius: var(--r-m);
+  border: 1px solid rgba(229, 189, 121, 0.26);
+  background: linear-gradient(180deg, rgba(229, 189, 121, 0.1), rgba(229, 189, 121, 0.02));
+}
+.hb-k { font-size: 8.5px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(229, 189, 121, 0.7); }
+.hb-v {
+  font-family: var(--font-num); font-size: 25px; font-weight: 500;
+  line-height: 1.1; letter-spacing: -0.02em; color: var(--gold-hi);
+  text-shadow: 0 0 26px rgba(229, 189, 121, 0.32);
+}
+.hb-v.none { color: var(--ink-4); text-shadow: none; }
+.hb-sub { font-size: 10px; color: var(--ink-4); }
+
+.hall-list { list-style: none; display: grid; gap: 1px; }
+.hall-row {
+  display: grid; grid-template-columns: 14px 1fr auto auto; gap: 8px;
+  align-items: baseline;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  border: 1px solid transparent;
+}
+.hall-row.first { border-color: rgba(229, 189, 121, 0.2); background: rgba(229, 189, 121, 0.05); }
+.hr-rank { font-family: var(--font-num); font-size: 9.5px; color: var(--ink-4); }
+.hall-row.first .hr-rank { color: var(--gold); }
+.hr-name { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hr-score { font-family: var(--font-num); font-weight: 500; color: var(--gold-hi); letter-spacing: -0.02em; }
+.hr-wave { font-style: normal; font-family: var(--font-num); font-size: 9.5px; color: var(--ink-4); }
+
+/* Loading placeholder: three bars at the height the rows will occupy, so the
+   panel does not resize under the player when the board lands. */
+.hall-row.skel {
+  height: 23px; border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.035));
+  background-size: 220% 100%;
+  animation: hallSkel 1.5s ease-in-out infinite;
+}
+@keyframes hallSkel { 0% { background-position: 120% 0; } 100% { background-position: -120% 0; } }
+
+.hall-note { font-size: 10px; line-height: 1.45; color: var(--ink-4); }
+.hall-note:empty { display: none; }
 
 /* =========================================================================
    RESPONSIVE
    ========================================================================= */
 
+/* Under 1180px there is no gutter to put it in: the plate is 560px wide plus
+   its own margins, and a 254px panel beside it would either overlap the plate
+   or run off the frame. Stacking the full panel under the plate is not an option
+   either — the plate alone already overflows a 720px-tall viewport in two of its
+   four states.
+
+   But standing down to NOTHING was wrong, and that is what this used to do: on
+   any window a player has not maximised (a 13" laptop at 1152 or 1024 logical
+   px, a half-screen window) the scoreboard the feature exists to show simply was
+   not there, with nothing on screen saying a leaderboard existed at all. The
+   fallback is one line inside the plate's own flow — .lobby-inner is
+   max-height + overflow-y:auto, so it can never push anything off the frame —
+   carrying the personal best and the top score. Written by the same #hall()
+   call, so the line and the panel cannot disagree.
+
+   tests/e2e/layout.spec.js measures 1100x700 for exactly this. */
+.hall-mini { display: none; }
+
+@media (max-width: 1179px) {
+  #lobby-hall { display: none; }
+  .hall-mini {
+    display: block;
+    margin: 0;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+}
+
 @media (min-width: 2200px) {
-  .lobby-inner { width: min(680px, calc(100vw - 48px)); gap: 18px; }
+  #lobby { --lobby-w: min(680px, calc(100vw - 48px)); }
+  .lobby-inner { gap: 18px; }
+  #lobby-hall { width: 292px; }
+  .hb-v { font-size: 30px; }
+  .hall-row { font-size: 13px; }
   .lobby-sub { font-size: 14px; }
   .lobby-code-chars i { font-size: 42px; width: 42px; }
   .lb-row { font-size: 14px; padding: 10px 12px; }

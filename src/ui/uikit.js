@@ -36,6 +36,132 @@ export function compact(v) {
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 // ---------------------------------------------------------------------------
+// key caps
+// ---------------------------------------------------------------------------
+
+/**
+ * One key cap, as markup.
+ *
+ * Every surface that mentions a shortcut goes through here so a cap looks the
+ * same on the dock, in the inspector, in the topbar and in the help sheet. The
+ * element is a real `<kbd>`, so the single style rule in ui.css keeps carrying
+ * the look and screen readers keep announcing it as keyboard input; this helper
+ * only exists to make the escaping and the modifier class impossible to forget.
+ *
+ * `variant` is the modifier appended to `kbd`: 'tight' for caps embedded inside
+ * a button label, 'corner' for the badge pinned to a card corner.
+ */
+export const key = (label, variant = '') =>
+  `<kbd${variant ? ` class="k-${variant}"` : ''}>${esc(label)}</kbd>`;
+
+/** Several caps in a row — `keyRow(['1','2','3'])`. */
+export const keyRow = (labels, variant = '') => labels.map((k) => key(k, variant)).join('');
+
+/**
+ * The whole keyboard, as data, for the help sheet.
+ *
+ * It lives here rather than in HUD.js because three different modules own the
+ * listeners it documents — Game.js (Esc/Space/P/1-3/U/M/X), BuildBar.js
+ * (F/B/QWERTY) and CameraRig.js (WASD/QE/mouse) — so there is no single owner
+ * whose file this could belong to. Keeping it next to PLACEMENT_TEXT at least
+ * makes it one grep away from every other player-facing string.
+ *
+ * CAUTION: this is a TRANSCRIPT of listeners that live in files the UI does not
+ * own. It is the classic comment-that-asserts-another-file's-value (PITFALLS
+ * §10), so every row below names the file and the key CODE it mirrors, and the
+ * sheet is deliberately written against `e.code` names (physical keys) because
+ * that is what those listeners match.
+ *
+ * THE POSITIONS ARE CORRECT ON EVERY LAYOUT. THE LABELS ARE QWERTY'S. This
+ * paragraph used to conclude "the labels are therefore correct on AZERTY too,
+ * where KeyQ is the key printed A", which contradicts itself in its own second
+ * clause: if that key is printed A, then a cap that reads "Q" is wrong for the
+ * player holding it. A French player reads Q, presses the key printed Q (code
+ * KeyA) and nothing happens; the key they want is the one printed A. Same for
+ * W/A/S/D, which is Z/Q/S/D over there, and the same for BuildBar's
+ * HOTKEY_LABEL, which is the other transcript of this table.
+ *
+ * The fix, when someone takes it, is ONE derivation point in `key()` below:
+ * `navigator.keyboard.getLayoutMap()` (Chromium ships it, and this game is a
+ * WebGL2 title) returns the printed glyph for a code, which would correct the
+ * sheet, the dock caps and the inspector caps in one place, with these
+ * constants as the fallback. It is not done here because the API is async and
+ * every cap in the repo is rendered synchronously from a string — that is a
+ * real refactor, not a comment fix, and shipping it half-applied would leave
+ * two dialects on screen at once.
+ *
+ * IT IS NOT A KEYBOARD-ONLY SHEET. It shipped once claiming to be "every key on
+ * the board" while omitting three live POINTER bindings, one of which — the
+ * right-click that drops what you are holding — was added in the very same
+ * change as the sheet. The only place it was mentioned was the transient
+ * `#held-piece` chip, which disappears the instant the piece is dropped. Mouse
+ * gestures are bindings like any other and they live here; tests/e2e/help.spec.js
+ * checks them against the source of the listeners, not against this list.
+ */
+export const SHORTCUTS = [
+  {
+    title: 'Building',
+    rows: [
+      // BuildBar.js HOTKEYS — KeyQ..KeyY, in ELEMENT_ORDER.
+      { keys: ['Q', 'W', 'E', 'R', 'T', 'Y'], label: 'Take an elemental tower', note: 'in element order — only the ones you have bound' },
+      { keys: ['B'], label: 'Take a Foundation block', note: 'the cheap wall you can arm later' },
+      { keys: ['F'], label: 'Open the Tower Table', note: 'all twenty-seven towers' },
+      { keys: ['Esc'], label: 'Drop what you are holding', note: 'also closes any open panel' },
+      // Game.js #wirePointer — pointerup, button 2, under the drag threshold.
+      { keys: ['Right-click'], label: 'Drop what you are holding',
+        note: 'a right-DRAG orbits the camera instead', wide: true },
+    ],
+  },
+  {
+    title: 'The selected tower',
+    rows: [
+      // Game.js #wireKeys — KeyU / KeyM / KeyX.
+      { keys: ['U'], label: 'Upgrade it' },
+      { keys: ['M'], label: 'Open the morph sheet' },
+      { keys: ['X'], label: 'Sell it' },
+    ],
+  },
+  {
+    title: 'The run',
+    rows: [
+      { keys: ['Space'], label: 'Send the next wave now', note: 'the earlier you send, the bigger the bonus' },
+      { keys: ['P'], label: 'Pause and resume' },
+      { keys: ['1', '2', '3'], label: 'Game speed' },
+    ],
+  },
+  {
+    title: 'Camera',
+    rows: [
+      // CameraRig.js — key handling plus the three pointer buttons.
+      { keys: ['W', 'A', 'S', 'D'], label: 'Pan across the board', note: 'the arrow keys do the same' },
+      { keys: ['Q', 'E'], label: 'Rotate around the board', note: 'these two also take a tower — both happen at once, by design' },
+      // CameraRig.js #bind pointerdown: button 2, or button 0 with Shift, both
+      // start an orbit; button 1 starts a pan.
+      { keys: ['Right-drag'], label: 'Orbit', wide: true },
+      { keys: ['Shift', 'Left-drag'], label: 'Orbit without the right button', wide: true },
+      { keys: ['Middle-drag'], label: 'Pan across the board', wide: true },
+      { keys: ['Wheel'], label: 'Zoom towards the cursor', wide: true },
+    ],
+  },
+  {
+    title: 'Elsewhere',
+    rows: [
+      { keys: ['H'], label: 'This sheet', note: '? works too' },
+      // PerfHud.js — KeyG / F8. BOTH are listed: F8 is a real binding and the
+      // sheet's own title is "every key on the board", but help.spec.js's
+      // extractor only knew Key*/Digit*/Space/Escape/Arrow*, so an F-key was
+      // invisible to the equality check and the omission passed for a round.
+      { keys: ['G', 'F8'], label: 'Frame-time readout' },
+      // Picker.js #onKey — ArrowLeft/Right (and Up/Down) plus Enter/Space, live
+      // only while the element offer is up. The picker prints the same caps in
+      // its own footer; they are here so the sheet is not silent about a modal
+      // the player meets on wave 1.
+      { keys: ['←', '→', 'Enter'], label: 'Choose an element offer', note: 'while the offer is up' },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
 // tower stat maths
 // ---------------------------------------------------------------------------
 

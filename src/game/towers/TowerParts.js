@@ -190,11 +190,19 @@ export class Parts {
       dArr[i * 4 + 3] = style + (chan > 0 ? 8 : 0);
       cArr[i * 4] = col[0]; cArr[i * 4 + 1] = col[1]; cArr[i * 4 + 2] = col[2];
       // Normalised height above the board, used by the shader's grime gradient.
-      // The divisor is the tallest tower we build. It moved 5.2 -> 9.8 with the
-      // round-3 scale-up and back to 7.2 in round 7, when the shafts were cut to
-      // reference proportions (see SHAFT in TowerArchetypes). If it is left too
-      // high the gradient only uses the bottom half of its range and every
-      // tower reads as uniformly sooty.
+      // The divisor normalises the ORDINARY tower band, which runs 4.87 to 8.11
+      // units. It moved 5.2 -> 9.8 with the round-3 scale-up and back to 7.2 in
+      // round 7, when the shafts were cut to reference proportions (see SHAFT in
+      // TowerArchetypes). If it is left too high the gradient only uses the
+      // bottom half of its range and every tower reads as uniformly sooty.
+      //
+      // It is NOT "the tallest tower we build" any more: primals now reach
+      // 13.56 (PRIMAL_SHAFT), so their upper third clamps at 1.0. That is
+      // harmless and deliberate — the shader's consumers all saturate well below
+      // 1.0 anyway (grime at 0.72, rim at 0.63, ground contact at 0.10), so a
+      // taller tower simply spends longer in the clean band. Raising the divisor
+      // to cover the primals would rescale the gradient on all twenty-one
+      // ordinary towers to flatter the one, which is the wrong trade.
       cArr[i * 4 + 3] = THREE.MathUtils.clamp((gp.getY(i) + this.yOffset + 0.4) / 7.2, 0, 1);
       mArr[i * 4] = preset.m;
       mArr[i * 4 + 1] = preset.r;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CAMERA, GRID } from './Config.js';
+import { isTypingTarget } from '../util/dom.js';
 
 const _v = new THREE.Vector3();
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -78,6 +79,10 @@ export class CameraRig {
 
   #bind() {
     const dom = this.dom;
+    // The rig's own guard: an orbit drag must not end in a popup menu. It covers
+    // the canvas only, which is all this class owns — Game.#wirePointer suppresses
+    // the menu across the rest of the document (every HUD surface served one until
+    // it did), and calling preventDefault twice on one event is harmless.
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
 
     dom.addEventListener('pointerdown', (e) => {
@@ -138,7 +143,9 @@ export class CameraRig {
     }, { passive: false });
 
     window.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement) return;
+      // Shared guard (util/dom.js): W/A/S/D and Q/E are pan and orbit here, so
+      // a name typed into a field must not drive the camera.
+      if (isTypingTarget(e)) return;
       this._keys.add(e.code);
       this.#wake();
     });

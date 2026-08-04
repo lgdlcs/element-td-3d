@@ -21,13 +21,21 @@
 
     <div id="boot">
       <div class="boot-inner">
+        <!-- The six identity hexes, copied from ELEMENTS. This is the SECOND of
+             two copies (the other is Lobby.js's .lobby-sigil) and this one is
+             painted FIRST: #boot ships in the static HTML, the lobby is built by
+             JS. It already rotted once — nature stayed the retired #4fe07a here
+             for a round after the palette moved to #63bd76, so a hard reload
+             showed a neon green the rest of the game no longer used. Both copies
+             are now pinned by tests/unit/sigil-colours.test.js, which reads this
+             file as text and diffs it against ELEMENTS. -->
         <div class="boot-sigil" aria-hidden="true">
           <span class="boot-ring"></span>
           <span class="boot-ring inner"></span>
           <span class="boot-orbit">
             <i style="--c:#ff5a1f; --a:0deg;   --dl:0s"     >ƒ</i>
             <i style="--c:#2fa8ff; --a:60deg;  --dl:-0.55s" >≈</i>
-            <i style="--c:#4fe07a; --a:120deg; --dl:-1.1s"  >❀</i>
+            <i style="--c:#63bd76; --a:120deg; --dl:-1.1s"  >❀</i>
             <i style="--c:#c08a4a; --a:180deg; --dl:-1.7s"  >◈</i>
             <i style="--c:#fff2c4; --a:240deg; --dl:-2.25s" >✦</i>
             <i style="--c:#8a4fd6; --a:300deg; --dl:-2.8s"  >●</i>

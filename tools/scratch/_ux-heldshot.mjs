@@ -1,0 +1,14 @@
+import { chromium } from 'playwright';
+const HMR='export const createHotContext=()=>({accept(){},prune(){},dispose(){},invalidate(){},on(){},send(){}});export const updateStyle=()=>{};export const removeStyle=()=>{};export const injectQuery=(u)=>u;';
+const b=await chromium.launch({args:['--use-angle=metal','--enable-unsafe-swiftshader','--mute-audio','--hide-scrollbars']});
+const p=await b.newPage({viewport:{width:1920,height:1080}});
+await p.route('**/@vite/client',(r)=>r.fulfill({status:200,contentType:'application/javascript',body:HMR}));
+await p.goto('http://localhost:5273/?q=low',{waitUntil:'load'});
+await p.waitForFunction(()=>!!window.__game,null,{timeout:90000});
+await p.evaluate(()=>document.getElementById('boot')?.remove());
+await p.evaluate(()=>{const g=window.__game;g.state.elements=['fire','water','nature','earth','light','dark'];g.state.pendingElementPicks=0;g.hud.closeElementPicker();g.state.phase='prep';g.state.gold=99999;g.hud.refreshBuildBar();g.setBuildSelection('fire');});
+await p.waitForTimeout(900);
+const r=await p.evaluate(()=>{const e=document.querySelector('#held-piece');const b=e.getBoundingClientRect();return{x:Math.round(b.left)-16,y:Math.round(b.top)-14,width:Math.round(b.width)+32,height:Math.round(b.height)+28,text:e.textContent.replace(/\s+/g,' ').trim(),on:e.classList.contains('on')};});
+console.log(JSON.stringify(r));
+await p.screenshot({path:'shots/held-final-1920x1080.png',clip:{x:r.x,y:r.y,width:r.width,height:r.height}});
+await b.close();

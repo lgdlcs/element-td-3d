@@ -420,3 +420,50 @@ size"; an earlier agent read *cell* as the 4-unit footprint rather than the
   three values of one uniform and must yield three visibly different images. If
   two of them match, the uniform never reached the shader (§11) and nothing the
   tool says is evidence.
+
+---
+
+## §14 Three ways a fix can be real and still not reach the player
+
+All three came out of one round, and all three passed review.
+
+**1. `transition: all` silently swallows `visibility`, and `focus()` is a no-op
+on a hidden element.** The key sheet declared `role="dialog" aria-modal="true"`
+and moved focus into itself on open. It did not work, and there was no error:
+`#help` flips `visibility: hidden -> visible` on the `.open` class, its close
+button inherits that — and the button also carried `transition: all`, which
+includes `visibility`. Measured in one `getComputedStyle` pass, the parent read
+`visible` while the child still read `hidden`, so `focus()` did nothing at all
+and the Tab trap had nothing to hold. Six Tabs then walked onto `#restart-btn`
+behind the veil, which calls `location.reload()`.
+
+*Rules:* never `transition: all` on anything whose visibility is inherited from a
+panel; force the style flush (`void el.offsetWidth`) before focusing something
+you just revealed; and do not restore focus to "whatever had it before" in a UI
+that dismisses panels with opacity — `isConnected` says yes, `checkVisibility`
+says yes for two of the three ways this codebase hides things, and the honest
+answer is to return focus to the control that owns the panel.
+
+**2. A metric can measure a population instead of a thing.** "The yellow-green
+band is the brightest on the board" was true, reproducible, and not about the
+nature towers: the band is thresholded (`S>0.45 V>0.55`), so it selects the
+brightest lit faces of anything in that hue range, and roughly a third of it was
+the *light* towers and the lanterns. A 52% cut in the nature canopy's authored
+albedo moved the band's mean by 3 units, which reads as "the fix did nothing".
+
+*Diagnosis that worked:* repaint the suspect family's palette entry pure magenta
+and re-measure. Attribution is then arithmetic — the band lost 7 000 of its
+10 000 pixels, so 3 000 were never nature's. Do that before concluding a colour
+change failed. (Same shape as §10: hiding X proves X is the source, not that X
+is the bug.)
+
+**3. A displacement test is not a movement test.** Right-click was "cancel the
+build unless it was a camera orbit", implemented as `hypot(up - down) <= 5`. The
+commonest camera gesture there is — spin the board to look, spin it back —
+releases within a pixel of its own origin, so a 48-degree orbit was read as a tap
+and dropped the tower in hand mid-gesture. The test that was supposed to cover it
+only ever dragged *away* and never came home.
+
+*Rule:* when a threshold is meant to ask "did this gesture move", accumulate the
+PATH, not the endpoints — and write the test for the gesture that returns, because
+that is the one a hand actually makes.
