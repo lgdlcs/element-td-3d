@@ -269,6 +269,71 @@ export const QUALITY_PRESETS = {
     towerLights: 0,
     particleBudget: 3000, decals: false, anisotropy: 2, pixelRatioCap: 1,
   },
+
+  /**
+   * `potato` — the preset for a machine that cannot run `low`.
+   *
+   * It exists because `low` was the floor, and `low` is not a floor: measured
+   * on the reference M1 it renders the loaded scenario at 40 ms (25 fps) with
+   * the adaptive controller already pinned against its clamp. A machine weaker
+   * than an M1 — which is most laptops with integrated graphics — had nothing
+   * left to fall back to, and no way to ask for it (see `?q=` in main.js: until
+   * the settings panel there was no in-game control at all).
+   *
+   * The one knob here that is not a smaller number is `post: false`. Every other
+   * preset runs the EffectComposer, and PERF_BUDGET's attribution table records
+   * that disabling every pass saves far more (90 ms) than the passes sum to
+   * (~46 ms), because an empty chain lets the composer skip intermediate
+   * render-target ping-pong altogether. `post: false` is that: no composer, no
+   * intermediate targets, the scene rendered straight to the canvas.
+   *
+   * What it costs, and it is not nothing: no bloom, and no grade pass — so the
+   * lift/gamma/gain, saturation, vignette and the gameplay flash are gone. Tone
+   * mapping and the sRGB conversion survive, because those are the renderer's
+   * own and apply to a direct render too, so the image is flatter and cooler
+   * rather than broken. That is the deal this preset offers: the game looks
+   * plainer and it runs.
+   */
+  potato: {
+    shadowMapSize: 512, csmCascades: 1,
+    ssao: false, ssaoQuality: 'none', ssaoSamples: 0, ssaoRadius: 1.3, ssaoIntensity: 0,
+    msaa: 0,
+    bloom: false, bloomStrength: 0, bloomRadius: 0, bloomThreshold: 99,
+    dof: false, dofStrength: 0,
+    godrays: false,
+    grain: 0.0, aberration: 0.0,
+    ssr: false, taa: false, motionBlur: false,
+    towerLights: 0,
+    particleBudget: 1200, decals: false, anisotropy: 1, pixelRatioCap: 1,
+    // Read only by RenderPipeline. Absent on every other preset, and absent
+    // means true — the composer is the default path.
+    post: false,
+    // The key light's shadow is the single most expensive thing left once the
+    // post chain is gone, and a hard-edged 512 map looks worse than none.
+    shadows: false,
+    // Backdrop, ground fog and motes off; sky and breach kept, because they are
+    // the horizon and the frame would read as a void without them.
+    envDetail: false,
+    // Key + hemisphere only. Each additional light is charged to every lit pixel
+    // in the scene rather than to the object it appears to light.
+    extraLights: false,
+  },
+};
+
+/**
+ * Presets ordered cheapest-first. The settings panel renders in this order and
+ * the governor steps along it, so neither has to hold its own copy of the
+ * ordering — adding a preset to QUALITY_PRESETS and to this array is enough.
+ */
+export const QUALITY_ORDER = ['potato', 'low', 'medium', 'high', 'ultra'];
+
+/** Human labels for the settings panel. */
+export const QUALITY_LABELS = {
+  potato: 'Minimum',
+  low: 'Bas',
+  medium: 'Moyen',
+  high: 'Élevé',
+  ultra: 'Ultra',
 };
 
 export const LAYERS = {

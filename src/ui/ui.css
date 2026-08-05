@@ -151,6 +151,17 @@ kbd.k-tight { min-width: 13px; padding: 2px 3px 3px; box-shadow: none; }
   padding: 0 18px;
   background: linear-gradient(180deg, rgba(4, 5, 9, 0.94) 0%, rgba(4, 5, 9, 0.6) 60%, rgba(4, 5, 9, 0) 100%);
   pointer-events: none;
+  /* ABOVE THE PICKER (30), BELOW THE END CARD (40).
+     Measured, not guessed: with the bar at its previous z-index the settings
+     button was unreachable at the one moment a struggling player most needs it.
+     The wave-1 element pick is a forced choice that opens seconds after load,
+     its veil is full-bleed, and it therefore swallowed every click on the top
+     bar — the gear included. A player whose machine cannot run the game met
+     that panel first and had no way past it to the graphics settings.
+     Everything in this bar is legitimate to reach during a forced choice:
+     pause, speed, restart, shortcuts, graphics. The end card is deliberately
+     still above, because a finished run is not a state to keep playing over. */
+  z-index: 35;
 }
 #topbar > * { pointer-events: auto; }
 #topbar::after {
@@ -1885,3 +1896,83 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 /* Codex: a locked primal shows "2 / 3" where a locked fusion shows a struck-out
    price, so the cost column never quotes gold for a wall gold cannot climb. */
 .cx-cell.primal.locked .cx-cost { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* ===================================================================== *
+ * SETTINGS — graphics + performance
+ *
+ * z-index 44, deliberately the SAME layer as #help and above #endcard (40)
+ * and #picker (30). Unlike the help sheet this panel is allowed over both:
+ * it is the one surface a player reaches for when the game is unplayable,
+ * and refusing to open it because a wave-1 element offer is pending would
+ * withhold it exactly when it is needed. It is modal and Escape-closable,
+ * so it cannot strand the decision underneath it.
+ * ===================================================================== */
+#settings {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  opacity: 0; pointer-events: none;
+  /* visibility as well as opacity — same reasoning as #help: the panel holds
+     focusable controls, and opacity alone leaves them in the tab ring. */
+  visibility: hidden;
+  transition: opacity var(--t-base) var(--ease), visibility var(--t-base) step-end;
+  z-index: 44;
+}
+#settings.open { opacity: 1; pointer-events: auto; visibility: visible; transition-timing-function: var(--ease), step-start; }
+
+#settings .set-veil { position: absolute; inset: 0; background: rgba(3, 4, 8, 0.62); backdrop-filter: blur(3px); }
+
+#settings .set-panel {
+  position: relative;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--glass-hi);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-l);
+  box-shadow: var(--shadow-3);
+  padding: 18px 20px 20px;
+  transform: translateY(6px) scale(0.99);
+  transition: transform var(--t-base) var(--ease);
+}
+#settings.open .set-panel { transform: none; }
+
+#settings .set-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+#settings .set-head h2 { margin: 0; font-size: 15px; letter-spacing: 0.04em; color: var(--ink); font-weight: 600; }
+#settings .set-close {
+  width: 28px; height: 28px; border-radius: var(--r-s);
+  background: transparent; border: 1px solid var(--line); color: var(--ink-2);
+  cursor: pointer; font-size: 12px; line-height: 1;
+}
+#settings .set-close:hover { color: var(--ink); border-color: var(--line-2); background: rgba(255, 255, 255, 0.06); }
+
+#settings .set-note { margin: 8px 0 14px; font-size: 12px; line-height: 1.5; color: var(--ink-3); }
+
+#settings .set-group { display: grid; gap: 6px; }
+#settings .set-q {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border-radius: var(--r-m);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--line);
+  color: var(--ink-2); cursor: pointer; text-align: left;
+  font: inherit; font-size: 13px;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+#settings .set-q:hover { color: var(--ink); border-color: var(--line-2); background: rgba(255, 255, 255, 0.06); }
+#settings .set-q.on { color: var(--gold-hi); border-color: rgba(229, 189, 121, 0.42); background: var(--gold-dim); }
+#settings .set-q-name { font-weight: 500; }
+#settings .set-q-tag { font-size: 11px; color: var(--ink-4); letter-spacing: 0.02em; }
+#settings .set-q.on .set-q-tag { color: rgba(229, 189, 121, 0.72); }
+
+#settings .set-live { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+#settings .set-live-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 5px; }
+#settings .set-live-label { color: var(--ink-3); }
+#settings .set-live-val { color: var(--ink); font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+#settings .set-gov { margin: 10px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-3); }
+#settings .set-restore {
+  margin-top: 10px; width: 100%;
+  padding: 9px 12px; border-radius: var(--r-m);
+  background: transparent; border: 1px solid var(--line-2); color: var(--ink-2);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+#settings .set-restore:hover { color: var(--ink); background: rgba(255, 255, 255, 0.06); }
+#settings .set-restore[hidden] { display: none; }

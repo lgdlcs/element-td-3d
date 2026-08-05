@@ -427,3 +427,132 @@ resolution scaling stops before the image stops being worth looking at. Reaching
 | `tools/scratch/overdraw.mjs` | ms per scene group + transparent-surface inventory |
 | `tools/scratch/fixedcost.mjs` | resolution-independent floor, by ablation |
 | `src/ui/PerfHud.js` | in-game median/p95/calls/tris (F8) |
+
+## Round 11 — the machines this was actually shared with
+
+Trigger: the game was shared as a link, and the recipients' machines could not
+run it — "énormément de freeze et peu de FPS". Two complaints, and rounds 1-10
+had only ever measured the second one.
+
+### The largest defect was not in the renderer
+
+`detectQuality()` ended `if (cores >= 8) return 'medium'`. `hardwareConcurrency`
+is not a GPU, and this renderer is fragment-bound with a measured CPU cost of
+0.20 ms/frame — so that branch predicted nothing about frame time and routed
+every 8-thread laptop, integrated graphics included, to a preset this document
+already recorded as unplayable. **The reference M1 has exactly 8 cores and took
+that branch itself.** Autodetect now floors at `low`, names integrated parts
+explicitly and sends them to `potato`, and only leaves `low` for a GPU string
+naming a discrete part.
+
+Second: there was **no in-game quality control at all**. `?q=` was the only
+mechanism, which is a developer's affordance. A player handed a link had no way
+to discover it and no way out of whatever autodetect chose. Hence `src/ui/
+Settings.js`, and hence the top bar moving to z-index 35 — the wave-1 element
+picker is a forced choice whose full-bleed veil swallowed every click on the
+top bar, so the settings button was unreachable at the exact moment it was most
+needed.
+
+Third: `AdaptiveResolution` reaches `minScale` and then does nothing, forever.
+That is correct for what it is and it was the whole of the adaptation strategy.
+`QualityGovernor` now takes over below it, stepping down live-mutable knobs and
+stepping back up, and `minScale` went 0.6 -> 0.5 (0.36 -> 0.25 of full area).
+
+### What a player gets, measured end to end
+
+`tools/scratch/presets-ab.mjs`. 1600x900, 21 towers + wave 21, adaptive ON as a
+player has it, 4 alternating passes per preset, value = median of passes. The
+presets are visited round-robin precisely because this session could not hold a
+stable baseline (see below); alternating puts drift into all three equally.
+
+| preset | median | fps | p95 | px ratio | spread |
+|---|---|---|---|---|---|
+| medium (what an 8-core machine got BEFORE) | 49.1 ms | 20 | 65.7 ms | 0.50 | 12.7 |
+| low (what it gets now) | 26.6 ms | 38 | 40.3 ms | 0.50 | 7.4 |
+| potato (new floor; integrated GPUs land here) | 20.7 ms | 48 | 27.1 ms | 0.55 | 4.5 |
+
+Each preset's own spread is smaller than the gaps between presets, so the
+ordering is established even though the absolute values are not portable.
+Note `potato` needed FEWER pixels sacrificed than `low` (0.55 vs 0.50), i.e. it
+is genuinely cheaper rather than merely lower-resolution.
+
+`potato` is the first preset here to skip the EffectComposer outright rather
+than empty it — see this document's own note that disabling every pass saves far
+more (90 ms) than the passes sum to (~46 ms), the difference being target
+ping-pong that only an ABSENT chain avoids.
+
+### The freeze was shader compilation, and LightPool's own docblock predicted it
+
+LightPool said, of the arm/disarm design that round 9 landed:
+
+> "the recompile the original design avoided is real, but it is bounded: three.js
+> caches one program variant per light count... it is a p95 risk, and p95 is half
+> the budget target, so it must be measured and not assumed."
+
+It was never measured. Measured now (`tools/scratch/hitch.mjs`, `low`, wave 21,
+30 s of live combat, reference M1):
+
+| | programs compiled during combat | hitches >3x median | of those, on a new program | worst frame |
+|---|---|---|---|---|
+| arm/disarm per slot (round 9-10 behaviour) | **198** | 12 | 9 | **641.7 ms** |
+| light count pinned (diagnostic only) | 5 | 6 | 2 | 183.8 ms |
+| **all-on-or-all-off (landed)** | **37** | 7 | 4 | **456.7 ms** |
+
+The count took **nine distinct values** during one wave. three.js keys its
+program cache on that number and relinks every lit material the first time each
+value is reached, synchronously, inside the frame — so every material that first
+appeared under a new count was compiled again under it. Individual stalls of
+632, 681, 694, 718 and **2632 ms** were recorded. That is the freeze.
+
+The fix collapses the pool to two states, and it is nearly free because round 10
+already measured where the arm/disarm win lives: idle 63.9 -> 58.2 ms (5.7 ms),
+under heavy continuous fx 86.9 -> 85.9 ms (1.0 ms). It is an IDLE win. All-off
+when idle keeps all of it; what is spent is the ~1 ms of partial disarm while
+effects are already running.
+
+**Residual, not fixed:** 37 programs still compile during combat and a 456 ms
+worst frame remains. Those are materials that do not exist at boot — creep
+types, projectile and effect variants — first appearing under each of the two
+counts. The fix shape is to instantiate one of every such object behind the
+loading veil, which is a larger change than this round took on.
+
+#### A failed fix, recorded so it is not retried
+
+The first attempt pre-compiled every light-count variant at boot by arming k of
+the pool's lights for k = 0..9 and calling `renderer.compile()` each time. It
+**did not work**: programs at wave start rose 125 -> 281, and combat still
+compiled **354** of them (against 198 without it). `renderer.compile()` can only
+compile variants of materials that are IN THE SCENE, and the materials that
+cause the stalls are the ones that appear later. Warming the light axis for
+boot-time materials multiplied the cache instead of covering it, and bought a
+longer loading screen for nothing. Reverted.
+
+### The instrument failed three times before it produced anything
+
+Recorded because each failure produced numbers that looked like findings.
+
+1. **One page per arm, run in sequence.** Two baselines 61.2 and 32.7 ms — 28.5
+   ms of drift, larger than most levers under test — and `notowers` reported a
+   *negative* 43 ms, impossible for an arm that only hides geometry.
+2. **A/B/A on one page, but an arm that killed the frame loop.** The
+   `nofxlights` arm made `light.visible` non-writable; `LightPool.update()`
+   assigns it every frame, threw, and the loop died. Every subsequent arm read
+   **16.7 ms — vsync over a frozen scene — and scored as the biggest win in the
+   table.** Probes here now assert the loop is still advancing between cells and
+   abort if it is not.
+3. **Deltas without absolutes.** A 3-cycle A/B/A reported a combined
+   composer+shadows+decor+lights arm at 4.4 ms with a 0.7 ms spread: tight, and
+   therefore convincing. Printing absolute numbers instead showed the run sat
+   between a 47.5 ms and a 24.1 ms reading of the SAME cell, and that dpr 1.5
+   measured FASTER than dpr 1.0 — non-monotonic in pixel count, which is
+   impossible for this renderer and is the tell.
+
+The cause in all three was the development machine sharing its GPU with a
+browser and a compositor. **Fine-grained ablation was abandoned as unachievable
+in that environment**, and this round's claims rest instead on measurements that
+survive drift: end-to-end preset comparison with alternating passes, and program
+counts, which are not timings at all.
+
+Rule 6, earned here: **an ablation that lands on 16.7 ms, or that beats the
+resolution sweep, is reporting a dead frame loop or a drifting machine. Print
+absolute values and a floor cell in every probe, never deltas alone.**

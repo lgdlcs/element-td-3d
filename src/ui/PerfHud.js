@@ -61,6 +61,23 @@ export class PerfHud {
 
   get visible() { return this.el.style.display !== 'none'; }
 
+  /**
+   * Median fps over the window, or null before there is enough of one.
+   *
+   * Readable whether or not the HUD is shown: update() fills the ring buffer
+   * before it consults `visible`, so the samples are there either way. The
+   * settings panel reads this rather than keeping a second timing window,
+   * because two windows over the same frames would disagree at the edges and
+   * one of them would be wrong about whether a change helped.
+   */
+  get fps() {
+    if (this.n < 8) return null;
+    const s = this._sorted.subarray(0, this.n);
+    s.set(this.times.subarray(0, this.n));
+    s.sort();
+    return 1000 / s[this.n >> 1];
+  }
+
   toggle(on = !this.visible) {
     this.el.style.display = on ? 'block' : 'none';
   }

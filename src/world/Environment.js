@@ -79,6 +79,20 @@ export class Environment {
     this.motes = new Motes(moteCount);
     this.group.add(this.motes.points);
 
+    // `potato` drops the decor layer: the off-board backdrop, the ground fog and
+    // the motes. Sky and breach stay — they are the horizon and the diegetic
+    // key source, and without them the frame reads as a void rather than as a
+    // cheaper version of the same place.
+    //
+    // Kept CONSTRUCTED and merely hidden, not skipped, so update() stays
+    // unconditional and the governor can put them back at runtime without
+    // building anything mid-frame.
+    if (quality?.envDetail === false) {
+      this.backdrop.group.visible = false;
+      this.groundFog.mesh.visible = false;
+      this.motes.points.visible = false;
+    }
+
     this.group.updateMatrixWorld(true);
     this._pixelRatio = 1;
   }

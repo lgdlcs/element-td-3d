@@ -7,42 +7,79 @@ import { SpectateBar } from './ui/SpectateBar.js';
 import { SpectateStreamer } from './game/spectate/SpectateStreamer.js';
 import { SpectateView } from './game/spectate/SpectateView.js';
 import { loadBest, saveBest } from './net/BestScore.js';
+import { QUALITY_PRESETS } from './core/Config.js';
+import { Settings } from './ui/Settings.js';
+import { QualityGovernor } from './render/QualityGovernor.js';
 
 /**
  * Entry point. Detects a quality tier, boots the game behind a loading veil,
  * and drives the render loop.
  */
 
+/**
+ * The preset to boot at, in priority order: `?q=` (explicit, wins over
+ * everything), then the player's own saved choice, then autodetect.
+ *
+ * AUTODETECT AIMS AT `low`, AND THE BAR TO GO ABOVE IT IS HIGH.
+ *
+ * The previous rule ended `if (cores >= 8) return 'medium'`, which is how a
+ * friend on an 8-thread laptop with integrated graphics was handed `medium`.
+ * Core count is not a GPU: this renderer is fragment-bound with a measured CPU
+ * cost of 0.20 ms per frame (docs/PERF_BUDGET.md), so `hardwareConcurrency`
+ * predicts nothing at all about how it will run — and `medium` measures 62 ms
+ * (16 fps) on the reference M1, which has exactly 8 cores and would have taken
+ * that branch itself.
+ *
+ * So the floor is `low`, the only way up is a GPU string that names a discrete
+ * part known to be fast, and even that is one tier below what it could hold.
+ * The governor raises quality from below when the frame proves it can afford
+ * it, which is a claim backed by a measurement instead of by a name.
+ */
 function detectQuality() {
   const forced = new URLSearchParams(location.search).get('q');
-  if (forced) return forced;
+  if (forced && QUALITY_PRESETS[forced]) return forced;
+
+  const saved = loadQualityPref();
+  if (saved && saved !== 'auto' && QUALITY_PRESETS[saved]) return saved;
 
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-  if (!gl) return 'low';
+  // No WebGL2 means a software rasteriser or a very old driver, and `low` is
+  // still a composer with a bloom pyramid. Start at the bottom.
+  if (!gl) return 'potato';
+  if (!(gl instanceof WebGL2RenderingContext)) return 'potato';
 
   const dbg = gl.getExtension('WEBGL_debug_renderer_info');
   const renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
-  const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const cores = navigator.hardwareConcurrency || 4;
+  const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
 
-  if (mobile) return 'medium';
+  // A phone gets the cheapest preset there is. `medium` here was the same
+  // mistake as the core-count branch, applied to weaker hardware.
+  if (mobile) return 'potato';
 
-  // `ultra` is opt-in only.
-  //
-  // This used to read `/Apple M[1-9]|RTX [3-9]0|.../` -> 'ultra', which matched
-  // EVERY Apple Silicon part, a base M1 exactly like an M4 Max, and handed them
-  // all the heaviest preset. The only mechanism meant to protect modest machines
-  // was routing them to the most expensive path. A base M1 measured 4 fps under
-  // it (docs/PERF_BUDGET.md).
-  //
-  // No string of GPU names can be trusted to predict frame time on this content,
-  // so autodetect now aims one tier low and lets the player raise it with ?q=.
-  // A game that runs is worth more than a game that looks its best in a
-  // screenshot and stutters in the hand.
-  if (/RTX [4-9]0[7-9]0|RX 7[89]00/i.test(renderer)) return 'high';
-  if (cores >= 8) return 'medium';
+  // Integrated parts, named explicitly. These are the machines the report of
+  // "freezes and low fps" came from, and they must never be guessed upward.
+  if (/Intel|UHD Graphics|HD Graphics|Iris|Vega \d|Radeon Graphics|Microsoft Basic|SwiftShader|llvmpipe|ANGLE \(Software/i.test(renderer)) {
+    return 'potato';
+  }
+
+  // Discrete and recent. Still one tier below what these could hold: the
+  // governor will raise it within a few seconds if the frame allows.
+  if (/RTX [3-9]0[6-9]0|RTX [3-9][0-9]0 Ti|RX 7[6-9]00|RX 6[89]00/i.test(renderer)) return 'medium';
+
   return 'low';
+}
+
+const QUALITY_KEY = 'etd.quality';
+
+/** The player's saved preset, or 'auto'. Never throws — storage can be denied. */
+function loadQualityPref() {
+  try { return localStorage.getItem(QUALITY_KEY); } catch { return null; }
+}
+
+function saveQualityPref(v) {
+  try { localStorage.setItem(QUALITY_KEY, v); } catch { /* private mode */ }
 }
 
 const boot = document.getElementById('boot');
@@ -124,6 +161,7 @@ async function start() {
   game.pipeline.renderer.compile(game.scene, game.camera);
   game.frame(0.016);
 
+
   progress(1, 'ready');
   await new Promise((r) => setTimeout(r, 220));
   boot.classList.add('done');
@@ -135,6 +173,47 @@ async function start() {
   const perf = new PerfHud(game.pipeline.renderer);
   window.__perf = perf;
   if (new URLSearchParams(location.search).has('perf')) perf.toggle(true);
+
+  // GRAPHICS: the governor that adapts, and the panel that overrules it.
+  //
+  // The governor only ever acts once AdaptiveResolution has spent its range —
+  // resolution is the smoother instrument and gets first refusal on every
+  // slowdown. See QualityGovernor for why it is a ladder of live knobs and not
+  // a preset switch.
+  const governor = new QualityGovernor({
+    pipeline: game.pipeline,
+    environment: game.environment,
+    lighting: game.lighting,
+    fx: game.fx,
+    onChange: (g) => {
+      settings.refresh();
+      // Said once, on the first cut only. A toast per rung would be four
+      // interruptions during the wave that is already going badly.
+      if (g.step === 1) {
+        game.hud.warn('Qualité réduite automatiquement pour garder le jeu fluide · ⚙', 'info');
+      }
+    },
+  });
+  window.__governor = governor;
+
+  const settings = new Settings(document.getElementById('ui-root'), {
+    current: quality,
+    saved: loadQualityPref() ?? 'auto',
+    governor,
+    onPreset: (q) => {
+      saveQualityPref(q);
+      // A preset is a property of a BUILT world (see Settings' docblock), so it
+      // is applied by reloading rather than by mutating half of one. `?q=` is
+      // stripped on the way out: it outranks the stored preference by design,
+      // so leaving it on would make the panel appear to do nothing.
+      const url = new URL(location.href);
+      url.searchParams.delete('q');
+      location.replace(url.toString());
+    },
+  });
+  settings.adaptive = game.pipeline.adaptive;
+  settings.attachButton(document.getElementById('settings-btn'));
+  window.__settings = settings;
 
   const scoreboard = new Scoreboard(document.getElementById('ui-root'));
   window.__scoreboard = scoreboard;
@@ -155,6 +234,16 @@ async function start() {
   // The render loop starts BEFORE the lobby is awaited, so the overlay sits over
   // a live, drifting 3D scene rather than over a frozen first frame. Game.frame
   // does not simulate while the phase is 'lobby', so nothing advances underneath.
+  // The panel's live readouts repaint at ~4Hz. A number that changes every
+  // frame is unreadable exactly when someone is trying to judge whether a
+  // setting helped — the same reasoning as PerfHud's own throttle.
+  let settingsRepaint = 0;
+  function settingsTick(now) {
+    if (now - settingsRepaint < 250) return;
+    settingsRepaint = now;
+    settings.refresh(perf.fps);
+  }
+
   let last = performance.now();
   function loop(now) {
     const dt = (now - last) / 1000;
@@ -165,6 +254,12 @@ async function start() {
     // the player experiences — not a simulation step that may be clamped or
     // sub-stepped.
     game.pipeline.adaptive?.update(dt);
+    // AFTER the resolution controller, and fed the same real wall-clock
+    // interval: the governor's first question is whether resolution has already
+    // been spent, and asking that before the controller has had its turn on
+    // this frame reads a stale answer.
+    governor.update(dt);
+    if (settings.open) settingsTick(now);
     // NetClient throttles this to ~2 Hz internally and no-ops when offline, which
     // is exactly why it is safe to call from here: the frame loop should not have
     // to know the wire rate, and a rate decision made here would drift from the

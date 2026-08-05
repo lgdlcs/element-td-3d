@@ -100,7 +100,10 @@ export class Lighting {
     // pushed the flagstone plate straight into amber.
     const key = new THREE.DirectionalLight(0xffdcaa, 34.0);
     key.position.copy(KEY_POS);
-    key.castShadow = true;
+    // `potato` turns the shadow map off outright. A 512 map on a 52x40 board is
+    // roughly one texel per 8cm of world, which reads as a jagged stencil rather
+    // than as a shadow — worse than the flat, honestly unshadowed look.
+    key.castShadow = quality.shadows !== false;
     key.shadow.mapSize.set(shadowSize, shadowSize);
     key.shadow.camera.near = 1;
     key.shadow.camera.far = 190;
@@ -178,6 +181,24 @@ export class Lighting {
     const amb = new THREE.AmbientLight(0x5a6f9e, 0.35);
     this.group.add(amb);
     this.ambient = amb;
+
+    // `potato` keeps the key and the hemisphere and drops the rest.
+    //
+    // three.js charges a light to every LIT PIXEL in the scene rather than to
+    // the objects it appears to light, so fill/rim/ember are three extra
+    // iterations of the per-fragment lighting loop over the whole frame. The
+    // hemisphere survives because it is the term that keeps away-facing slopes
+    // and the shadow side readable, and losing it makes the board unreadable
+    // rather than merely plainer.
+    //
+    // Intensity 0 would NOT do: three.js decides a light exists from `visible`
+    // alone and compiles it in regardless of intensity. That exact mistake cost
+    // 24.9 ms of an 82.1 ms frame in the fx light pool — see LightPool.
+    if (quality.extraLights === false) {
+      fill.visible = false;
+      rim.visible = false;
+      ember.visible = false;
+    }
 
     this.group.updateMatrixWorld(true);
     this.time = 0;

@@ -51,7 +51,21 @@ export class AdaptiveResolution {
     // Never exceed what the preset already decided, and never exceed the
     // display. This layer only ever takes pixels away.
     this.maxScale = opts.maxScale ?? renderer.getPixelRatio();
-    this.minScale = opts.minScale ?? 0.6;
+    // 0.6 -> 0.5.
+    //
+    // The clamp's job (see the docblock above) is to stop the controller
+    // rendering at 160x90 rather than admit defeat, and 0.5 still honours that:
+    // from a 1600x900 viewport it is an 800x450 buffer, which is soft but is a
+    // picture. What 0.6 did in practice was strand every machine weaker than the
+    // reference M1 against the clamp within two seconds of loading, where the
+    // controller then had nothing to do for the rest of the session.
+    //
+    // Cost is linear in pixel AREA, so this is not the 17% it looks like: it
+    // takes the floor from 0.36 to 0.25 of full resolution, i.e. it hands back
+    // ~30% of the remaining frame at the point where the alternative was giving
+    // up. Below this the game stops being worth looking at and QualityGovernor
+    // takes over instead, which trades features rather than legibility.
+    this.minScale = opts.minScale ?? 0.5;
     this.enabled = opts.enabled ?? true;
     this.scale = this.maxScale;
 

@@ -705,6 +705,9 @@ const TEMPLATE = /* html */`
         <span class="ib-glyph">❚❚</span>${key('P')}
       </button>
       <button id="restart-btn" class="icon-btn" aria-label="Restart run" title="Restart this run">⟳</button>
+      <button id="settings-btn" class="icon-btn" aria-label="Graphismes et performances"
+              aria-expanded="false" aria-controls="settings"
+              title="Graphismes — baissez la qualité si ça saccade">⚙</button>
       <button id="help-btn" class="icon-btn keyed" aria-label="Keyboard shortcuts"
               aria-keyshortcuts="H" aria-expanded="false" aria-controls="help" title="Every shortcut · key H">
         <span class="ib-glyph">?</span>${key('H')}

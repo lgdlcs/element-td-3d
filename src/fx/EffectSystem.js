@@ -1121,6 +1121,16 @@ function familyFromLinear(c) {
  */
 class LightPool {
   constructor(scene, flashCount = 5, emberCount = 4) {
+    /**
+     * Set by QualityGovernor's last-resort rungs. While true, no slot is ever
+     * armed, so the pool contributes no per-fragment lighting-loop iterations
+     * at all. Checked at the ARM sites rather than in update(), because update()
+     * only ever turns lights off — a guard there would leave whatever was
+     * already lit burning forever.
+     */
+    this.suspended = false;
+    /** Current pool state: true = every slot visible, false = every slot dark. */
+    this._lit = false;
     this.items = [];
     this.embers = [];
     for (let i = 0; i < flashCount; i++) {
@@ -1142,6 +1152,7 @@ class LightPool {
   get count() { return this.items.length + this.embers.length; }
 
   flash(x, y, z, c, intensity, distance, dur) {
+    if (this.suspended) return;
     // Steal the dimmest slot so a big explosion always wins over a muzzle pop.
     let best = null, bestVal = Infinity;
     for (const it of this.items) {
@@ -1152,10 +1163,10 @@ class LightPool {
     best.light.position.set(x, y + 0.4, z);
     best.light.color.setRGB(Math.min(1, c[0] + 0.15), Math.min(1, c[1] + 0.15), Math.min(1, c[2] + 0.15));
     best.light.distance = distance;
-    best.light.visible = true;
     best.peak = intensity;
     best.dur = dur;
     best.t = 0;
+    // Visibility is NOT set here — #syncVisibility owns it. See update().
   }
 
   /**
@@ -1165,6 +1176,7 @@ class LightPool {
    * colour is pushed toward full chroma rather than toward white.
    */
   ember(x, y, z, c, intensity, distance, dur) {
+    if (this.suspended) return;
     let best = null, bestVal = Infinity;
     for (const it of this.embers) {
       const cur = it.peak * Math.max(0, 1 - it.t / it.dur);
@@ -1180,26 +1192,64 @@ class LightPool {
       Math.min(1, 0.06 + c[2] / m),
     );
     best.light.distance = distance;
-    best.light.visible = true;
     best.peak = intensity;
     best.dur = dur;
     best.hold = 0.45;
     best.t = 0;
   }
 
+  /**
+   * ALL ON, OR ALL OFF. Never a count in between.
+   *
+   * WHY, AND WHAT IT COSTS
+   *
+   * three.js keys its program cache on the NUMBER of visible lights, and it
+   * relinks every lit material in the scene the first time a given count is
+   * reached. Arming slots individually made that count wander — measured over
+   * one wave-21 window at preset `low`, it took nine distinct values, and every
+   * material that first appeared under a new value was compiled again under it.
+   * The result was **198 shader programs compiled during combat**, 9 of the 12
+   * frames over 51 ms landing on a new program, and single synchronous stalls
+   * of 632, 681, 694 and 718 ms, plus one of 2632 ms. Pinning the count in the
+   * same probe took that to **5 programs and a 183 ms worst frame**
+   * (tools/scratch/hitch.mjs). That is the "freeze" half of the original report.
+   *
+   * Collapsing to two states keeps two variants instead of ten, and it costs
+   * almost nothing, because PERF_BUDGET round 10 already measured where the
+   * arm/disarm win lives:
+   *
+   *     idle:            pinned 63.9 ms   disarmed 58.2 ms   (5.7 ms apart)
+   *     heavy continuous fx:  86.9 ms              85.9 ms   (1.0 ms apart)
+   *
+   * The win is an IDLE win. `allOff` keeps all of it — an idle pool is fully
+   * dark, which is the state that mattered. What is given up is the ~1 ms of
+   * partial-disarm benefit while effects are already running, and that is the
+   * right ~1 ms to spend to delete a 2.6-second freeze.
+   */
+  #syncVisibility() {
+    let any = false;
+    for (const it of this.items) { if (it.t < it.dur) { any = true; break; } }
+    if (!any) for (const it of this.embers) { if (it.t < it.dur) { any = true; break; } }
+    const on = any && !this.suspended;
+    if (on === this._lit) return;      // only touch `visible` on a real change
+    this._lit = on;
+    for (const it of this.items) it.light.visible = on;
+    for (const it of this.embers) it.light.visible = on;
+  }
+
   update(dt) {
     for (const it of this.items) {
-      // `visible = false`, not just `intensity = 0`. See the class docblock:
-      // three.js charges a light to every lit pixel based on `visible` alone, so
-      // a spent slot left visible costs a full GGX iteration scene-wide to
-      // contribute nothing.
-      if (it.t >= it.dur) { it.light.intensity = 0; it.light.visible = false; continue; }
+      // Intensity 0 on a spent slot, and #syncVisibility darkens the whole pool
+      // once every slot is spent. Intensity alone is NOT enough to make a light
+      // free — three.js charges a visible light to every lit pixel whatever its
+      // intensity — which is why the pool still goes fully dark when idle.
+      if (it.t >= it.dur) { it.light.intensity = 0; continue; }
       it.t += dt;
       const k = Math.max(0, 1 - it.t / it.dur);
       it.light.intensity = it.peak * k * k;
     }
     for (const it of this.embers) {
-      if (it.t >= it.dur) { it.light.intensity = 0; it.light.visible = false; continue; }
+      if (it.t >= it.dur) { it.light.intensity = 0; continue; }
       it.t += dt;
       const p = it.t / it.dur;
       // Fast attack, plateau while the pool is fresh, then a smooth decay that
@@ -1208,6 +1258,7 @@ class LightPool {
       const decay = p < it.hold ? 1 : 1 - (p - it.hold) / (1 - it.hold);
       it.light.intensity = it.peak * attack * decay * decay;
     }
+    this.#syncVisibility();
   }
 }
 

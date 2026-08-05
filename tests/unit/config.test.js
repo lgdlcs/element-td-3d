@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   GRID, CELL, SIM, ECONOMY, ELEMENT_PICK, PRIMAL, WAVES, COMBAT,
-  QUALITY_PRESETS, LAYERS,
+  QUALITY_PRESETS, QUALITY_ORDER, QUALITY_LABELS, LAYERS,
 } from '../../src/core/Config.js';
 import { PURE_TOWERS, DUAL_TOWERS, PRIMAL_TOWERS, FOUNDATION } from '../../src/game/TowerDefs.js';
 import { ELEMENT_IDS } from '../../src/game/Elements.js';
@@ -200,16 +200,34 @@ describe('Config — wave pacing', () => {
 });
 
 describe('Config — quality presets', () => {
-  it('defines exactly four presets, all with the same knobs', () => {
-    expect(Object.keys(QUALITY_PRESETS)).toEqual(['ultra', 'high', 'medium', 'low']);
+  it('defines the five presets, and only `potato` carries extra knobs', () => {
+    expect(Object.keys(QUALITY_PRESETS)).toEqual(['ultra', 'high', 'medium', 'low', 'potato']);
     const keys = Object.keys(QUALITY_PRESETS.ultra).sort();
     for (const [name, p] of Object.entries(QUALITY_PRESETS)) {
+      if (name === 'potato') continue;
       expect(Object.keys(p).sort(), `preset ${name}`).toEqual(keys);
+    }
+    // `potato` is a superset: it answers every knob the others do, plus four of
+    // its own. The four are opt-IN and absent everywhere else precisely so that
+    // "absent means the normal path" stays true — RenderPipeline tests
+    // `q.post === false`, not `!q.post`, for that reason.
+    const potato = Object.keys(QUALITY_PRESETS.potato).sort();
+    for (const k of keys) expect(potato, `potato is missing ${k}`).toContain(k);
+    expect(potato.filter((k) => !keys.includes(k)).sort())
+      .toEqual(['envDetail', 'extraLights', 'post', 'shadows']);
+  });
+
+  it('keeps the extra `potato` knobs off every other preset', () => {
+    for (const [name, p] of Object.entries(QUALITY_PRESETS)) {
+      if (name === 'potato') continue;
+      for (const k of ['post', 'shadows', 'envDetail', 'extraLights']) {
+        expect(p[k], `${name}.${k} must be absent, not false`).toBeUndefined();
+      }
     }
   });
 
-  it('degrades monotonically from ultra down to low', () => {
-    const order = ['ultra', 'high', 'medium', 'low'];
+  it('degrades monotonically from ultra down to potato', () => {
+    const order = ['ultra', 'high', 'medium', 'low', 'potato'];
     for (const knob of ['shadowMapSize', 'csmCascades', 'towerLights', 'particleBudget', 'anisotropy', 'pixelRatioCap']) {
       const vals = order.map((k) => QUALITY_PRESETS[k][knob]);
       for (let i = 1; i < vals.length; i++) {
@@ -233,12 +251,25 @@ describe('Config — quality presets', () => {
     expect(QUALITY_PRESETS.low.towerLights).toBe(0);
   });
 
-  it('leaves bloom on everywhere, above a threshold the emissives can clear', () => {
-    for (const p of Object.values(QUALITY_PRESETS)) {
-      expect(p.bloom).toBe(true);
-      expect(p.bloomThreshold).toBeGreaterThan(1);
-      expect(p.bloomStrength).toBeGreaterThan(0);
+  it('leaves bloom on everywhere it renders through the composer', () => {
+    for (const [name, p] of Object.entries(QUALITY_PRESETS)) {
+      // `potato` has no composer to hang a bloom pass on — see its docblock and
+      // the direct path in RenderPipeline.build. Asserting bloom there would be
+      // asserting a pass that is never constructed.
+      if (p.post === false) { expect(p.bloom, `${name}`).toBe(false); continue; }
+      expect(p.bloom, `${name}`).toBe(true);
+      expect(p.bloomThreshold, `${name}`).toBeGreaterThan(1);
+      expect(p.bloomStrength, `${name}`).toBeGreaterThan(0);
     }
+  });
+
+  it('orders QUALITY_ORDER cheapest-first and covers every preset', () => {
+    // The settings panel renders in this order and QualityGovernor steps along
+    // it, so a preset missing here is a preset the player cannot reach.
+    expect([...QUALITY_ORDER].sort()).toEqual(Object.keys(QUALITY_PRESETS).sort());
+    expect(QUALITY_ORDER[0]).toBe('potato');
+    expect(QUALITY_ORDER[QUALITY_ORDER.length - 1]).toBe('ultra');
+    for (const q of QUALITY_ORDER) expect(QUALITY_LABELS[q], `label for ${q}`).toBeTruthy();
   });
 });
 

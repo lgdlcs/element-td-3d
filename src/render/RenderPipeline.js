@@ -89,6 +89,27 @@ export class RenderPipeline {
     this.scene = scene;
     this.camera = camera;
 
+    // DIRECT PATH: no composer at all.
+    //
+    // Not "a composer with every pass disabled" — that still allocates both
+    // ping-pong targets and still blits through them. PERF_BUDGET's own
+    // attribution records that disabling every pass saves 90 ms where the
+    // passes sum to ~46, and names the difference as the target ping-pong the
+    // empty chain lets the composer skip. This skips the composer instead of
+    // emptying it, so there is nothing left to ping-pong through.
+    //
+    // Tone mapping and the output colour space are the RENDERER's, not the
+    // OutputPass's, so a direct render still tonemaps and still writes sRGB.
+    // What is genuinely lost is bloom and the grade — including uFlash, which
+    // is why flash() checks for the grade pass before touching it.
+    if (this.q.post === false) {
+      this.composer = null;
+      this.passes = {};
+      this.resize();
+      this.adaptive = new AdaptiveResolution(this.renderer, () => this.resize());
+      return this;
+    }
+
     const size = this.renderer.getSize(new THREE.Vector2());
     const samples = this.renderer.capabilities.isWebGL2 === false ? 0 : (this.q.msaa ?? 0);
 
@@ -351,6 +372,12 @@ export class RenderPipeline {
   }
 
   render(elapsed, dt) {
+    if (!this.composer) {
+      this.renderer.info.reset();
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     const g = this.passes.grade;
     if (g) {
       g.uniforms.uTime.value = elapsed;
@@ -409,6 +436,37 @@ export class RenderPipeline {
   }
 
   setExposure(v) { this.renderer.toneMappingExposure = v; }
+
+  /**
+   * Skip the composer for this frame onward, or put it back.
+   *
+   * The composer and its two ping-pong targets are KEPT ALLOCATED while
+   * bypassed. Disposing them would reclaim video memory, but rebuilding the
+   * chain — the bloom pyramid, SMAA's two lookup textures, GTAO's G-buffer —
+   * is a multi-frame hitch, and this is called by a controller that reacts to
+   * frame time and may well call it back. Freeing memory by causing the exact
+   * stutter the caller is trying to remove is not a trade worth making.
+   *
+   * A `potato` pipeline was built with no composer at all and is already on the
+   * direct path, so both directions are no-ops there.
+   */
+  bypassComposer(on = true) {
+    if (!this._composerRef && !this.composer) return;
+    if (on) {
+      if (!this.composer) return;
+      this._composerRef = this.composer;
+      this.composer = null;
+    } else {
+      if (!this._composerRef) return;
+      this.composer = this._composerRef;
+      this._composerRef = null;
+      // The bypass window may have contained a resize or an adaptive step, and
+      // resize() skips the composer while it is detached.
+      this.resize();
+    }
+  }
+
+  get composerBypassed() { return !!this._composerRef; }
 
   /** Debug toggles used by the screenshot harness / QA agents. */
   setPass(name, on) { if (this.passes[name]) this.passes[name].enabled = !!on; }
