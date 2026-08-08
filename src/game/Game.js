@@ -19,12 +19,41 @@ import { HUD } from '../ui/HUD.js';
 import { PLACEMENT_TEXT } from '../ui/uikit.js';
 import { isTypingTarget } from '../util/dom.js';
 import { AudioEngine } from '../audio/AudioEngine.js';
+import { MinigameHost } from '../minigames/MinigameHost.js';
+import { riteForWave } from '../minigames/schedule.js';
+import { Lottery } from '../ui/Lottery.js';
 
 /** Scratch vector for world→screen projection (audio panning). */
 const _sound = new THREE.Vector3();
 
-/** Phases in which the simulation does not advance. */
-const FROZEN_PHASES = new Set(['lobby', 'gameover', 'victory']);
+/**
+ * Phases in which the simulation does not advance.
+ *
+ * 'minigame' IS IN THIS LIST AND 'pickElement' IS NOT, which looks inconsistent
+ * and is not. The picker is answered in a couple of seconds and has no clock of
+ * its own; a rite holds the screen for up to twenty, and #step contains exactly
+ * one thing that would keep running underneath it — #tickInterest, which pays
+ * out on a REAL-TIME fifteen-second clock. Left running, banked income would
+ * become a function of how long a player stared at the result card, which is
+ * both a fairness hole between two players on the same seed and free gold for
+ * whoever is slowest. Frozen, the interest timer simply resumes where it was.
+ *
+ * Nothing else in #step can advance during a rite: the board is empty (the wave
+ * has just been cleared), prepTimer only ticks in 'prep', and the wave runner is
+ * idle. So the freeze costs nothing and closes the one hole.
+ *
+ * THE RITE ITSELF IS NOT FROZEN BY THIS. MinigameHost.update is called from the
+ * VARIABLE-RATE half of frame(), below the fixed-step block — which is also what
+ * keeps state.speed (1x/2x/3x) from making the minigame three times faster.
+ *
+ * 'lottery' IS HERE FOR A SECOND REASON ON TOP OF THAT ONE. A draw takes 3.6 s
+ * and, unlike a rite, it happens DURING a prep with the prep clock running: a
+ * wager invoked with four seconds left would otherwise send the wave from behind
+ * the veil, which is the incident the keyboard shields exist to prevent, one
+ * layer down. Lottery.update sits next to the rite's, below the fixed-step
+ * block, and Lottery restores the phase it took on close.
+ */
+const FROZEN_PHASES = new Set(['lobby', 'gameover', 'victory', 'minigame', 'lottery']);
 
 /**
  * Top-level orchestrator: owns the scene, the fixed-step simulation, the
@@ -112,7 +141,16 @@ export class Game {
       pendingElementPicks: 0,
       // Advances only when a pick is committed — see rollElementChoices.
       pickIndex: 0,
-      phase: 'prep',         // prep | combat | pickElement | gameover | victory
+      phase: 'prep',         // prep | combat | pickElement | minigame | lottery | gameover | victory
+      /**
+       * The rite owed before the next prep phase, or null. Set when a wave is
+       * cleared, consumed by #advanceAfterWave. It is a FIELD rather than an
+       * immediate call because the element picker has to go first when a wave
+       * grants both, and "two modals at once" is the failure this feature is
+       * most likely to ship with.
+       * @type {?{id: string, wave: number, occurrence: number}}
+       */
+      pendingMinigame: null,
       prepTimer: waveDef(1).prepTime,
       speed: 1,
       paused: false,
@@ -124,6 +162,15 @@ export class Game {
       interestTimer: ECONOMY.interestTick,
       interestActive: true,
       totalInterest: 0,
+      /**
+       * Where the gold came from and where it went, keyed by the `reason` passed
+       * to addGold/spendGold. Not used by any rule — it exists so a test can
+       * assert "the rite paid exactly once and exactly this much" without
+       * reading a total that four other systems also write to, and so the end
+       * card can eventually say something truthful about the run.
+       */
+      goldEarned: {},
+      goldSpent: {},
     };
 
     this.selectedBuild = null;   // tower key queued for placement
@@ -146,6 +193,16 @@ export class Game {
     this.onSpectateExit = null;
 
     this.hud = new HUD(this);
+    // The between-wave minigames. Constructed here rather than in main.js
+    // because the phase machine owns it — 'minigame' is a phase, not a panel,
+    // and the thing that opens and closes it is #advanceAfterWave below. It
+    // mounts into #ui-root like every other overlay and is inert until opened.
+    this.minigames = new MinigameHost(this, this.hud.root);
+    // The wager. Constructed after the HUD because its rail seal stacks under
+    // #threat and measures it, and after `state` because it reads the phase on
+    // its very first refresh. It owns two surfaces (a rail card and a modal) and
+    // is inert until the player invokes it. docs/LOTTERY.md.
+    this.lottery = new Lottery(this, this.hud.root);
     this.#wireCallbacks();
     this.#wirePointer();
 
@@ -211,13 +268,16 @@ export class Game {
     };
 
     this.creeps.onDeath = (i, x, y, z, bounty, type) => {
-      this.state.gold += bounty;
+      // The float text moves INSIDE addGold via `at` rather than staying a
+      // separate line: the number over the body and the number in the top bar
+      // are the same event, and keeping them one call is what stops a future
+      // credit from arriving without its tell.
+      this.addGold(bounty, 'bounty', { at: [x, y + 1.4, z] });
       this.state.killed++;
       this.state.score += Math.round(bounty * 1.5);
       this.fx.death(x, y, z, CREEP_TYPES[type].color);
       this.audio.play(CREEP_TYPES[type].boss ? 'bossDeath' : 'death');
       if (CREEP_TYPES[type].boss) this.rig.addShake(0.5);
-      this.hud.floatText(x, y + 1.4, z, `+${bounty}`, '#ffd766');
     };
 
     this.projectiles.onDamage = (towerId, amount, creepIdx, crit) => {
@@ -279,6 +339,10 @@ export class Game {
       if (def.grantsElement) {
         this.state.pendingElementPicks++;
       }
+      // Booked now, opened later. See state.pendingMinigame: the picker always
+      // wins the race for the screen, so the rite has to survive the picker.
+      this.state.pendingMinigame = riteForWave(this.seed, def.n);
+
       if (this.state.pendingElementPicks > 0) {
         // A decision on YOUR board needs your board in front of you. The picker
         // is a modal that has to be answered before the next wave can be
@@ -288,9 +352,71 @@ export class Game {
         this.state.phase = 'pickElement';
         this.hud.openElementPicker();
       } else {
-        this.#beginPrep(def.n + 1);
+        this.#advanceAfterWave(def.n + 1);
       }
     };
+  }
+
+  /**
+   * The one road from "a wave ended" to "the next one is being prepared".
+   *
+   * Every interlude hangs off here, in a fixed order, and each one calls back
+   * into this function when it is done rather than into #beginPrep — so adding a
+   * third interlude later is one branch in one place instead of a new edge in
+   * every existing one.
+   *
+   * ORDER: element picker (handled by the caller, because it is answered by
+   * chooseElement) -> rite -> prep. A player must never see two full-bleed
+   * surfaces stacked; the cadence in Config.MINIGAMES makes the collision
+   * arithmetically impossible on the normal schedule, and this ordering makes it
+   * merely sequential if the dev panel or a future feature forces one anyway.
+   */
+  #advanceAfterWave(nextWave) {
+    const rite = this.state.pendingMinigame;
+    this.state.pendingMinigame = null;
+    if (rite && this.startMinigame(rite.id, nextWave, rite.occurrence)) return;
+    this.#beginPrep(nextWave);
+  }
+
+  /**
+   * Open a rite and hold the state machine until it closes.
+   *
+   * Public because the dev panel drives it, and because it is the entry point
+   * docs/MINIGAMES.md publishes. Returns false if it could not open (unknown id,
+   * one already running, host missing) — and a false return MUST leave the
+   * caller free to carry on to prep, or an unknown id would freeze the run on a
+   * phase nothing can leave.
+   *
+   * @param {string} id
+   * @param {number} wave        the wave to prepare once the rite is over
+   * @param {number} occurrence  RNG index — see schedule.riteOccurrence
+   */
+  startMinigame(id, wave, occurrence = 0) {
+    if (!this.minigames) return false;
+    // NEVER over the element picker. The shipping cadence cannot produce this
+    // (Config.MINIGAMES) but the dev panel can ask for it directly, and two
+    // stacked full-bleed dialogs is the one shape this feature must not have.
+    // Tested on pendingElementPicks and NOT on phase === 'pickElement', because
+    // chooseElement is still nominally in that phase when it hands over here.
+    if (this.state.pendingElementPicks > 0) return false;
+    // One test covers lobby, gameover, victory AND a rite already running, since
+    // 'minigame' is itself a frozen phase.
+    if (FROZEN_PHASES.has(this.state.phase)) return false;
+    this.exitSpectate('minigame');
+    const opened = this.minigames.open({
+      id,
+      wave,
+      occurrence,
+      onDone: () => {
+        // Whatever happened in there — played, skipped, timed out, an exception
+        // in the rite that closed the host — the run continues. The phase is
+        // restored here and nowhere else, so there is exactly one way out.
+        this.#beginPrep(wave);
+      },
+    });
+    if (!opened) return false;
+    this.state.phase = 'minigame';
+    return true;
   }
 
   #beginPrep(nextWave) {
@@ -314,7 +440,10 @@ export class Game {
       this.hud.openElementPicker();
     } else {
       this.hud.closeElementPicker();
-      this.#beginPrep(this.state.wave + 1);
+      // NOT #beginPrep: a wave that grants an element can also owe a rite (the
+      // dev panel can force it even though the shipping cadence cannot), and
+      // this is the hand-off that keeps the two sequential instead of stacked.
+      this.#advanceAfterWave(this.state.wave + 1);
     }
     this.hud.refreshBuildBar();
     return true;
@@ -415,6 +544,63 @@ export class Game {
     return out.map((id) => ELEMENTS[id]);
   }
 
+  // ---- the economy's two doors -------------------------------------------
+  //
+  // Before these existed there were eight `state.gold +=` and five
+  // `state.gold -=` scattered through this file, each with its own idea of
+  // whether to float a number, play a sound or tell anyone. Adding a ninth
+  // source (the rites) through the same door would have made nine.
+  //
+  // WHAT THEY DELIBERATELY DO NOT DO. They do not warn, they do not deny and
+  // they do not decide whether a purchase is allowed. Every build/upgrade/
+  // morph/sell site keeps its own `if (gold < cost)` guard immediately above
+  // its debit, because each one has a different message, a different sound and a
+  // different thing to do next; folding those into spendGold would have replaced
+  // five clear refusals with one vague one. The guard decides, these two only
+  // move the number and keep the books.
+
+  /**
+   * Credit gold. THE way anything outside the build economy pays the player.
+   *
+   * @param {number} amount  rounded down to whole gold; <= 0 is a silent no-op
+   *   rather than an error, so a caller computing a scaled reward never has to
+   *   special-case a zero.
+   * @param {string} reason  ledger key. Keep them stable — tests assert on them.
+   * @param {{at?: [number, number, number], colour?: string, toast?: string}} [o]
+   *   `at` floats the number over a world position (the kill bounty's tell);
+   *   omit it for income that has no place on the board.
+   * @returns {number} the amount actually credited.
+   */
+  addGold(amount, reason = 'misc', o = {}) {
+    const gold = Math.floor(Number(amount) || 0);
+    if (gold <= 0) return 0;
+    this.state.gold += gold;
+    this.state.goldEarned[reason] = (this.state.goldEarned[reason] ?? 0) + gold;
+    if (o.at) this.hud.floatText(o.at[0], o.at[1], o.at[2], `+${gold}`, o.colour ?? '#ffd766');
+    if (o.toast) this.hud.warn(o.toast, 'good');
+    return gold;
+  }
+
+  /**
+   * Debit gold. Refuses rather than going negative.
+   *
+   * The build sites always call this with a cost their own guard has already
+   * cleared, so the refusal path is unreachable from a click — it exists for the
+   * callers that will not have a guard of their own (a wager, a fee) and for the
+   * day a guard and its debit drift apart. A silent negative balance is the
+   * worst outcome available here; a refused debit is merely a bug you can see.
+   *
+   * @returns {boolean} true if the gold was taken.
+   */
+  spendGold(amount, reason = 'misc') {
+    const gold = Math.floor(Number(amount) || 0);
+    if (gold <= 0) return true;
+    if (this.state.gold < gold) return false;
+    this.state.gold -= gold;
+    this.state.goldSpent[reason] = (this.state.goldSpent[reason] ?? 0) + gold;
+    return true;
+  }
+
   /** How many of `id` the player holds. */
   elementCount(id) {
     let n = 0;
@@ -465,7 +651,9 @@ export class Game {
     // Send-early bonus rewards aggression, like the original.
     const bonus = Math.round(this.state.prepTimer * 2);
     if (bonus > 0) {
-      this.state.gold += bonus;
+      this.addGold(bonus, 'earlySend');
+      // Kept as its own toast rather than addGold's generic one: announceBonus
+      // has its own wording and the HUD owns it.
       this.hud.announceBonus(bonus);
     }
     this.state.wave = next;
@@ -857,7 +1045,7 @@ export class Game {
       this.#spendStacks(def.element);
     }
 
-    this.state.gold -= cost;
+    this.spendGold(cost, 'build');
     const t = this.towers.create(key, 0, c, r);
     this.path.rebuild();
     // Repaint the road THIS frame. PathMask now checksums the grid and would
@@ -932,7 +1120,7 @@ export class Game {
     }
 
     const { c, r } = t;
-    this.state.gold -= cost;
+    this.spendGold(cost, 'convert');
     this.towers.remove(id);
     const nt = this.towers.create(key, 0, c, r);
 
@@ -1026,7 +1214,7 @@ export class Game {
     const kept = Math.min(t.level, tgt.levels.length - 1);
     const carry = { mode: t.mode, totalDamage: t.totalDamage, kills: t.kills, morphCount: (t.morphCount ?? 0) + 1 };
 
-    this.state.gold -= cost;
+    this.spendGold(cost, 'morph');
     this.towers.remove(id);
     const nt = this.towers.create(key, kept, c, r);
     Object.assign(nt, carry);
@@ -1078,7 +1266,7 @@ export class Game {
     if (t.level >= t.def.levels.length - 1) { this.hud.warn('Max level'); return; }
     const cost = t.def.levels[t.level + 1].cost;
     if (this.state.gold < cost) { this.hud.warn('Not enough gold'); this.audio.play('deny'); return; }
-    this.state.gold -= cost;
+    this.spendGold(cost, 'upgrade');
     this.towers.upgrade(id);
     this.audio.play('upgrade');
     this.fx.explosion(t.x, 2.2, t.z, 1.0, [1, 0.9, 0.5]);
@@ -1093,7 +1281,7 @@ export class Game {
     let spent = 0;
     for (let l = 0; l <= t.level; l++) spent += t.def.levels[l].cost;
     const refund = Math.floor(spent * ECONOMY.sellRefund);
-    this.state.gold += refund;
+    this.addGold(refund, 'sell');
     this.fx.explosion(t.x, 1.2, t.z, 1.4, [0.9, 0.8, 0.6]);
     // Returning the stacks is not generosity. Without it, a player who raises a
     // primal and later needs the tile back is permanently two stacks poorer,
@@ -1297,6 +1485,15 @@ export class Game {
     this.lighting.update(dt);
     this.fx.update(dt);
     this.hud.update(dt);
+    // BELOW the fixed-step block on purpose, and fed the raw clamped dt. The
+    // 'minigame' phase is frozen (see FROZEN_PHASES) so the simulation above did
+    // nothing this frame; the rite runs anyway, on its own accumulator, and at
+    // 1x whatever state.speed says. It no-ops when nothing is open.
+    this.minigames.update(dt);
+    // Same placement, same reasoning: 'lottery' is frozen, so the draw runs on
+    // its own clock at 1x however the speed buttons are set. It no-ops when the
+    // overlay is shut, except for the cheap signature-guarded rail refresh.
+    this.lottery.update(dt);
     this.pipeline.render(this.elapsed, dt);
   }
 
@@ -1342,7 +1539,10 @@ export class Game {
     const payout = Math.floor(base * ECONOMY.interestRate);
     if (payout <= 0) return;
 
-    s.gold += payout;
+    this.addGold(payout, 'interest');
+    // Kept alongside the ledger rather than replaced by it: totalInterest is
+    // already read by the HUD's banking readout, and two names for one number is
+    // cheaper than chasing every reader.
     s.totalInterest += payout;
     this.hud.announceInterest(payout);
   }

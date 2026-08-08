@@ -37,6 +37,8 @@ import { ECONOMY, PRIMAL } from '../core/Config.js';
 import { ELEMENT_IDS } from '../game/Elements.js';
 import { TOTAL_WAVES, waveDef, isAirWave } from '../game/Waves.js';
 import { isTypingTarget } from '../util/dom.js';
+import { MINIGAME_IDS, RITES } from '../minigames/registry.js';
+import { riteOccurrence } from '../minigames/schedule.js';
 
 /**
  * What opens the panel.
@@ -113,6 +115,11 @@ const CSS = `
 #devpanel button.on { background: #ff5a1f; border-color: #ff5a1f; color: #120a06; font-weight: 700; }
 #devpanel input {
   width: 46px; flex: none; text-align: center; padding: 4px 2px;
+  background: #11151f; color: #d9dde6;
+  border: 1px solid #333b4d; border-radius: 4px; font: inherit; font-size: 11px;
+}
+#devpanel select {
+  flex: 1; min-width: 0; padding: 4px 2px;
   background: #11151f; color: #d9dde6;
   border: 1px solid #333b4d; border-radius: 4px; font: inherit; font-size: 11px;
 }
@@ -215,10 +222,23 @@ export class DevPanel {
         <button data-act="killall">Tuer tout</button>
       </div>
 
+      <div class="dev-row">
+        <span class="dev-k">Rite</span>
+        <select id="dev-rite">${MINIGAME_IDS.map((id) =>
+          `<option value="${id}">${RITES[id].name}</option>`).join('')}</select>
+        <button data-act="rite">Lancer</button>
+      </div>
+
+      <div class="dev-row">
+        <span class="dev-k">Loterie</span>
+        <button data-act="lottery">Ouvrir</button>
+      </div>
+
       <div class="dev-status" id="dev-status"></div>`;
 
     document.body.appendChild(this.$el);
     this.$wave = this.$el.querySelector('#dev-wave');
+    this.$rite = this.$el.querySelector('#dev-rite');
     this.$status = this.$el.querySelector('#dev-status');
 
     // One delegated listener rather than one per button: the actions are data,
@@ -345,6 +365,8 @@ export class DevPanel {
       case 'waveplus':   this.#nudgeWave(1); break;
       case 'wavego':     this.jumpToWave(Number(this.$wave.value)); break;
       case 'killall':    this.killAll(); break;
+      case 'rite':       this.rite(this.$rite.value, Number(this.$wave.value)); break;
+      case 'lottery':    this.lottery(Number(this.$wave.value)); break;
       default: break;
     }
     this.#paint();
@@ -352,7 +374,10 @@ export class DevPanel {
 
   /** @param {number} amount */
   gold(amount) {
-    this.game.state.gold += amount;
+    // Through the public credit door like everything else here, so dev gold is
+    // labelled in state.goldEarned and a reading taken with the panel open is
+    // visibly not a real run's economy.
+    this.game.addGold(amount, 'dev');
     this.game.hud.refreshTop();
     this.#status(`+${amount} or`);
   }
@@ -424,6 +449,43 @@ export class DevPanel {
     g.hud.refreshTop();
     this.$wave.value = String(wave);
     this.#status(`vague ${wave} — prêt`);
+  }
+
+  /**
+   * Open a rite on demand, as if wave `n - 1` had just been cleared.
+   *
+   * The occurrence index is derived from the wave with the SAME function the
+   * real schedule uses, so a rite launched from here has exactly the layout the
+   * player would have got on that wave with this seed — which is the whole point
+   * of being able to launch it. Passing 0 would have made the dev panel show a
+   * rite nobody will ever play.
+   *
+   * Goes through Game.startMinigame, the public entry point published in
+   * docs/MINIGAMES.md, so this file cannot drift from what the game does: if the
+   * phase handling changes underneath, this breaks loudly.
+   */
+  rite(id, n) {
+    const wave = Math.max(1, Math.min(TOTAL_WAVES, Math.round(n) || 1));
+    const ok = this.game.startMinigame(id, wave, Math.max(0, riteOccurrence(wave - 1)));
+    this.#status(ok ? `rite « ${id} » — vague ${wave}` : `rite « ${id} » refusé`);
+  }
+
+  /**
+   * The lottery, if the lottery exists yet.
+   *
+   * DELIBERATELY A DUCK-TYPED CALL. The lottery is being built by another agent
+   * against the contract in docs/MINIGAMES.md, which asks it to expose
+   * `game.lottery.devOpen(wave)`. Wiring the button now means the day that
+   * method lands there is nothing to remember; until then it says so instead of
+   * throwing. A dev button that reports "not built yet" is honest — a dev button
+   * that silently does nothing is the bug docs/PITFALLS.md rule 1 is about.
+   */
+  lottery(n) {
+    const wave = Math.max(1, Math.min(TOTAL_WAVES, Math.round(n) || 1));
+    const l = this.game.lottery;
+    if (typeof l?.devOpen !== 'function') { this.#status('loterie : pas encore branchée'); return; }
+    l.devOpen(wave);
+    this.#status(`loterie — vague ${wave}`);
   }
 
   /** Clear the board, WITH bounty: this is "I have seen enough of this wave". */

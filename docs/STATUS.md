@@ -4,7 +4,7 @@ Run `npm run dev` → http://localhost:5273/
 Capture: `node tools/shot.mjs --out shots/x.png --scenario midgame`
 Blind A/B: `node tools/compare.mjs --a <ours.png> --b reference/<etd2>.jpg --out cmp/x.png`
 
-See also **docs/PITFALLS.md** — fourteen classes of bug found the hard way, every
+See also **docs/PITFALLS.md** — sixteen classes of bug found the hard way, every
 one invisible to code review. Read it before debugging anything visual.
 
 ## The dev panel — the **DEV** button in the top bar (or **F9** / **²**)
@@ -12,6 +12,13 @@ one invisible to code review. Read it before debugging anything visual.
 Only on `npm run dev`. Gold (+1k / +10k / infinite), lives (+10 / invincible),
 all six elements (once, or ×3 to unlock every primal), jump to any wave, clear
 the board. Also on `window.__dev` if you would rather script it.
+
+Two rows exist to reach content that is otherwise gated behind a specific wave:
+**Rite** launches any of the six minigames at any wave through
+`Game.startMinigame(id, wave, occurrence)` — the same public entry the real
+schedule uses, with the occurrence the schedule would have computed, so what you
+see is what a player on this seed would get (`docs/MINIGAMES.md` §10). **Loterie**
+does the same for the wager (`docs/LOTTERY.md`).
 
 **The button is the reliable way in.** A key alone was not: F9 is Mission Control
 on macOS and needs Fn on any keyboard whose F-row defaults to media, and AZERTY's

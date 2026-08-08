@@ -117,6 +117,27 @@ anything that imports it (or `src/main.js`) needs a real GL context and belongs
 in `tests/e2e`. `tower-scale.test.js` is the documented exception and explains
 itself: `buildTowerSpec` touches only BufferGeometry maths, never a renderer.
 
+### One shared checklist, six subjects: the rites
+
+`tests/unit/helpers/rite-contract.js` exports `assertRiteContract(def, { randCalls,
+skilled })` — eight rules that must hold of **any** minigame (a fixed rand budget
+on three waves, determinism, an idle run that terminates and scores under 0.15,
+mashing beaten by real play, 1 500 fuzz steps staying finite and bounded, a pure
+`score()`, a `drainEvents` that empties). Every `tests/unit/<id>-rite.test.js`
+calls it in one `it()`, then adds only what is specific to that rite.
+
+It is a helper, **not a suite** — vitest only collects `*.test.js` — and the
+helper itself is tested by `tests/unit/rite-contract.test.js`, which feeds it
+deliberately broken rites and asserts each rule fires. That is the "prove the
+instrument can fail" rule above, applied to a harness rather than to an
+assertion. The full description of what each rule buys is `docs/MINIGAMES.md` §9.
+
+Two habits it enforces that generalise beyond minigames: `randCalls` is required
+to be a **literal the author wrote down** (the assertion is "this number", not
+"some fixed number", so a stray draw inside a loop bound is caught rather than
+absorbed), and every failure message names the subject and the rule — a bare
+"expected 0.3 to be less than 0.15" in a six-rite run tells the reader nothing.
+
 `tests/unit/setup.js` runs before every file and collapses ONE known three.js
 warning — `BufferGeometry is already non-indexed`, which tower-scale emits 2 506
 times — into a single counted line. It is a filter on one exact prefix, not a
@@ -151,6 +172,17 @@ tests hardest:
   on them is a DELTA between two reads of the same board — absolute colour moves
   with the driver, the preset and two seconds of a breathing camera, which is why
   this repo has no golden images.
+- **Headless wall-clock time is not the game's time.** A GPU Chromium under
+  Playwright renders at a handful of frames per second, and both `Game.frame` and
+  `MinigameHost` clamp a frame before accumulating it (`MINIGAMES.maxFrameDt`,
+  100 ms) — so a rite's own clock advances at a *fraction* of real time and a
+  20-second rite does not finish in 20 seconds of `performance.now()`. Any wait
+  must be on **observable state** (`#rite.open`, the instance's own counters) and
+  any loop must be bounded in **frames**, never in milliseconds.
+  `tests/e2e/minigame.spec.js` marks the frame-bounded loops that exist because
+  of this. Converting world units to client pixels has the same shape: use
+  `Painter.toClient` plus `getBoundingClientRect`, never a second copy of the
+  letterbox maths inside the spec.
 - **Nothing is still, even when the game is paused.** `state.paused` stops the
   simulation and nothing else: every shader's `uTime` keeps advancing, the camera
   idles, the environment breathes and the grade pass lays down per-frame film

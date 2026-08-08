@@ -1,0 +1,447 @@
+/* =========================================================================
+   THE RITE OF FORTUNE — the rail seal and the draw overlay.
+   ---------------------------------------------------------------------
+   Same language as everything else: obsidian glass, hairline rules, arcane
+   gold, nothing solid and nothing bright. The seal lives on the LEFT RAIL
+   at rest (Art Bible: the edges, never the middle) and reads as a second
+   instrument on the same dashboard as #threat — same 242px, same --r-l,
+   same --shadow-1 — rather than as a module bolted on.
+
+   The draw overlay is allowed in the middle, because the player invoked it
+   and there is nothing else to look at while it is up. Same permission
+   MinigameHost has, same reasoning.
+
+   Every value here is a token from ui.css. Where a literal appears it is a
+   gradient stop or a keyframe offset with no token, never a colour or a
+   duration a token could have carried.
+
+   Loaded unconditionally from index.html, alongside minigames.css and for
+   the reason documented there: the markup is inert until Lottery constructs
+   it, and a conditionally-loaded stylesheet is how you ship a surface that
+   renders unstyled the first time it appears.
+   ========================================================================= */
+
+/* =========================================================================
+   THE SEAL — left rail, under #threat
+   ========================================================================= */
+
+#lot {
+  position: absolute;
+  left: 18px;
+  width: 242px;                       /* #threat's width, to the pixel */
+  border-radius: var(--r-l);
+  box-shadow: var(--shadow-1);
+  background: var(--glass);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  border: 1px solid var(--line);
+  pointer-events: auto;
+  /* `top` is set by Lottery.#placeRail from #threat's measured height: the
+     wave run-ahead makes that panel change size, and a hard-coded offset
+     would either overlap it or leave a gap on half the waves. */
+  top: calc(var(--topbar-h) + 300px);
+  /* Never reach the dock. --lot-top is published by Lottery.#placeRail; the
+     140px is the dock's height plus its 22px offset plus a hairline of air. With
+     the payout table unfolded on a 900px viewport, under a boss-wave #threat,
+     the card genuinely got there and printed its fine print over GROUNDWORK. */
+  max-height: calc(100vh - var(--lot-top, 400px) - 140px);
+  display: flex;
+  opacity: 0;
+  transform: translateX(calc(-100% - 20px));
+  transition: transform var(--t-slow) var(--ease), opacity var(--t-slow) var(--ease);
+}
+
+#lot.up { opacity: 1; transform: none; }
+#lot:not(.up) { pointer-events: none; }
+
+/* Follows #threat off the rail when the codex takes the screen. */
+body.codex-open #lot { transform: translateX(calc(-100% - 20px)); opacity: 0; pointer-events: none; }
+
+/* And off it again while watching someone else's board. Same list, same reason
+   and same values as spectate.css's block: a panel at opacity 0 is still
+   clickable, and a wager placed over an opponent's maze is incoherent. The rule
+   lives here rather than in that list so this surface keeps its styling in one
+   file — see the note at the top. */
+#ui-root.spectating #lot { opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+
+.lot-inner { padding: 11px 13px 10px; display: grid; gap: 8px; align-content: start;
+             flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+.lot-head { display: flex; align-items: baseline; justify-content: space-between; }
+
+.lot-eyebrow {
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  font-weight: 600;
+}
+
+/* THE POT IS THE ONE NUMBER VISIBLE WITHOUT INTERACTION. It is the only part
+   of this system that moves while you are not playing it, so it is the only
+   part that can create anticipation between two draws. */
+.lot-pot {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  font-family: var(--font-num);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  transition: color var(--t-base) var(--ease);
+}
+.lot-pot i { font-style: normal; font-size: 9px; opacity: 0.7; }
+#lot.has-pot .lot-pot { color: var(--gold); }
+
+.lot-stake {
+  display: flex; align-items: baseline; gap: 6px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.lot-stake span {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.lot-stake b { font-size: 17px; font-weight: 500; color: var(--gold); }
+.lot-stake u { text-decoration: none; font-size: 10px; color: var(--ink-4); }
+
+.lot-go {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--r-s);
+  /* Gold-tinted rim rather than the flat --line-2 of a neutral control: this is
+     the only button on the rail and at 242px it has to read as pressable from
+     the corner of the eye. Measured against a screenshot — with --line-2 and
+     --gold-dim alone it looked like a caption. */
+  border: 1px solid color-mix(in srgb, var(--gold) 28%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 16%, transparent), color-mix(in srgb, var(--gold) 7%, transparent));
+  color: var(--gold-hi);
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease), border-color var(--t-fast),
+              background var(--t-fast), color var(--t-fast), opacity var(--t-fast);
+}
+.lot-go .lot-sigil { font-size: 12px; opacity: 0.85; }
+.lot-go:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--gold) 50%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 24%, transparent), color-mix(in srgb, var(--gold) 11%, transparent));
+  transform: translateY(-1px);
+}
+.lot-go:active:not(:disabled) { transform: translateY(0); }
+.lot-go:focus-visible { outline: 1px solid var(--gold); outline-offset: 2px; }
+.lot-go:disabled {
+  cursor: default;
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink-3);
+  opacity: 0.55;
+}
+
+.lot-note {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--ink-4);
+  min-height: 0;
+}
+.lot-note.warn { color: var(--warn); }
+.lot-note:empty { display: none; }
+
+/* ---- the payout table, folded away ------------------------------------- */
+
+.lot-table > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  display: flex; align-items: center; justify-content: space-between;
+  transition: color var(--t-fast);
+}
+.lot-table > summary::-webkit-details-marker { display: none; }
+.lot-table > summary::after { content: '▸'; font-size: 9px; transition: transform var(--t-fast) var(--ease); }
+.lot-table[open] > summary::after { transform: rotate(90deg); }
+.lot-table > summary:hover { color: var(--gold); }
+
+.lot-table ol { list-style: none; margin-top: 6px; display: grid; gap: 2px; }
+.lot-table li {
+  display: grid;
+  grid-template-columns: 14px 1fr auto auto;
+  gap: 6px;
+  align-items: baseline;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--ink-3);
+  line-height: 16px;
+}
+.lot-table li i { font-style: normal; text-align: center; }
+.lot-table li span { font-family: var(--font-ui); }
+.lot-table li em { font-style: normal; color: var(--ink-4); }
+.lot-table li b { font-weight: 500; color: var(--ink-2); min-width: 52px; text-align: right; }
+
+/* The rarity gradient, mirrored from Lottery.#arcStyle so the folded table and
+   the ring cannot drift apart. Rarer is more golden, in both places. */
+.lot-table li[data-out="ash"]   i { color: var(--ink-4); }
+.lot-table li[data-out="shard"] i { color: var(--ink-3); }
+.lot-table li[data-out="vein"]  i { color: var(--ink-2); }
+.lot-table li[data-out="lode"]  i { color: var(--gold); opacity: 0.62; }
+.lot-table li[data-out="conv"]  i { color: var(--gold); }
+.lot-table li[data-out="geyser"] i { color: var(--gold-hi); }
+.lot-table li[data-out="conv"]  b,
+.lot-table li[data-out="geyser"] b { color: var(--gold); }
+
+/* THE DISCLOSURE COMES FIRST, ABOVE THE ROWS, and that is a layout decision with
+   a reason. The card is height-capped so it never reaches the dock, and on a
+   900px viewport under the tallest #threat the open fold does not fit — so
+   SOMETHING scrolls out of view. ui.css says it plainly about the key sheet: the
+   last line of a scrolled panel is a line nobody reads. The line that tells the
+   player the lot gives back less than it takes must not be that line, and the
+   payout rows can be: they are also drawn around the ring, at arc length, every
+   single draw. */
+.lot-fine {
+  margin-top: 6px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line);
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: var(--ink-4);
+}
+
+/* =========================================================================
+   THE DRAW — the invoked surface
+   ========================================================================= */
+
+#lotdraw {
+  position: fixed;
+  inset: 0;
+  z-index: 46;               /* the rite's layer: over the key sheet (44), under the lobby (60) */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+}
+#lotdraw.open { display: flex; }
+
+/* THE VEIL IS NOT OPTIONAL. Without a full-bleed eater a click "outside" the
+   panel lands on the board and queues a tower — the incident documented at
+   HUD.js's help sheet. It also does the darkening a three.js pass would
+   otherwise have to do, at zero cost to the frame budget. */
+#lotdraw .ld-veil {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 45%, rgba(5, 6, 10, 0.74), rgba(5, 6, 10, 0.95) 70%);
+  backdrop-filter: blur(7px) saturate(0.7);
+  -webkit-backdrop-filter: blur(7px) saturate(0.7);
+  opacity: 0;
+  transition: opacity var(--t-slow) var(--ease);
+}
+#lotdraw.open .ld-veil { opacity: 1; }
+
+.ld-shell {
+  position: relative;
+  width: min(760px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 24px 14px;
+  background: var(--glass-hi);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-l);
+  box-shadow: var(--shadow-3);
+  outline: none;
+  opacity: 0;
+  transform: translateY(14px) scale(0.985);
+  transition: opacity var(--t-base) var(--ease), transform var(--t-slow) var(--ease);
+}
+#lotdraw.open .ld-shell { opacity: 1; transform: none; }
+
+.ld-head { text-align: center; }
+
+.ld-eyebrow {
+  display: block;
+  font-family: var(--font-num);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+#lotdraw-title {
+  margin-top: 3px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 26px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.ld-sub {
+  margin-top: 2px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--gold);
+}
+
+.ld-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;            /* Painter's FIELD, so the letterbox is exact */
+  width: 100%;
+  max-height: 52vh;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-m);
+  background:
+    radial-gradient(70% 100% at 50% 50%, rgba(28, 20, 12, 0.45), transparent 66%),
+    var(--solid);
+  overflow: hidden;
+}
+.ld-stage canvas { display: block; width: 100%; height: 100%; }
+
+/* ---- the centre readout ------------------------------------------------ */
+
+/* Sits at the middle of the ring, in the DOM rather than on the canvas — see
+   the note in Lottery.js's template. `pointer-events: none` because the veil
+   underneath is what handles the click. */
+.ld-centre {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 2px;
+  pointer-events: none;
+  text-align: center;
+}
+.ld-centre span {
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  transition: color var(--t-base) var(--ease);
+}
+.ld-centre b {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: 34px;
+  line-height: 1;
+  color: var(--gold);
+  transition: color var(--t-base) var(--ease), text-shadow var(--t-base) var(--ease);
+}
+/* Off once the wheel has stopped and the pot is not the story — the result card
+   below already names the outcome. */
+.ld-centre { transition: opacity var(--t-base) var(--ease), transform var(--t-slow) var(--ease); }
+.ld-centre.off { opacity: 0; }
+/* Rides up with the ring when the result card takes the bottom of the stage.
+   0.85 of 9 world units is 9.4 % of the stage height — the same lift, expressed
+   in the only unit CSS has here. */
+#lotdraw.resolved .ld-centre { transform: translateY(-9.4%); }
+/* Convergence: the number in the middle drains to zero while the payout climbs
+   in the card below. The only moment in this feature allowed to take its time. */
+.ld-centre.breaking span { color: var(--gold); }
+.ld-centre.breaking b { color: var(--gold-hi); text-shadow: 0 0 34px color-mix(in srgb, var(--gold) 55%, transparent); }
+
+/* ---- the result -------------------------------------------------------- */
+
+/* INSIDE the stage, bottom-anchored, so the ring that just stopped stays
+   visible behind the number it produced. Over the shell it would cover the
+   heading and read as a rendering bug — the same mistake MinigameHost's
+   result card documents having made. */
+.ld-result {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 14px 18px 12px;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  /* A near-opaque scrim, not a hint of one. The ring is lifted out of the way by
+     the renderer, but the arcs still pass behind this card and a 0.82 wash left
+     the SHARD label legible through the multiplier. */
+  background: linear-gradient(180deg, rgba(5, 6, 10, 0) 0%, rgba(5, 6, 10, 0.88) 30%, rgba(5, 6, 10, 0.98) 62%);
+  animation: ld-rise var(--t-slow) var(--ease) both;
+}
+
+/* `display: grid` above BEATS the UA stylesheet's `[hidden] { display: none }`,
+   which is a specificity fight a class always wins. Without this line the result
+   card is painted over the ring for the whole 3.6 s draw: a "0 gold" caption
+   sitting under a wheel that has not stopped. Caught in a screenshot, not by a
+   test, which is why the note is here. */
+.ld-result[hidden] { display: none; }
+
+@keyframes ld-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.lr-kicker {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.lr-mult {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 30px;
+  letter-spacing: 0.01em;
+  /* A LOSS IS --ink-2, NEVER --danger. Losing a wager is not an error, and this
+     game's error colour stays reserved for a leak. */
+  color: var(--ink-2);
+  transition: color var(--t-base) var(--ease);
+}
+#lotdraw.win .lr-mult,
+#lotdraw.pot .lr-mult { color: var(--gold-hi); }
+
+.lr-gold {
+  display: flex; align-items: baseline; gap: 6px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.lr-gold b { font-size: 22px; font-weight: 500; color: var(--ink); }
+.lr-gold u { text-decoration: none; font-size: 10.5px; color: var(--ink-4); }
+#lotdraw.win .lr-gold b,
+#lotdraw.pot .lr-gold b { color: var(--gold-hi); text-shadow: 0 0 22px color-mix(in srgb, var(--gold) 45%, transparent); }
+
+/* The line that must survive a loss: the stake made something grow. */
+.lr-pot {
+  margin-top: 3px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+#lotdraw.pot .lr-pot { color: var(--gold); }
+
+.ld-foot { display: flex; justify-content: center; min-height: 16px; }
+.ld-hint { font-size: 10.5px; color: var(--ink-4); display: inline-flex; align-items: center; gap: 6px; }
+.ld-hint[hidden] { display: none; }
+
+/* =========================================================================
+   RESPONSIVE / REDUCED MOTION
+   ========================================================================= */
+
+/* Matches ui.css's own 2200px step for #threat, to the pixel, so the two rail
+   cards keep reading as one column instead of two different widths. */
+@media (min-width: 2200px) {
+  #lot { width: 292px; left: 24px; }
+  .lot-inner { padding: 15px 16px 14px; gap: 11px; }
+  .lot-stake b { font-size: 20px; }
+  .lot-go { font-size: 16px; padding: 11px 12px; }
+  .lot-table li, .lot-note { font-size: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The needle still moves — it is the content, not decoration — but the
+     surfaces stop sliding. */
+  #lot, .ld-shell, #lotdraw .ld-veil, .ld-result { transition-duration: 1ms; animation-duration: 1ms; }
+}

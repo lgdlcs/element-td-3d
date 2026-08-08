@@ -129,6 +129,97 @@ export const WAVES = {
 };
 
 /**
+ * THE RITES — the between-wave minigames. See docs/MINIGAMES.md.
+ *
+ * WHY THE CADENCE IS "PERIOD 5, OFFSET 3" AND NOT A ROUNDER NUMBER.
+ *
+ * Element picks land on `n % 5 === 0` (ECONOMY.elementEveryWaves). Any rite
+ * period that is not itself a multiple of 5 eventually lands on a multiple of 5
+ * — period 6 collides at wave 30, period 7 at wave 35 — and a collision means
+ * the player answers the element picker and is immediately handed a second
+ * modal. Stacking two full-bleed surfaces back to back is the one shape this
+ * feature must never produce, and arithmetic is a better guarantee than a
+ * runtime check. Period 5 with a non-zero offset provably never collides.
+ *
+ * Offset 3 puts the rite two waves after each pick and three before the next,
+ * so the run reads as an alternation: a DECISION every five waves (which
+ * element), a TEST every five waves (the rite), never on the same breath. It
+ * yields 11 rites over 55 waves, exactly matching the 11 element picks.
+ *
+ * WHY IT IS SKIPPABLE AND WHY THAT IS NOT A CONTRADICTION. A mandatory
+ * interruption every five waves is a toll booth by its eighth occurrence. Escape
+ * (twice) or the "Skip" button leaves immediately and forfeits the gold; the
+ * rite therefore costs a player who does not want it about one second, and pays
+ * a player who does. That asymmetry is the whole design.
+ *
+ * REWARD SHAPE — ONE CONTINUOUS CURVE, AND WHY IT REPLACED TWO CONSTANTS.
+ *
+ *   perfect = max(minPerfect, nextWaveGross * perfectFrac)
+ *   reward  = round(perfect * ratio ** payCurve)
+ *
+ * `perfect` is the payout for a flawless run: floored so it is not beneath
+ * notice on wave 3 (a tier-1 tower costs 60), and otherwise a fixed fraction of
+ * the gross bounty of the wave about to be prepared, so it stays proportionate
+ * for the whole run instead of being decisive at wave 3 and invisible at 48.
+ *
+ * The shape before this was `floorFrac + (1 - floorFrac) * ratio`, gated by a
+ * `payThreshold` below which it paid nothing. Both are gone, and the reason is
+ * the cliff they built between them: at wave 53 a ratio of 0.119 paid 0 and
+ * 0.121 paid 262 gold. Nothing on screen marks that edge — the player never sees
+ * `ratio` — so the difference between "nothing happened" and "a fifth of a wave"
+ * was two thousandths of an invisible number. And the threshold had to be
+ * RE-MEASURED against every new rite's do-nothing score to stay correct, which
+ * is a constant that silently rots.
+ *
+ * `payCurve` at 1.25 does the same job without an edge anywhere. It is convex,
+ * so the bottom of the range is worth very little (a ratio of 0.02 pays 2% of
+ * perfect, not 21%) while the top is untouched. Measured over a full 55-wave run
+ * — 62 210 gold of bounty income, 11 rites, seed 1234 — playing every rite at a
+ * constant ratio is worth:
+ *
+ *   ratio | rite gold | share of run income
+ *   ------+-----------+--------------------
+ *    1.00 |     3 224 |  5.2%
+ *    0.75 |     2 251 |  3.6%   <- a competent player
+ *    0.30 |       717 |  1.2%
+ *    0.10 |       180 |  0.3%
+ *    0.02 |        24 |  0.04%  <- an idle player, over an entire run
+ *
+ * A competent player lands within ~1.4% of the old curve's total, so nothing
+ * about the economy moves. An idle one earns 24 gold across a whole game, less
+ * than one tick of interest.
+ *
+ * THE PROPERTY THAT MATTERS: skipping pays 0 (MinigameHost.#settle returns
+ * before the formula) and a ratio of 0 pays 0. Those two used to agree only
+ * because a tuned constant sat above every measured idle score. They now agree
+ * BY CONSTRUCTION — 0 ** anything positive is 0 — for any rite anyone writes,
+ * without anyone having to remember to re-measure. There is no strategy in
+ * choosing between Escape and looking away, because they are worth the same.
+ */
+export const MINIGAMES = {
+  everyWaves: 5,         // period — MUST stay a multiple of ECONOMY.elementEveryWaves
+  waveOffset: 3,         // ...and this MUST stay non-zero modulo that period
+  firstWave: 3,
+  perfectFrac: 0.24,     // of the NEXT wave's gross bounty (count x bounty)
+  minPerfect: 40,
+  payCurve: 1.25,        // exponent on ratio. >1 makes the bottom cheap without a gate.
+  /**
+   * Clicks the host will queue for a single fixed step before it starts
+   * dropping them. Twelve inside one 16.6 ms slice is a macro or a stuck
+   * button, not a hand; an unbounded queue is an unbounded frame, and the pool
+   * behind it (MinigameHost._clickPool) is sized from exactly this number.
+   */
+  maxClicksPerStep: 12,
+  /** Fixed-step rate of every minigame's logic. Independent of SIM.hz on purpose. */
+  hz: 60,
+  get dt() { return 1 / this.hz; },
+  /** Real seconds the host will let a single frame advance. Mirrors Game.frame. */
+  maxFrameDt: 0.1,
+  /** Devicepixel ratio ceiling for the overlay canvas — a 3x retina fill is free real estate nobody sees. */
+  maxDpr: 2,
+};
+
+/**
  * Combat modifiers applied on top of the per-tower stat tables.
  *
  * Crits are a global rule rather than a per-tower special: every armed tower

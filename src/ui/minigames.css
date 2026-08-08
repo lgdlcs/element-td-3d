@@ -1,0 +1,722 @@
+/* =========================================================================
+   THE RITES — the between-wave minigame overlay.
+   ---------------------------------------------------------------------
+   Same language as everything else: obsidian glass, hairline rules, arcane
+   gold, nothing solid and nothing bright. The difference is that this one
+   surface is ALLOWED in the middle of the board, because the player invoked
+   it and there is nothing else to look at while it is up (Art Bible G10).
+
+   Every value here is a token from ui.css. If a colour or a duration is
+   written literally below, it is because it is a canvas-adjacent value with
+   no token (a gradient stop, an animation keyframe offset) — not because a
+   token was inconvenient.
+
+   Loaded unconditionally from index.html, alongside lobby/scoreboard/
+   spectate, and for the reason documented there: the markup is inert until
+   MinigameHost constructs it, and a conditionally-loaded stylesheet is how
+   you ship a surface that renders unstyled the first time it appears.
+   ========================================================================= */
+
+/* ---- the per-rite palette, on :root and NOWHERE ELSE --------------------
+   Every flat colour a rite's CANVAS paints with lives here, under a name
+   prefixed by the rite it belongs to. The `#rite[data-rite=…]` blocks further
+   down map these onto the generic `--rite-accent` / `--rite-stage-bg` /
+   `--rite-veil` that the CHROME uses; they define no colour of their own.
+
+   WHY THE PREFIX, AND WHY :root. A rite has no DOM — it is handed a Painter and
+   nothing else, by design — so the only element it can read a variable off is
+   `document.documentElement`, via the `Lottery.js:722` pattern. A custom
+   property declared inside `#rite[data-rite="hunt"]` is scoped to the OVERLAY
+   element, which a rite never sees, so that lookup silently missed and the
+   literal fallback in the JS was what actually painted. Six rites shipped that
+   way and four of their authors wrote the problem down.
+
+   The generic names cannot simply move up here: `--rite-accent` is one name and
+   there are six accents. So the values live at the root under names that can
+   coexist, and `--rite-accent` stays a per-block ALIAS for the chrome's use.
+   Each rite reads its own prefixed names and gets the real value; a colour
+   edited in this file now moves the canvas, which is the entire point.
+
+   THE RULE FOR A NEW RITE: declare `--rite-<id>-*` here, alias whatever the
+   chrome needs in the `[data-rite]` block, and read the prefixed names from the
+   rite. Keeping a literal instead is allowed but must be argued in the rite —
+   `HeavenRite`'s two pinks and `LuckyShotRite`'s BOOTH_INK both do, and both
+   arguments are about the value not being chrome. */
+:root {
+  /* Cold sky. The hazard pink is deliberately NOT here — see HeavenRite. */
+  --rite-heaven-accent: #9fc4e8;
+
+  /* Party lights over a long drop. */
+  --rite-platforms-accent: #b79cf0;
+
+  /* One hot lamp over a shooting gallery. */
+  --rite-luckyshot-accent: #e2b060;
+
+  /* Dust and low sun. */
+  --rite-offroad-accent: #d98b4a;
+
+  /* Forest before dawn. The canopy darks are tokens too, because the rite
+     paints its own treeline and the stage gradient behind it has to agree — two
+     sets of greens tuned by hand in two files is the drift this section exists
+     to stop. Pelt and ember stay literals in HuntRite: they are the SUBJECT,
+     not the room, and they must not change when the room is retuned. */
+  --rite-hunt-accent: #86c294;
+  --rite-hunt-canopy-far: #0e1d15;
+  --rite-hunt-canopy-mid: #0a160f;
+  --rite-hunt-canopy-near: #040a07;
+  --rite-hunt-trunk-far: #0b1610;
+  --rite-hunt-trunk-near: #030806;
+  --rite-hunt-floor: #0a1310;
+
+  /* Under the waterline. `deep` is the bottom of the stage gradient below and
+     the bottom of the water the canvas paints; they are one colour or the
+     illusion of a continuous body of water breaks at the canvas edge. */
+  --rite-fishing-accent: #6cc3dd;
+  --rite-fishing-deep: #03070c;
+  --rite-fishing-shelf: #0b2233;
+}
+
+#rite {
+  position: fixed;
+  inset: 0;
+  z-index: 46;              /* over the key sheet (44), under the lobby (60) */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+
+  /* ---- the per-rite paint hooks --------------------------------------
+     MinigameHost.open() sets data-rite from MinigameDef.theme (defaulting
+     to the id) and close() removes it, so exactly one of the blocks at the
+     bottom of this section is ever in force.
+
+     THESE THREE VALUES ARE THE DEFAULT, NOT A PLACEHOLDER. A rite that
+     declares no theme gets the warm ember stage this overlay shipped with —
+     deliberate, coherent, and identical to what was hardcoded here before —
+     rather than a flat grey that reads as an unstyled surface. The rule for
+     a new theme is the same as the rule for the default: a stage gradient, a
+     veil and one accent, no more, because the canvas is where a rite is
+     allowed to be expressive and the chrome around it is not. */
+  --rite-stage-bg:
+    radial-gradient(90% 120% at 50% 100%, rgba(28, 20, 12, 0.55), transparent 62%),
+    var(--solid);
+  --rite-veil:
+    radial-gradient(120% 90% at 50% 45%, rgba(5, 6, 10, 0.72), rgba(5, 6, 10, 0.94) 70%);
+  /* Defaults to the token the eyebrow already used, so an unthemed rite looks
+     exactly as it did. A themed one tints the overline.
+
+     CHROME ONLY. This name is scoped to `#rite`, so a rite's canvas cannot read
+     it and must not try — the rite reads `--rite-<id>-accent` off :root, which
+     is the value this aliases. That the two are one colour is enforced by the
+     `var()` in each theme block, not by two people remembering. */
+  --rite-accent: var(--ink-3);
+
+  /* THE HEIGHT BUDGET, AND THE ONLY PLACE IT IS WRITTEN.
+     How much of the viewport the stage may occupy, top to bottom. It lives up
+     here rather than on `.rite-stage` because TWO elements derive from it —
+     the stage's own width cap and the shell's width — and a budget stated
+     twice is a budget that will eventually be stated differently. Overriding
+     it (see the narrow-window block at the bottom of this file) moves the
+     stage and the panel around it together, by construction. */
+  --rite-stage-h: 56vh;
+}
+
+#rite.open { display: flex; }
+
+/* THE VEIL IS NOT OPTIONAL. Without a full-bleed eater, a click "outside" the
+   panel lands on the board and queues a tower — the same incident documented
+   at HUD.js's help sheet. It also does the darkening that a three.js pass
+   would otherwise have to do, at zero cost to the frame budget. */
+#rite .rite-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--rite-veil);
+  backdrop-filter: blur(7px) saturate(0.7);
+  -webkit-backdrop-filter: blur(7px) saturate(0.7);
+  opacity: 0;
+  transition: opacity var(--t-slow) var(--ease);
+}
+#rite.open .rite-veil { opacity: 1; }
+
+/* THE PANEL'S FRAME IS A DECISION, NOT A FOCUS RING.
+   ------------------------------------------------------------------------
+   The shell carries `tabindex="-1"` and MinigameHost focuses it on open, to
+   honour aria-modal and to put the keyboard shield somewhere real. NOBODY EVER
+   NAVIGATES TO IT: MinigameHost swallows Tab outright while a rite is playing
+   (the `if (e.code === 'Tab') return;` branch of its key handler, after the
+   blanket preventDefault), so the shell is not a tab stop, Skip is not a tab
+   stop, and the keyboard route to skipping is Esc — which is why the Skip
+   button wears an `Esc` cap rather than a Tab hint. The one place focus really
+   lands and really matters is Continue on the result card, which the host
+   focuses explicitly when the card opens.
+
+   So when `#ui-root :focus-visible { outline: 2px solid var(--gold) }`
+   (ui.css) matched this element — it beat the `outline: none` that used to be
+   here on specificity — the result was a 2px SOLID GOLD rectangle around the
+   whole panel: the brightest thing in an overlay whose entire visual argument
+   is "never a bright box". Worse, it was CONDITIONAL. `:focus-visible` stops
+   matching the moment the player touches the mouse, so the frame appeared on a
+   keyboard-opened rite, vanished on a clicked one, and moved to the result card
+   when that took focus. Three different panels for one panel.
+
+   THE FIX IS TWO HALVES AND BOTH ARE LOAD-BEARING:
+
+   1. The shell declines the ring (below, at a specificity that actually beats
+      ui.css:88 — `#rite .rite-shell:focus-visible` is 1-2-0 against 1-1-0;
+      the bare `outline: none` it replaces was 0-1-0 and never applied).
+      NOTHING IS LOST: no keyboard user ever ARRIVES here by navigating, so
+      there is no "where am I" to answer. Continue keeps its ring, and that is
+      the assertion that matters — verified in a real browser, it computes to
+      `solid 2px rgb(229, 189, 121)` the moment the result card opens. Skip
+      keeps its ring too, for whenever focus does reach it.
+
+   2. The frame the ring was accidentally providing is now drawn
+      unconditionally, in the overlay's own language rather than the user
+      agent's: the hairline border it always had, plus a dim warm ring outside
+      it and a wide, very low gold bloom. That is roughly a sixth of the old
+      ring's contrast — enough that the panel reads as a bounded object over the
+      blurred board (without it, `--line-2` on `--glass` over the veil is nearly
+      invisible, which is why nobody noticed the gold rectangle was doing the
+      work), and far short of competing with the stage.
+
+   Ring-as-box-shadow rather than ring-as-outline ON PURPOSE: an outline here
+   would be exactly the property the focus rules fight over, and the frame would
+   go back to depending on input modality the next time someone touches them. */
+/* THE PANEL HUGS ITS STAGE.
+   ------------------------------------------------------------------------
+   Third term in the `min()`, and it is the one that does the work now. Once
+   the stage is honestly 16:9 its width is set by the HEIGHT budget on short
+   windows, so a shell sized only by `1120px / 92vw` is wider than the thing it
+   contains: measured at 1600x700, a 695px stage floating in a 1070px panel
+   with 187px of empty glass on each side. That is the same defect the stage
+   itself had — chrome claiming a size its content does not fill — moved one
+   level out, and it would have been the visible result of fixing the bars.
+
+   The arithmetic is the stage's outer width plus this shell's own chrome:
+   `(budget - 2px) * 16/9` is the stage CONTENT width (see `.rite-stage`),
+   `+ 2px` its hairline, `+ 48px` this element's left and right padding,
+   `+ 2px` this element's own border — 52px of constant. The literals are
+   spelled out rather than hidden in a variable because they must equal the
+   `padding` and `border` three lines below and CSS cannot refer to them; the
+   invariant "shell content width == stage outer width whenever the budget
+   binds" is asserted in tests/unit/rite-stage-layout.test.js, which is what
+   actually stops the two from drifting. */
+.rite-shell {
+  position: relative;
+  width: min(1120px, 92vw, calc((var(--rite-stage-h) - 2px) * 16 / 9 + 52px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 24px 18px;
+  background: var(--glass);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-l);
+  box-shadow:
+    var(--shadow-3),
+    0 0 0 1px rgba(229, 189, 121, 0.14),
+    0 0 40px rgba(229, 189, 121, 0.05);
+  opacity: 0;
+  transform: translateY(14px) scale(0.985);
+  transition: opacity var(--t-base) var(--ease), transform var(--t-slow) var(--ease);
+}
+#rite.open .rite-shell { opacity: 1; transform: none; }
+
+/* Half 1 of the note above. Both states, because `:focus` alone is what the
+   old `outline: none` targeted and `:focus-visible` is what actually painted. */
+#rite .rite-shell:focus,
+#rite .rite-shell:focus-visible { outline: none; }
+
+/* The result card takes focus on its Continue button, but the CARD itself is
+   also a container the browser will happily ring if focus ever lands on it.
+   Same argument, same answer. */
+#rite .rite-result:focus-visible { outline: none; }
+
+/* ---- heading ----------------------------------------------------------- */
+
+.rite-head { text-align: center; }
+
+.rite-eyebrow {
+  display: block;
+  font-family: var(--font-num);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--rite-accent);
+}
+
+#rite-title {
+  margin-top: 4px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 30px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.rite-hint {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* ---- the stage --------------------------------------------------------- */
+
+/* THE STAGE IS THE FIELD, AT 16:9, WITH NOTHING LEFT OVER.
+   ------------------------------------------------------------------------
+   `Painter.layout` letterboxes contract.js's 16x9 FIELD into whatever box this
+   rule produces (`ppu = min(cssW/16, cssH/9)`). So any box that is not 16:9 is
+   not "a stage with a margin", it is a stage the rite CANNOT PAINT INTO: the
+   slack becomes dead bars that no rite can reach and that read, to the player,
+   as the world ending early. `fishing`'s waterline stopped in mid-air in them.
+
+   THE BUG THIS RULE IS WRITTEN AGAINST. `aspect-ratio: 16/9` with BOTH
+   `width: 100%` and `max-height: 56vh` is over-constrained, and CSS resolves it
+   by keeping the explicit width and dropping the ratio. Measured at 1600x900:
+   the stage came out 1070x504 (2.123:1), the field painted 892x502, and 8.2 %
+   of the stage width on EACH SIDE was black bar — 16.4 % of the surface.
+
+   THE FIX IS TO CAP THE WIDTH BY THE HEIGHT BUDGET rather than to let width and
+   height be specified independently. `--rite-stage-h` is the ONE height budget;
+   the width cap is derived from it, so the two cannot disagree. A media query
+   that wants a shorter stage overrides the variable and the width follows — the
+   720px block below used to set `max-height` alone, which would have re-created
+   exactly this defect at narrow widths.
+
+   BOX-SIZING IS content-box HERE, AND ONLY HERE. The global reset makes every
+   box border-box, which means `aspect-ratio` shapes the BORDER box — so the 1px
+   hairline steals a pixel from each edge and the canvas inside (width/height
+   100 % of the CONTENT box) comes out 16:9 minus 2px by 9:16 minus 2px, i.e.
+   not 16:9. That is a sub-pixel letterbox rather than an 88px one, but it is the
+   same bug and it is free to remove: with content-box the content area — which
+   is exactly the canvas — is the thing that is 16 by 9.
+
+   THE `- 2px` IS THE HAIRLINE, SPENT OUT OF THE BUDGET. Under content-box the
+   declared width and height are the CONTENT area, so the border box is 2px
+   larger in each axis. Without the subtraction the stage overflows the shell's
+   content width by 2px at narrow viewports and its own height budget by 2px at
+   wide ones — small, but this file's whole argument is that a silent 1px
+   version of a bug is the same bug. It is written literally rather than as a
+   variable because it must equal the `border` below and CSS has no way to say
+   "my own border width"; the two are four lines apart for that reason.
+
+   `max-height` is kept as well as the width cap. The two are algebraically the
+   same constraint, so it never binds on its own; it is there so that a browser
+   which rounds the derived width UP cannot overflow the shell vertically. */
+.rite-stage {
+  position: relative;
+  box-sizing: content-box;
+  aspect-ratio: 16 / 9;          /* matches contract.js FIELD exactly */
+  width: min(calc(100% - 2px), calc((var(--rite-stage-h) - 2px) * 16 / 9));
+  max-height: calc(var(--rite-stage-h) - 2px);
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-m);
+  background: var(--rite-stage-bg);
+  overflow: hidden;
+}
+
+.rite-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The canvas is decorative to a screen reader; the heading and hint above
+     carry the meaning, and there is nothing here to read out. */
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+/* ---- the six themes -----------------------------------------------------
+   One block per rite, three properties each, and nothing else: the chrome is
+   shared on purpose so that six minigames read as six rounds of one game
+   rather than as six games. Anything more expressive belongs on the canvas,
+   which is the rite's own surface.
+
+   These blocks MAP the `:root` palette above onto the three generic names the
+   chrome reads; they are not where a colour is decided. Anything flat that a
+   rite's canvas also needs belongs upstairs under a `--rite-<id>-` name, or the
+   two surfaces drift apart the first time one of them is retuned.
+
+   The veils differ only in HUE and stay at the same darkness — the veil's job
+   is to make the board behind it unreadable, and a lighter one would let the
+   3D scene compete with the rite for attention. */
+
+#rite[data-rite="heaven"] {
+  /* Cold, high, bleached. The hazard is PINK, so the room it happens in owes
+     the player every other hue but that one — a rose-tinted heaven would hide
+     the one thing that kills you. */
+  --rite-stage-bg:
+    radial-gradient(100% 130% at 50% 0%, rgba(196, 214, 236, 0.20), transparent 66%),
+    linear-gradient(180deg, #0b1018, #070a10);
+  --rite-veil: radial-gradient(120% 90% at 50% 40%, rgba(8, 12, 20, 0.72), rgba(4, 6, 12, 0.95) 70%);
+  --rite-accent: var(--rite-heaven-accent);
+}
+
+#rite[data-rite="platforms"] {
+  /* Party lights over a long drop: warm above, void below. */
+  --rite-stage-bg:
+    radial-gradient(110% 90% at 50% 0%, rgba(120, 92, 200, 0.26), transparent 60%),
+    radial-gradient(90% 120% at 50% 100%, rgba(4, 4, 10, 0.85), transparent 55%),
+    #080711;
+  --rite-veil: radial-gradient(120% 90% at 50% 45%, rgba(10, 6, 18, 0.74), rgba(4, 4, 10, 0.95) 70%);
+  --rite-accent: var(--rite-platforms-accent);
+}
+
+#rite[data-rite="luckyshot"] {
+  /* A shooting gallery: canvas awning, sawdust, one hot lamp. */
+  --rite-stage-bg:
+    radial-gradient(70% 100% at 50% 8%, rgba(226, 176, 96, 0.22), transparent 58%),
+    linear-gradient(180deg, #120d09, #0a0806);
+  --rite-veil: radial-gradient(120% 90% at 50% 45%, rgba(14, 9, 5, 0.74), rgba(6, 5, 4, 0.95) 70%);
+  --rite-accent: var(--rite-luckyshot-accent);
+}
+
+#rite[data-rite="offroad"] {
+  /* Dust and low sun. The warmest of the six, because it is the only one where
+     the ground is the subject. */
+  --rite-stage-bg:
+    radial-gradient(120% 100% at 50% 110%, rgba(180, 118, 62, 0.30), transparent 62%),
+    linear-gradient(180deg, #100b08, #0b0806);
+  --rite-veil: radial-gradient(120% 90% at 50% 45%, rgba(16, 10, 6, 0.74), rgba(7, 5, 4, 0.95) 70%);
+  --rite-accent: var(--rite-offroad-accent);
+}
+
+#rite[data-rite="hunt"] {
+  /* Forest before dawn: green in the canopy, nothing on the floor. */
+  --rite-stage-bg:
+    radial-gradient(100% 120% at 50% 0%, rgba(86, 138, 96, 0.24), transparent 62%),
+    linear-gradient(180deg, #08110c, #050a07);
+  --rite-veil: radial-gradient(120% 90% at 50% 45%, rgba(6, 14, 9, 0.74), rgba(4, 7, 5, 0.95) 70%);
+  --rite-accent: var(--rite-hunt-accent);
+}
+
+#rite[data-rite="fishing"] {
+  /* Under the waterline. Light comes from above and dies quickly, which is
+     also the depth cue the rite plays on. */
+  --rite-stage-bg:
+    radial-gradient(110% 130% at 50% -10%, rgba(74, 156, 186, 0.28), transparent 64%),
+    linear-gradient(180deg, #061018, var(--rite-fishing-deep));
+  --rite-veil: radial-gradient(120% 90% at 50% 45%, rgba(4, 12, 18, 0.74), rgba(3, 6, 10, 0.95) 70%);
+  --rite-accent: var(--rite-fishing-accent);
+}
+
+/* Impact. --kick is set per event by MinigameHost.#kick, so one keyframe
+   serves a tap and a bullseye. Translate only — a scale on the stage would
+   reflow the canvas and force a re-layout of the letterbox mid-animation.
+
+   --kick-x is the event's side of the field, in [-1, 1] (MinigameHost passes
+   ev.x / FIELD.hw). A hit on the right throws the stage right, which is the
+   difference between "something happened" and "something happened THERE".
+   It defaults to 0, so an event with no position kicks straight down as it
+   always did. The horizontal throw is deliberately smaller than the vertical
+   one: the field is 16 units wide and 9 tall, and matching amplitudes read as
+   a wobble rather than as a direction. */
+@keyframes rite-kick {
+  0%   { transform: translate3d(0, 0, 0); }
+  22%  { transform: translate3d(calc(var(--kick, 1) * var(--kick-x, 0) * 2.4px),
+                                calc(var(--kick, 1) * 3px), 0); }
+  55%  { transform: translate3d(calc(var(--kick, 1) * var(--kick-x, 0) * -1.2px),
+                                calc(var(--kick, 1) * -1.6px), 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.rite-stage.kick { animation: rite-kick 180ms var(--ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rite-stage.kick { animation: none; }
+  .rite-shell { transition: opacity var(--t-fast) linear; transform: none; }
+}
+
+/* ---- the pre-roll -------------------------------------------------------
+   Five seconds of announcement over the field the rite is about to hand over.
+
+   The veil here is DELIBERATELY lighter than `.rite-suspend`'s and carries no
+   blur: suspension hides a field the player must not be able to read (the
+   clock is stopped and they could be studying it for free), while the pre-roll
+   exists precisely so they CAN read it. Same reason `pointer-events: none` —
+   the press that skips the count is handled by the stage underneath, so the
+   announcement never eats the click that dismisses it. */
+
+.rite-count {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
+  background: radial-gradient(70% 70% at 50% 50%, rgba(5, 6, 10, 0.52), rgba(5, 6, 10, 0.18));
+}
+.rite-count[hidden] { display: none; }
+
+.rite-count .rc-ready {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* Tabular figures and a fixed line box: 5 and 1 are different widths in most
+   proportional faces, and a number that shifts every second reads as a jitter
+   in the layout rather than as a count. */
+.rite-count b {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-size: 76px;
+  line-height: 1;
+  font-weight: 400;
+  color: var(--rite-accent, var(--ink-0));
+  text-shadow: 0 0 28px rgba(0, 0, 0, 0.6);
+}
+
+/* One keyframe per state: `tick` is restarted from JS on every whole second,
+   `go` runs once when the field is handed over and fades itself out — the host
+   only has to hide the element after GO_FLASH. */
+@keyframes rite-count-tick {
+  0%   { transform: scale(1.28); opacity: 0.35; }
+  60%  { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.rite-count.tick b { animation: rite-count-tick 320ms var(--ease); }
+
+@keyframes rite-count-go {
+  0%   { transform: scale(0.9); opacity: 1; }
+  35%  { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+.rite-count.go { background: none; }
+.rite-count.go .rc-ready { opacity: 0; transition: opacity var(--t-fast) linear; }
+.rite-count.go b { animation: rite-count-go 450ms var(--ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rite-count.tick b,
+  .rite-count.go b { animation: none; }
+}
+
+/* ---- suspension -------------------------------------------------------- */
+
+.rite-suspend {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(5, 6, 10, 0.78);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.rite-suspend[hidden] { display: none; }
+.rite-suspend b {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--warn);
+}
+.rite-suspend span {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+
+/* ---- footer: the clock and the way out --------------------------------- */
+
+.rite-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.rite-clock {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rite-clock .rc-track {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.rite-clock .rc-track i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+  /* No transition: this is written every frame from the real remaining time,
+     and a 240ms ease on a per-frame write is a bar that lags the number
+     beside it by a quarter of a second. */
+}
+
+.rite-clock b {
+  min-width: 4.2ch;
+  text-align: right;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  transition: color var(--t-fast) var(--ease);
+}
+.rite-clock b.low { color: var(--danger); }
+
+.rite-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-s);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+              background var(--t-fast) var(--ease);
+}
+.rite-skip:hover { color: var(--ink); border-color: var(--line-3); background: var(--sheen); }
+.rite-skip.armed { color: var(--danger); border-color: rgba(255, 95, 87, 0.5); }
+/* NO `:focus-visible` RULE HERE, DELIBERATELY. There used to be one — `1px
+   solid var(--gold)` — and it never applied: `#ui-root :focus-visible`
+   (ui.css) is 1-1-0 against this selector's 0-2-0, so the 2px game-wide ring
+   was what anyone actually saw. A dead rule that describes a different picture
+   from the one on screen is worse than no rule. Removing it is not removing a
+   focus ring: the game-wide treatment still applies, and this button must keep
+   it for whenever focus reaches it (Tab is swallowed during play — see the
+   panel note above — but focus can arrive by click or programmatically). */
+
+.rite-skip kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  font-family: var(--font-num);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* ---- the result card --------------------------------------------------- */
+
+/* Sits over the stage rather than replacing it: the anvil, the sparks and the
+   pips stay visible underneath, so the number you earned is attached to the
+   thing you did rather than to a fresh screen. */
+.rite-result {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  border-radius: var(--r-m);   /* the stage's radius, not the shell's */
+  /* Nearly opaque, but not quite: the anvil and the last sparks stay faintly
+     visible behind the number, which is what attaches the reward to the act.
+     Any lighter and the score pips read as debris across the headline. */
+  background: radial-gradient(75% 75% at 50% 50%, rgba(7, 9, 14, 0.955), rgba(5, 6, 10, 0.985));
+  animation: rite-result-in var(--t-slow) var(--ease) both;
+}
+.rite-result[hidden] { display: none; }
+
+@keyframes rite-result-in {
+  from { opacity: 0; transform: scale(1.03); }
+  to   { opacity: 1; transform: none; }
+}
+
+.rr-kicker {
+  font-family: var(--font-num);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+#rite-result-headline {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 38px;
+  letter-spacing: 0.01em;
+  color: var(--gold-hi);
+}
+
+#rite-result-detail {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.rr-gold {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 12px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+.rr-gold i { font-style: normal; font-size: 22px; opacity: 0.7; }
+.rr-gold b { font-size: 46px; font-weight: 500; letter-spacing: -0.02em; }
+.rr-gold u { text-decoration: none; font-size: 12px; letter-spacing: 0.16em;
+             text-transform: uppercase; color: var(--ink-3); margin-left: 4px; }
+
+/* Nothing earned: the number stays, greyed, instead of vanishing. A card that
+   silently drops its main figure reads as a bug, not as a zero. */
+.rite-result.empty .rr-gold { color: var(--ink-4); }
+.rite-result.empty #rite-result-headline { color: var(--ink-2); }
+
+.rr-go {
+  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-s);
+  background: var(--glass-hi);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.rr-go:hover { border-color: var(--gold); background: var(--gold-dim); }
+/* Same as `.rite-skip`: the game-wide ring at ui.css applies and this element
+   must keep it. Continue is THE keyboard focus of this overlay — the host
+   focuses it when the result card opens — so it is the one place a ring is
+   load-bearing rather than incidental. */
+.rr-go kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  font-family: var(--font-num);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* ---- narrow windows ---------------------------------------------------- */
+
+@media (max-width: 720px) {
+  /* THE BUDGET, AND NOTHING DERIVED FROM IT. The stage's width cap, its
+     max-height and the shell's width all recompute from this one line, so a
+     shorter stage on a narrow window stays exactly 16:9 and the panel still
+     hugs it. Overriding `.rite-stage { max-height }` here directly — which is
+     what this block used to do — is precisely how the dead bars got in. */
+  #rite { --rite-stage-h: 46vh; }
+  /* 32px, not 52px: this block's padding is 14px a side rather than 24px.
+     Same arithmetic as `.rite-shell`, same reason for the literal. */
+  .rite-shell {
+    width: min(96vw, calc((var(--rite-stage-h) - 2px) * 16 / 9 + 32px));
+    padding: 16px 14px 14px;
+    gap: 10px;
+  }
+  #rite-title { font-size: 23px; }
+  #rite-result-headline { font-size: 27px; }
+  .rr-gold b { font-size: 34px; }
+}

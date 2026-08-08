@@ -467,3 +467,144 @@ only ever dragged *away* and never came home.
 *Rule:* when a threshold is meant to ask "did this gesture move", accumulate the
 PATH, not the endpoints — and write the test for the gesture that returns, because
 that is the one a hand actually makes.
+
+---
+
+## §15 A field can shadow a method of the same name, and the error blames the method
+
+`Painter` had `this.scale` (the letterbox factor, a number) since it was written.
+Adding a `scale(x, y)` method to the same class made every instance's own
+property shadow the prototype's method, so `g.scale(1, 0.3)` became *"call the
+number 1.0"*.
+
+Three things made this cost far more than it should have:
+
+1. **The error names the method, not the field.**
+   `translate(...).scale is not a function` sends you to look at `scale()` —
+   which exists, is exported, and is correct. Probing
+   `Object.getOwnPropertyNames(Object.getPrototypeOf(painter))` showed `scale`
+   present, which reads as "the code is fine" and wastes another pass. The
+   question that resolved it in one line was `typeof painter.scale` → `"number"`.
+2. **The thrower was inside `requestAnimationFrame`.** `main.js`'s loop has no
+   try/catch, so an exception from a subsystem's draw does not degrade that
+   subsystem — it kills the render loop and freezes the entire game. The symptom
+   was "the overlay is stuck on its first frame", not "the drawing looks wrong".
+3. **No test could see it.** The unit suites run the logic without a canvas and
+   the painter is never touched; the e2e suites did not cover the new surface
+   yet. It was found by running the thing and reading the console, which is the
+   only instrument that was ever going to catch it.
+
+*Rules:* never give a field the name of a method on the same class — prefer a
+name that says what the number IS (`ppu`, "pixels per unit") over one that says
+what it does. And any subsystem whose `update`/`draw` is reached from the rAF
+loop and is not essential to the game continuing should be wrapped so that a
+throw costs that subsystem and not the run — re-reported through `console.error`,
+never swallowed, so the e2e console assertion still fails the build.
+
+---
+
+## §16 A pooled input record is a time bomb, and a queue is not a per-step field
+
+Two edges from the minigame input contract (`src/minigames/contract.js`
+`NEUTRAL_INPUT`, full write-up in `docs/MINIGAMES.md` §1.1). Neither has a
+runtime check, both fail silently, and both look like a bug somewhere else.
+
+**1. The click records are pooled and refilled.** `MinigameHost` pre-allocates
+`MINIGAMES.maxClicksPerStep` (12) `PointerClick` objects and rewrites the same
+objects on the next `pointerdown` — that is what keeps a reaction game at zero
+allocation per frame. A rite that stores one and reads it two steps later is
+reading **a shot the player took afterwards**. The symptom is a hit resolving in
+the wrong place a fraction of a second late, which reads as a physics or an
+interpolation bug in the rite's own code, and every line you would suspect is
+correct.
+
+*Rule:* copy what you keep — `{ x: c.x, y: c.y }`, or just read the two numbers
+into locals inside the step. `LuckyShotRite.#fire(cx, cy)` takes two numbers
+rather than a record for exactly this reason, and `FishingRite` says so at the
+line where it clamps the hook's position.
+
+**2. The queue is handed to sub-step 1 only.** The host runs a fixed step and a
+slow frame runs several of them; the clicks that arrived since the last frame go
+to sub-step 1 and sub-steps 2..n see an **empty array** — the same rule as
+`action`, and for the same reason: three sub-steps that each see the same click
+fire three shots. So any logic shaped like *"no clicks this step, therefore the
+player is idle"* fires spuriously the moment a frame runs long, which on a
+headless run at ~4 fps is every frame.
+
+*Rule:* a rite reads the queue and never reasons from its absence. Accumulate
+time, not gaps.
+
+The same shape bites in the other direction on the host side: the queue is also
+cleared on `#suspend`, because the click that restored the window's focus is not
+a shot.
+
+---
+
+## §17 A CSS custom property is scoped to the element that declares it, and a canvas has no element
+
+`src/ui/minigames.css` shipped each rite's palette as
+`#rite[data-rite="hunt"] { --rite-accent: #86c294; }`. Every rite read its
+colours with the `Lottery.js:722-734` pattern — one `getComputedStyle` in
+`init`, off `document.documentElement`, with literal fallbacks. That is the
+right pattern and it was reading the wrong element: `--rite-accent` is declared
+on `#rite`, not on `:root`, so `getPropertyValue` returned `''` **every single
+time** and the literal fallback is what actually painted.
+
+**Nothing looks wrong.** The fallback was copied from the stylesheet, so the
+colours were correct on screen; the code merely claimed to be reading a token it
+had never once resolved. Four of the six rite authors found it independently,
+which is the tell that this is a shape rather than a slip: the failure is silent
+by construction, because a token lookup that misses is indistinguishable from a
+token lookup that hits a value equal to the fallback.
+
+Two things make it worse than dead code:
+
+- The stylesheet and the canvas can drift apart with nothing to catch it — the
+  next person retunes the theme block and half the surface moves.
+- Retuning the *other* half means editing a hex literal in a JS file whose
+  docblock says the colour comes from CSS.
+
+*Rule, and it is a naming rule before it is a scoping one:* **a generic name
+cannot live on `:root`.** `--rite-accent` is one name and there are six accents,
+so hoisting it as-is is not available. Every colour a canvas reads is declared
+on `:root` under a name prefixed by its owner (`--rite-hunt-canopy-far`), the
+scoped block becomes a pure alias for the chrome
+(`--rite-accent: var(--rite-hunt-accent);`), and the module reads the prefixed
+name.
+
+*How to prove it, since "it looks right" cannot:* `tests/unit/rite-theme.test.js`
+(jsdom) sets a property on the root and asserts the value comes back out of the
+rite's palette, then loads the **shipped stylesheet** and asserts the value the
+canvas would paint with is the value written in the file. The first half proves
+the wiring; the second proves the wiring is attached to something. A synthetic
+test alone passes happily against a token nobody declares.
+
+## §18 A published deadline without a published claimant is a name that means nothing
+
+`RivalSource` exposed `claimTime(i)` — when contested target `i` is taken — and
+no way to ask **who** took it. Because each rival's offset was independent of
+`i`, the arithmetically correct answer was that the same rival won every target:
+all fourteen animals of a `hunt`, all thirteen fish of a `fishing`. Both authors
+noticed and both worked around it in presentation — one rolled the displayed
+name from the rite's cosmetic RNG, the other rotated `i % 3` — and both said so
+honestly in a comment.
+
+That is worse than it sounds, because the workaround is invisible and
+self-consistent: the round *looks* like four anglers competing, and a player who
+worked out that the deadline never actually changes hands would be right to
+conclude the whole roster is a lie.
+
+*Rule:* when a module publishes a decision, publish **who made it**, from the
+same arithmetic. `claimTimeFor(id, i)` is now the primitive; `claimTime` is its
+min and `claimant` its argmin, so the two cannot disagree. The variation that
+makes the claimant move lives in **how the offsets vary with the target** — a
+seeded, skill-weighted permutation of the field across a fixed arrival ladder,
+hashed from `(seed, target, k)` rather than drawn — and not in a lookup table
+bolted on afterwards.
+
+*The property that made it cheap:* a permutation cannot move a minimum. Dealing
+the same ladder in a different order leaves `claimTime` bit-for-bit unchanged, so
+no existing seed's deadlines moved and `hunt`'s "exactly one animal contested at
+a time" — which is sized against `CLAIM_SPACING` — held without retuning. An
+independent per-target jitter would have been the obvious implementation and
+would have broken that spacing on the first unlucky seed.

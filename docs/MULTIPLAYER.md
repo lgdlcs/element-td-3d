@@ -31,6 +31,39 @@ is a picture, not a simulation you can influence, and the watcher's own run keep
 running at full rate underneath it. Nothing about it is authoritative and nothing
 about it can change a hit point on either machine — see "Spectating" below.
 
+### The rites (between-wave minigames)
+
+Same model, **no new wire traffic**. `riteForWave(seed, n)` is a pure function of
+the room seed and the wave number, and each rite's own layout comes from
+`rngFor(seed, 'minigame:<id>', occurrence)` — so two players in a room get the
+**same rite on the same wave with the same layout**, and the only thing that can
+differ is how well they played it. Nobody waits for anybody: each player runs
+their own instance on their own board and banks their own gold, exactly as with
+towers and bounty. Not one message in the contract below is sent for a rite, and
+none is needed. Full contract in `docs/MINIGAMES.md`.
+
+The four *competitive* rites are competitive against **deterministic ghosts**
+(`src/minigames/rivals.js`), drawn from the same shared seed: both players face
+the same rivals, with the same names and the same deadlines, so their scores mean
+the same thing afterwards. What that buys is comparability, not a duel — "first
+to click wins" becomes "beat a deadline that has a name on it".
+
+**Why that is not a stopgap waiting for a message type.** Two blockers, and only
+the first is about the wire. This transport is a pure relay with a 2 Hz score
+broadcast, no clock sync, no authority and no reconnect, so "first to click" over
+it resolves on ping rather than on reflex and the loser is always whoever has the
+worse connection. The deeper one is the **rendezvous**: rites fire on each
+player's own wave progression, so two players never enter the same rite at the
+same wall-clock time, and there is no rendezvous barrier anywhere in this
+codebase. A new message channel would not create one, and a barrier would mean
+stalling whoever cleared their wave first behind a "waiting for…" spinner — the
+exact interruption the rite cadence was designed to avoid. A real-time shared
+arena is a synchronisation model this game has never had, not one frame type away.
+
+The seam is in place for the day that changes: every rite talks only to the
+`RivalSource` interface, so a `NetworkRivals` would implement five methods and no
+rite would change. See `docs/MINIGAMES.md` §14–15.
+
 ### What is already deterministic
 
 `waveDef(n)` in `src/game/Waves.js` is a pure function of the wave number — HP,
