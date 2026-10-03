@@ -330,8 +330,46 @@ describe('registry', () => {
       expect(def.duration).toBeGreaterThan(4);
       expect(def.duration).toBeLessThanOrEqual(30);
       const inst = def.create();
-      for (const m of ['init', 'update', 'draw', 'score']) {
+      // `draw` is the legacy 2D path; a rite with a 3D `view` has none.
+      const methods = def.view ? ['init', 'update', 'score'] : ['init', 'update', 'draw', 'score'];
+      for (const m of methods) {
         expect(typeof inst[m], `${id}.${m}`).toBe('function');
+      }
+    }
+  });
+
+  /**
+   * THE INTRO CARD'S CONTENT. The host shows `rules` and `keys` for up to ten
+   * seconds before every rite; a def without them opens onto an empty card.
+   *
+   * The key labels are held to what MinigameHost actually binds (AXIS_KEYS,
+   * COMMIT_KEYS, SLOT_KEYS, the two mouse buttons), so a card can never promise
+   * a key that does nothing. Letters are written as the two layouts' glyphs for
+   * one physical key ('W/Z', 'A/Q'), because the host reads `e.code`.
+   */
+  it('every rite explains itself: 2-4 rules and a key list the host really binds', () => {
+    const BOUND = new Set([
+      '↑', '↓', '←', '→', 'W/Z', 'A/Q', 'S', 'D',
+      'Space', 'Enter', 'Click', 'Right-click', 'Mouse',
+      '1', '2', '3', '4', '5', '6',
+    ]);
+    for (const id of MINIGAME_IDS) {
+      const def = RITES[id];
+      expect(Array.isArray(def.rules), `${id}.rules`).toBe(true);
+      expect(def.rules.length, `${id}: 2-4 rules`).toBeGreaterThanOrEqual(2);
+      expect(def.rules.length, `${id}: 2-4 rules`).toBeLessThanOrEqual(4);
+      for (const line of def.rules) {
+        expect(typeof line).toBe('string');
+        expect(line.trim().length, `${id}: empty rule`).toBeGreaterThan(0);
+        expect(line.length, `${id}: "${line}" is a paragraph, not a rule`).toBeLessThanOrEqual(90);
+      }
+      expect(Array.isArray(def.keys) && def.keys.length > 0, `${id}.keys`).toBe(true);
+      for (const k of def.keys) {
+        expect(k.action.trim().length, `${id}: a key row with no action`).toBeGreaterThan(0);
+        expect(k.keys.length, `${id}: "${k.action}" names no key`).toBeGreaterThan(0);
+        for (const label of k.keys) {
+          expect(BOUND.has(label), `${id}: "${label}" (for "${k.action}") is not a key the host binds`).toBe(true);
+        }
       }
     }
   });

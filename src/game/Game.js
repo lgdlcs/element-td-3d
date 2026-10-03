@@ -1479,11 +1479,19 @@ export class Game {
     // #gameOver leaves spectate synchronously.
     if (this.spectating) this._spectate.update(dt);
 
-    this.rig.update(dt);
-    this.arena.update(dt, this.elapsed);
-    this.environment.update(dt, this.elapsed, this.camera);
-    this.lighting.update(dt);
-    this.fx.update(dt);
+    // A 3D rite owns the frame: the board sits behind a near-opaque veil, the
+    // canvas keeps showing its last frame, and nothing on it is worth a second
+    // full 3D render on a machine that can barely afford one. The rite's own
+    // stage draws instead (MinigameHost.ownsFrame); rendering resumes the
+    // frame after the overlay closes.
+    const boardHidden = this.minigames.ownsFrame;
+    if (!boardHidden) {
+      this.rig.update(dt);
+      this.arena.update(dt, this.elapsed);
+      this.environment.update(dt, this.elapsed, this.camera);
+      this.lighting.update(dt);
+      this.fx.update(dt);
+    }
     this.hud.update(dt);
     // BELOW the fixed-step block on purpose, and fed the raw clamped dt. The
     // 'minigame' phase is frozen (see FROZEN_PHASES) so the simulation above did
@@ -1494,7 +1502,7 @@ export class Game {
     // its own clock at 1x however the speed buttons are set. It no-ops when the
     // overlay is shut, except for the cheap signature-guarded rail refresh.
     this.lottery.update(dt);
-    this.pipeline.render(this.elapsed, dt);
+    if (!boardHidden) this.pipeline.render(this.elapsed, dt);
   }
 
   #step(dt) {

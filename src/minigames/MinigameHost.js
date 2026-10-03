@@ -1,16 +1,19 @@
 /**
  * THE RITE HOST — the overlay every minigame is played inside.
  *
- * It owns the veil, the keyboard shield, the one 2D canvas, the fixed-step loop,
- * the clock, the skip affordance, the result card and the single gold credit.
- * A rite owns none of those and cannot reach any of them; see docs/MINIGAMES.md.
+ * It owns the veil, the keyboard shield, the stage canvases, the fixed-step
+ * loop, the clock, the intro card, the skip affordance, the result card and the
+ * single gold credit. A rite owns none of those and cannot reach any of them;
+ * see docs/MINIGAMES.md.
  *
- * WHY 2D CANVAS AND NOT THREE. docs/PERF_BUDGET.md: the frame is fragment-bound
- * at 16.6 ms median and the CPU sits at 0.20 ms. A full-bleed transparent
- * surface, an extra light or an extra pass is spent out of the budget that is
- * already tight; a 2D canvas over a CSS-darkened viewport is spent out of the
- * budget that is empty. The three.js scene keeps rendering behind the veil at
- * its usual cost and nothing is added to it.
+ * TWO RENDER PATHS, DURING THE MIGRATION ONLY. A def with a `view` is drawn in
+ * 3D: the host lazily creates ONE Stage3D (one WebGL context, reused by every
+ * rite for the session), loads the view module, and maps the pointer to field
+ * units by raycasting onto the view's gameplay plane. While that stage is up the
+ * board behind the veil stops rendering (`ownsFrame`, read by Game.frame and
+ * main.js), so a modest machine never pays for two 3D scenes at once. A def
+ * without a `view` still draws through the legacy 2D Painter; that path is
+ * deleted once the last rite is converted.
  *
  * WHAT THIS FILE GUARANTEES, and what the tests hold it to:
  *
@@ -87,6 +90,14 @@ import { Painter } from './Painter.js';
 import { riteDef } from './registry.js';
 import { riteRng } from './schedule.js';
 import { isTypingTarget } from '../util/dom.js';
+import { key as keycap } from '../ui/uikit.js';
+
+/**
+ * three.js r185 is WebGL2-only. jsdom and node have no WebGL2RenderingContext,
+ * so the host never even imports the stage there and a 3D rite plays blind —
+ * which is exactly what the unit suites want to exercise.
+ */
+const canWebGL2 = () => typeof window !== 'undefined' && typeof window.WebGL2RenderingContext === 'function';
 
 /** Held-direction keys, mapped to the field's axes (+y is UP). */
 const AXIS_KEYS = {
@@ -133,7 +144,7 @@ const ESC_ARM = 2.4;
 const RESUME_GRACE = 1.2;
 
 /**
- * THE PRE-ROLL, IN SECONDS — five, counted down over the field.
+ * THE PRE-ROLL, IN SECONDS — the intro card, with its countdown.
  *
  * A rite arrives unannounced, on a wave boundary, over a board the player was
  * looking at for another reason entirely, and several of the six start scoring
@@ -147,10 +158,15 @@ const RESUME_GRACE = 1.2;
  * rite's own clock must not have started before the player has.
  *
  * IT IS SKIPPABLE, and by the same key that plays the rite. A player on their
- * eighth rite knows what a fishing boat looks like, and five seconds they
- * cannot cut short is the toll booth the Skip button exists to refuse.
+ * eighth rite knows what a fishing boat looks like, and ten seconds they
+ * cannot cut short is the toll booth the Skip button exists to refuse. Ten and
+ * not five because the card now carries the rules and the keys, and a first-
+ * time player reading three lines and a key list needs the time.
  */
-const COUNTDOWN = 5;
+const COUNTDOWN = 10;
+
+/** The countdown only beeps for its last seconds; ten beeps is a nag, not a cue. */
+const COUNTDOWN_BEEPS = 3;
 
 /** How long "Go" stays on screen after the rite has actually started. */
 const GO_FLASH = 0.45;
@@ -181,17 +197,23 @@ export class MinigameHost {
 
           <div class="rite-stage" id="rite-stage">
             <canvas id="rite-canvas"></canvas>
-            <!-- THE PRE-ROLL. Sits over the field it is about to hand over, so
-                 the player reads the board (where the targets are, which way
-                 the boat is facing) while the number runs down. -->
-            <!-- NO RITE NAME IN HERE. It is already six lines up, in the
-                 heading, at twice the size; printing it twice on one surface
-                 spends the centre of the field on something the player has
-                 just read. The announcement is the verb and the number. -->
-            <div class="rite-count" id="rite-count" hidden>
-              <span class="rc-ready">Get ready</span>
-              <b id="rite-count-num" aria-live="assertive">5</b>
+            <canvas id="rite-gl" hidden></canvas>
+            <!-- THE INTRO CARD. Sits over the field it is about to hand over,
+                 so the player reads the rules and the keys while the scene
+                 they describe is already visible behind them. -->
+            <div class="rite-intro" id="rite-intro" hidden>
+              <div class="ri-card">
+                <span class="ri-kicker">How to play</span>
+                <h3 id="rite-intro-title"></h3>
+                <ul class="ri-rules" id="rite-rules"></ul>
+                <ul class="ri-keys" id="rite-keys"></ul>
+                <p class="ri-start">
+                  <kbd>Space</kbd><span>or click to start</span>
+                  <span class="ri-auto">starts in <b id="rite-count-num" aria-live="polite">10</b></span>
+                </p>
+              </div>
             </div>
+            <div class="rite-count" id="rite-count" hidden><b>Go</b></div>
 
             <div class="rite-suspend" id="rite-suspend" hidden>
               <b>Suspended</b>
@@ -231,6 +253,11 @@ export class MinigameHost {
     this.$shell = q('#rite .rite-shell');
     this.$stage = q('#rite-stage');
     this.$canvas = q('#rite-canvas');
+    this.$gl = q('#rite-gl');
+    this.$intro = q('#rite-intro');
+    this.$introTitle = q('#rite-intro-title');
+    this.$rules = q('#rite-rules');
+    this.$keys = q('#rite-keys');
     this.$eyebrow = q('#rite-eyebrow');
     this.$title = q('#rite-title');
     this.$hint = q('#rite-hint');
@@ -250,6 +277,15 @@ export class MinigameHost {
     this.$continue = q('#rite-continue');
 
     this.painter = new Painter(this.$canvas.getContext('2d', { alpha: true }));
+    /** @type {?import('./Stage3D.js').Stage3D} Created on the first 3D rite, kept for the session. */
+    this._stage = null;
+    this._stageP = null;
+    /** @type {?import('./Stage3D.js').RiteView} The open rite's view, once its module has loaded. */
+    this._view = null;
+    /** Bumped on every open, so a view that finishes loading after its rite closed is dropped. */
+    this._serial = 0;
+    /** Rite frames actually drawn, either path. Read by tests/e2e to prove a rite reached the screen. */
+    this.renderedFrames = 0;
 
     /** @type {Array<() => void>} Disposers for everything bound while open. */
     this._disposers = [];
@@ -315,6 +351,22 @@ export class MinigameHost {
   /** Live count of things that must be released. 0 whenever the overlay is shut. */
   get listenerCount() { return this._disposers.length; }
 
+  /**
+   * True while a 3D rite is on screen. Game.frame skips the board's render and
+   * main.js pauses the resolution controllers while this holds: the board is
+   * behind a near-opaque veil, keeps its last frame, and is not worth a second
+   * full 3D render on a machine that can barely afford one.
+   */
+  get ownsFrame() { return this.isOpen && this._view !== null; }
+
+  /** FIELD units -> client pixels through whichever path is drawing. For tests and tools. */
+  fieldToClient(x, y) {
+    if (this._view) return this._stage.fieldToClient(this._view, x, y, this.$gl.getBoundingClientRect());
+    const r = this.$canvas.getBoundingClientRect();
+    const c = this.painter.toClient(x, y);
+    return { x: r.left + c.x, y: r.top + c.y };
+  }
+
   // ---- lifecycle ---------------------------------------------------------
 
   /**
@@ -336,6 +388,8 @@ export class MinigameHost {
     this.occurrence = o.occurrence ?? 0;
     this._onDone = o.onDone ?? null;
 
+    this._serial++;
+    this.renderedFrames = 0;
     this.instance = def.create();
     this.instance.init({
       rand: riteRng(this.game.seed, def.id, this.occurrence),
@@ -395,22 +449,31 @@ export class MinigameHost {
     // Inline, so it beats the stylesheet's default crosshair, and cleared on
     // close so it cannot survive into a rite that never asked for it.
     this.$canvas.style.cursor = def.cursor ?? '';
+    this.$gl.style.cursor = def.cursor ?? '';
+    // The 3D canvas stays hidden until the view has drawn into it, so the
+    // stage's CSS gradient shows during the few frames the module takes to load
+    // rather than a black rectangle.
+    this.$canvas.hidden = !!def.view;
+    this.$gl.hidden = true;
     this.$eyebrow.textContent = `${def.eyebrow ?? 'Interlude'} · before wave ${this.wave}`;
     this.$title.textContent = def.name;
     this.$hint.textContent = def.hint;
+    this.#fillIntro(def);
     this.$skipLabel.textContent = 'Skip';
     this.$skip.classList.remove('armed');
     this.$result.hidden = true;
     this.$suspend.hidden = true;
     this.$countNum.textContent = String(this._countShown);
+    this.$intro.hidden = false;
     this.$count.classList.remove('go');
-    this.$count.hidden = false;
+    this.$count.hidden = true;
     this.$el.classList.remove('resolved');
     this.$el.classList.add('open');
     this.$el.setAttribute('aria-hidden', 'false');
     this.isOpen = true;
 
     this.#bind();
+    this.#loadView(def, this._serial);
     // offsetWidth before focus, per docs/PITFALLS.md: focusing a node whose
     // visibility is still inherited from a hidden ancestor silently does
     // nothing, and then the keyboard shield has nothing to shield.
@@ -423,6 +486,58 @@ export class MinigameHost {
     // transition is 240 ms; one blank frame inside it is invisible, and the
     // first real render arrives from update() a few milliseconds later.
     return true;
+  }
+
+  /**
+   * The intro card: name, rules, keys. Text only, through textContent and the
+   * game's one keycap helper, so a def cannot inject markup.
+   */
+  #fillIntro(def) {
+    this.$introTitle.textContent = def.name;
+    this.$rules.replaceChildren(...(def.rules ?? []).map((line) => {
+      const li = document.createElement('li');
+      li.textContent = line;
+      return li;
+    }));
+    this.$keys.replaceChildren(...(def.keys ?? []).map((k) => {
+      const li = document.createElement('li');
+      const caps = document.createElement('span');
+      caps.className = 'ri-caps';
+      caps.innerHTML = k.keys.map((label) => keycap(label)).join('');
+      const act = document.createElement('span');
+      act.className = 'ri-act';
+      act.textContent = k.action;
+      li.append(caps, act);
+      return li;
+    }));
+  }
+
+  /**
+   * Load the stage (once) and this rite's view module, then build the view.
+   *
+   * Asynchronous because both are dynamic imports — that is what keeps three.js
+   * out of every module a node test imports. The intro card covers the wait.
+   * `serial` drops a load that finishes after its rite has already closed.
+   */
+  #loadView(def, serial) {
+    if (!def.view || !canWebGL2()) return;
+    if (!this._stageP) {
+      const quality = this.game.pipeline?.quality ?? 'high';
+      this._stageP = import('./Stage3D.js').then((m) => m.Stage3D.create(this.$gl, { quality }));
+      this._stageP.catch(() => { this._stageP = null; });
+    }
+    Promise.all([this._stageP, def.view()]).then(([stage, mod]) => {
+      if (serial !== this._serial || !this.isOpen || !stage) return;
+      this._stage = stage;
+      this.#guard(() => {
+        const view = mod.createView(stage, this.instance);
+        stage.compile(view);
+        this._view = view;
+      });
+    }, (err) => {
+      if (serial !== this._serial || !this.isOpen) return;
+      this.#guard(() => { throw err; });
+    });
   }
 
   /**
@@ -547,7 +662,7 @@ export class MinigameHost {
     // a CSS media query, a zoom), and one observer covers all of it.
     if (typeof ResizeObserver === 'function') {
       const ro = new ResizeObserver(() => { this._cssW = 0; });
-      ro.observe(this.$canvas);
+      ro.observe(this.$stage);
       this._disposers.push(() => ro.disconnect());
     }
   }
@@ -566,6 +681,11 @@ export class MinigameHost {
     this._disposers.length = 0;
 
     this.instance?.teardown?.();
+    if (this._view) {
+      try { this._view.dispose(); } catch (err) { console.error(`[rite] '${this.def?.id}' view failed to dispose:`, err); }
+      this._view = null;
+    }
+    this._serial++;
     const result = {
       id: this.def?.id ?? null,
       wave: this.wave,
@@ -579,9 +699,13 @@ export class MinigameHost {
     this.$el.classList.remove('open', 'resolved');
     delete this.$el.dataset.rite;
     this.$canvas.style.cursor = '';
+    this.$gl.style.cursor = '';
+    this.$gl.hidden = true;
+    this.$canvas.hidden = false;
     this.$el.setAttribute('aria-hidden', 'true');
     this.$result.hidden = true;
     this.$suspend.hidden = true;
+    this.$intro.hidden = true;
     this.$count.hidden = true;
     this.$count.classList.remove('go');
 
@@ -593,18 +717,32 @@ export class MinigameHost {
   /** Tear the whole surface out of the DOM. For HMR and for tests. */
   destroy() {
     this.close();
+    this._stage?.dispose();
+    this._stage = null;
+    this._stageP = null;
     this.$el.remove();
   }
 
   // ---- input -------------------------------------------------------------
 
+  /**
+   * Pointer -> FIELD units. A 3D rite raycasts onto its view's gameplay plane
+   * (Stage3D.pick); a legacy rite inverts the Painter's letterbox. Either way
+   * the rite only ever sees field units. Before a 3D view has loaded there is
+   * no plane to hit, so the last known position is kept.
+   */
   #syncPointer(e) {
-    const r = this.$canvas.getBoundingClientRect();
-    const p = this.painter.toField(e.clientX - r.left, e.clientY - r.top);
+    const canvas = this.def?.view ? this.$gl : this.$canvas;
+    const r = canvas.getBoundingClientRect();
+    let p = null;
+    if (this._view) p = this._stage.pick(this._view, e.clientX, e.clientY, r);
+    else if (!this.def?.view) p = this.painter.toField(e.clientX - r.left, e.clientY - r.top);
     // Kept even when outside, deliberately — see NEUTRAL_INPUT's docblock.
-    this._input.x = p.x;
-    this._input.y = p.y;
-    this._input.inside = e.clientX >= r.left && e.clientX <= r.right
+    if (p) {
+      this._input.x = p.x;
+      this._input.y = p.y;
+    }
+    this._input.inside = !!p && e.clientX >= r.left && e.clientX <= r.right
       && e.clientY >= r.top && e.clientY <= r.bottom;
   }
 
@@ -733,7 +871,7 @@ export class MinigameHost {
 
   #skip() {
     // 'countdown' is skippable for the same reason 'play' is: a player who does
-    // not want this rite must not have to wait five seconds to say so.
+    // not want this rite must not have to wait out the intro to say so.
     if (this.mode !== 'play' && this.mode !== 'countdown') return;
     this._skipped = true;
     this.#settle();
@@ -756,11 +894,13 @@ export class MinigameHost {
       this._countShown = n;
       if (n > 0) {
         this.$countNum.textContent = String(n);
-        this.game.audio?.play('select');
-        // Restart the pop, same forced reflow as #kick and for the same reason.
-        this.$count.classList.remove('tick');
-        void this.$count.offsetWidth;
-        this.$count.classList.add('tick');
+        if (n <= COUNTDOWN_BEEPS) {
+          this.game.audio?.play('select');
+          // Restart the pop, same forced reflow as #kick and for the same reason.
+          this.$intro.classList.remove('tick');
+          void this.$intro.offsetWidth;
+          this.$intro.classList.add('tick');
+        }
       }
     }
     if (this._count <= 0) this.#beginPlay();
@@ -785,8 +925,9 @@ export class MinigameHost {
     this._pendingClicks.length = 0;
     this._pendingSlots.fill(0);
     this._goFlash = GO_FLASH;
-    this.$countNum.textContent = 'Go';
-    this.$count.classList.remove('tick');
+    this.$intro.hidden = true;
+    this.$intro.classList.remove('tick');
+    this.$count.hidden = false;
     this.$count.classList.add('go');
     this.game.audio?.play('waveStart');
   }
@@ -971,6 +1112,12 @@ export class MinigameHost {
     const events = this.instance?.drainEvents?.();
     if (!events || events.length === 0) return;
     for (const ev of events) {
+      // Forwarded before the CUES lookup: a view may want a cue the host has no
+      // sound for. Guarded, because view code is rite code.
+      if (this._view) {
+        this.#guard(() => this._view.cue(ev));
+        if (this._aborted) return;
+      }
       const cue = CUES[ev.type];
       if (!cue) continue;                       // unknown type: ignored, see CUES
       this.game.audio?.play(cue.sfx);
@@ -1055,7 +1202,8 @@ export class MinigameHost {
     this.$result.hidden = false;
     this.$el.classList.add('resolved');
     this.$suspend.hidden = true;
-    // A rite skipped during its own announcement still has the "Go" up.
+    // A rite skipped during its own announcement still has the card or "Go" up.
+    this.$intro.hidden = true;
     this.$count.hidden = true;
     this._goFlash = 0;
     this.$result.classList.toggle('empty', this._reward === 0);
@@ -1074,6 +1222,45 @@ export class MinigameHost {
   // ---- rendering ---------------------------------------------------------
 
   #render(dt) {
+    if (this.def?.view) this.#render3D(dt);
+    else this.#render2D();
+    if (this._aborted) return;
+
+    // The clock. Rendered in the DOM rather than on the canvas so it uses the
+    // game's own type tokens and tabular figures instead of a canvas font.
+    const frac = this.def ? Math.max(0, this._remaining) / this.def.duration : 0;
+    this.$clockFill.style.transform = `scaleX(${frac.toFixed(4)})`;
+    this.$clockNum.textContent = Math.max(0, this._remaining).toFixed(1);
+    this.$clockNum.classList.toggle('low', this._remaining < 4 && this.mode === 'play');
+  }
+
+  /**
+   * The 3D path. Sized off the STAGE's content box (the canvas is hidden until
+   * its first frame, and a hidden canvas measures 0x0). The view syncs its
+   * scene from the rite, then the stage draws it; both run inside #guard,
+   * because view code is rite code and a throw in it must cost the rite, not
+   * the run.
+   */
+  #render3D(dt) {
+    const view = this._view;
+    if (!view || !this.instance) return;
+    const cssW = this.$stage.clientWidth;
+    const cssH = this.$stage.clientHeight;
+    if (cssW === 0 || cssH === 0) return;
+    const dpr = Math.min(MINIGAMES.maxDpr, window.devicePixelRatio || 1);
+    const alpha = Math.min(1, this._acc / MINIGAMES.dt);
+    this.#guard(() => {
+      if (this._stage.setSize(cssW, cssH, dpr)) view.layout(this._stage.aspect);
+      view.render(alpha, dt);
+      this._stage.render(view);
+    });
+    if (this._aborted) return;
+    this.renderedFrames++;
+    if (this.$gl.hidden) this.$gl.hidden = false;
+  }
+
+  /** The legacy 2D path. Deleted with Painter.js once every rite has a view. */
+  #render2D() {
     const cvs = this.$canvas;
     const cssW = cvs.clientWidth;
     const cssH = cvs.clientHeight;
@@ -1094,14 +1281,7 @@ export class MinigameHost {
       const alpha = Math.min(1, this._acc / MINIGAMES.dt);
       this.#guard(() => this.instance.draw(this.painter, alpha));
       if (this._aborted) return;
+      this.renderedFrames++;
     }
-
-    // The clock. Rendered in the DOM rather than on the canvas so it uses the
-    // game's own type tokens and tabular figures instead of a canvas font.
-    const frac = this.def ? Math.max(0, this._remaining) / this.def.duration : 0;
-    this.$clockFill.style.transform = `scaleX(${frac.toFixed(4)})`;
-    this.$clockNum.textContent = Math.max(0, this._remaining).toFixed(1);
-    this.$clockNum.classList.toggle('low', this._remaining < 4 && this.mode === 'play');
-    void dt;
   }
 }

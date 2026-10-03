@@ -1491,6 +1491,15 @@ export const FISHING_RITE = {
   id: 'fishing',
   name: 'Fishing',
   hint: 'Cast where the fish will be — the hook takes a moment to sink',
+  rules: [
+    'The hook takes a moment to sink: cast where the fish WILL be.',
+    'Golden fish are worth 3. Rivals fish the same lake.',
+    'An empty cast costs you time reeling in.',
+  ],
+  keys: [
+    { keys: ['Mouse'], action: 'Aim' },
+    { keys: ['Click', 'Space'], action: 'Cast' },
+  ],
   duration: DURATION,
   theme: 'fishing',
   eyebrow: 'Cast',

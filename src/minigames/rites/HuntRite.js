@@ -1420,6 +1420,15 @@ export const HUNT_RITE = {
   id: 'hunt',
   name: 'Game Hunt',
   hint: 'Shoot before a rival does — click or Space. A miss spooks it.',
+  rules: [
+    'An animal steps out, freezes for a beat, then bolts.',
+    'Shoot it before a rival hunter does.',
+    'A shot that misses scares the animal away.',
+  ],
+  keys: [
+    { keys: ['Mouse'], action: 'Aim' },
+    { keys: ['Click', 'Space'], action: 'Shoot' },
+  ],
   duration: DURATION,
   theme: 'hunt',
   eyebrow: 'Hunt',

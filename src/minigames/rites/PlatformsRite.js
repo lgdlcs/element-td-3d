@@ -1241,6 +1241,15 @@ export const PLATFORMS_RITE = {
   id: 'platforms',
   name: 'Falling Platforms',
   hint: 'Move before the stone does — the longer you last, the more it pays',
+  rules: [
+    'Stand on the stone tiles: they crack, shake, then fall.',
+    'Step off a cracking tile before it drops. Falling ends your run.',
+    'Last as long as you can and outlast your three rivals.',
+  ],
+  keys: [
+    { keys: ['↑', '←', '↓', '→'], action: 'Move' },
+    { keys: ['W/Z', 'A/Q', 'S', 'D'], action: 'Move (letters, QWERTY or AZERTY)' },
+  ],
   duration: DURATION,
   theme: 'platforms',
   eyebrow: 'Party',

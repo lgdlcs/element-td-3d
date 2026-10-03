@@ -155,8 +155,13 @@ export function assertRiteContract(def, { randCalls, skilled = null, mashCeiling
   expect(typeof def.create, `[${id}] def.create must be a function`).toBe('function');
   expect(def.duration, `[${id}] def.duration must be a positive number of seconds`).toBeGreaterThan(0);
   const probe = def.create();
-  for (const m of ['init', 'update', 'draw', 'score']) {
+  // `draw` is the legacy 2D path; a rite with a 3D `view` has none (contract.js MinigameDef).
+  const methods = def.view ? ['init', 'update', 'score'] : ['init', 'update', 'draw', 'score'];
+  for (const m of methods) {
     expect(typeof probe[m], `[${id}] rule "the contract": ${m}() is missing`).toBe('function');
+  }
+  if (def.view) {
+    expect(typeof def.view, `[${id}] def.view must be a function returning the view module`).toBe('function');
   }
   expect(def.create(), `[${id}] rule "one instance per create": create() returned the same object twice`)
     .not.toBe(probe);

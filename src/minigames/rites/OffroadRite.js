@@ -1650,6 +1650,16 @@ export const OFFROAD_RITE = {
   id: 'offroad',
   name: 'Offroad Racing',
   hint: 'Steer through the gates — click to boost, right-click to drop a bomb',
+  rules: [
+    'The car drives itself: steer it through the gates.',
+    'Stay on the dirt road. The scrub slows you down.',
+    'Gates, gold nuggets and beating your rivals all pay.',
+  ],
+  keys: [
+    { keys: ['←', '→', 'A/Q', 'D'], action: 'Steer (or the mouse, when no key is held)' },
+    { keys: ['Space', 'Click'], action: 'Boost (3 charges)' },
+    { keys: ['1', 'Right-click'], action: 'Drop a bomb behind you (2)' },
+  ],
   duration: DURATION,
   theme: 'offroad',
   eyebrow: 'Rally',

@@ -1081,6 +1081,15 @@ export const LUCKY_SHOT_RITE = {
   id: 'luckyshot',
   name: 'Lucky Shot',
   hint: 'Shoot the rows — left, right or Space, and count your rounds',
+  rules: [
+    'Shoot the cut-outs riding past: front row 1, middle row 2, back row 3.',
+    'The golden one pays 4x, once. The one with its hands up costs you 1.',
+    '24 rounds, and a miss spends one too. 38 points pays in full.',
+  ],
+  keys: [
+    { keys: ['Mouse'], action: 'Aim' },
+    { keys: ['Click', 'Space'], action: 'Shoot' },
+  ],
   duration: DURATION,
   theme: 'luckyshot',
   eyebrow: 'Gallery',

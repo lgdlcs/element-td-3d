@@ -1315,6 +1315,16 @@ export const HEAVEN_RITE = {
   id: 'heaven',
   name: 'escape from gay heaven',
   hint: 'Steer the mote — thread the gaps, three lights to spend',
+  rules: [
+    'Steer the little light through the clouds for 20 seconds.',
+    'Anything pink burns you: you have three lights to lose.',
+    'The longer you last, the more gold you earn.',
+  ],
+  keys: [
+    { keys: ['Mouse'], action: 'The light follows the cursor' },
+    { keys: ['↑', '←', '↓', '→'], action: 'Move' },
+    { keys: ['W/Z', 'A/Q', 'S', 'D'], action: 'Move (letters, QWERTY or AZERTY)' },
+  ],
   duration: DURATION,
   theme: 'heaven',
   eyebrow: 'Ascent',

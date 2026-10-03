@@ -104,6 +104,8 @@ const HOST_RITE = {
   id: HOST_RITE_ID,
   name: 'Host Test Rite',
   hint: 'Commit while the window is open',
+  rules: ['Commit while the window is open.', 'Six commits, one point each.'],
+  keys: [{ keys: ['Space', 'Click'], action: 'Commit' }, { keys: ['↑', '↓'], action: 'Nothing at all' }],
   // Long enough that an idle run is ended by the CLOCK (which several tests
   // below depend on) and short enough that 3 000 steps comfortably reach it.
   duration: 18,
@@ -198,7 +200,7 @@ function stub2d() {
 }
 
 /**
- * Open a rite AND stand through its five-second announcement.
+ * Open a rite AND stand through its intro card.
  *
  * Every test below this line is about what happens once the field is live —
  * the loop, the clock, the click queue, the settle guard — and none of them is
@@ -267,47 +269,62 @@ describe('mounting', () => {
 
 // ===========================================================================
 /**
- * The five-second announcement, which is the only part of a rite the PLAYER
- * gets for free: the clock does not run and the rite is not stepped.
+ * The intro card — rules, keys, a countdown — which is the only part of a rite
+ * the PLAYER gets for free: the clock does not run and the rite is not stepped.
  *
- * The number 5 is hard-coded here rather than imported, on purpose. COUNTDOWN
+ * The number 10 is hard-coded here rather than imported, on purpose. COUNTDOWN
  * is private to the host and a test that reads the same constant as the code
  * asserts nothing — it would keep passing if the pre-roll silently became one
- * second. These tests fail if the length changes, which is the point: five
+ * second. These tests fail if the length changes, which is the point: ten
  * seconds is a design decision and changing it should require saying so.
  */
-describe('the pre-roll', () => {
+describe('the intro card', () => {
   const num = () => root.querySelector('#rite-count-num').textContent;
-  const shown = () => !root.querySelector('#rite-count').hidden;
+  const shown = () => !root.querySelector('#rite-intro').hidden;
 
-  it('opens onto the announcement, not onto the game', () => {
+  it('opens onto the rules and the keys, not onto the game', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
     expect(host.mode).toBe('countdown');
     expect(shown()).toBe(true);
-    expect(num()).toBe('5');
-    // And the heading — which the announcement deliberately does not repeat —
-    // is already naming what is about to start.
+    expect(num()).toBe('10');
+    expect(root.querySelector('#rite-intro-title').textContent).toBe(HOST_RITE.name);
+    expect([...root.querySelectorAll('#rite-rules li')].map((li) => li.textContent))
+      .toEqual(HOST_RITE.rules);
+    const rows = [...root.querySelectorAll('#rite-keys li')].map((li) => ({
+      keys: [...li.querySelectorAll('kbd')].map((k) => k.textContent),
+      action: li.querySelector('.ri-act').textContent,
+    }));
+    expect(rows).toEqual(HOST_RITE.keys);
     expect(root.querySelector('#rite-title').textContent).toBe(HOST_RITE.name);
+  });
+
+  it('cannot be made to inject markup through a rule or a key label', () => {
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, rules: ['<img src=x onerror=alert(1)>', 'ok'], keys: [{ keys: ['<b>'], action: '<i>x</i>' }] };
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    expect(root.querySelector('#rite-rules img')).toBeNull();
+    expect(root.querySelector('#rite-keys b')).toBeNull();
+    expect(root.querySelector('#rite-keys kbd').textContent).toBe('<b>');
   });
 
   it('spends no rite time and no clock while it counts', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
-    for (let i = 0; i < 31; i++) host.update(0.1);      // 3.1 seconds
+    for (let i = 0; i < 71; i++) host.update(0.1);      // 7.1 seconds
     expect(host.mode).toBe('countdown');
-    expect(num()).toBe('2');
+    expect(num()).toBe('3');
     // The rite's own clock has not moved, and neither has the host's.
     expect(host.instance.t).toBe(0);
     expect(host._remaining).toBe(HOST_RITE.duration);
   });
 
-  it('hands over after five seconds and starts the clock then', () => {
+  it('hands over after ten seconds and starts the clock then', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
-    for (let i = 0; i < 49; i++) host.update(0.1);      // 4.9s
+    for (let i = 0; i < 99; i++) host.update(0.1);      // 9.9s
     expect(host.mode).toBe('countdown');
-    // Two frames rather than one: 49 x 0.1 is 4.899999... in binary floating
-    // point, so the exact boundary frame is not a claim worth making.
+    // Two frames rather than one: 99 x 0.1 is not exactly 9.9 in binary
+    // floating point, so the exact boundary frame is not a claim worth making.
     host.update(0.1); host.update(0.1);
     expect(host.mode).toBe('play');
+    expect(shown()).toBe(false);
     for (let i = 0; i < 10; i++) host.update(0.1);      // one second of play
     expect(host.instance.t).toBeGreaterThan(0.9);
     expect(host._remaining).toBeLessThan(HOST_RITE.duration);
@@ -354,13 +371,41 @@ describe('the pre-roll', () => {
   it('is suspended by a lost window, exactly as play is', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
     window.dispatchEvent(new window.Event('blur'));
-    for (let i = 0; i < 60; i++) host.update(0.1);      // six seconds away
+    for (let i = 0; i < 120; i++) host.update(0.1);     // twelve seconds away
     expect(host.mode).toBe('countdown');
-    expect(num()).toBe('5');
+    expect(num()).toBe('10');
   });
 });
 
 // ===========================================================================
+describe('a 3D rite without WebGL', () => {
+  /**
+   * jsdom has no WebGL2, exactly like a browser that refused a context. A def
+   * with a `view` must then play blind — logic, clock, payout and teardown all
+   * intact — rather than throw, and must never load the view module (which
+   * would drag three.js into a node-side import).
+   */
+  it('plays the logic, pays, and never asks for the view', () => {
+    const view = vi.fn(() => { throw new Error('the view module must not be loaded here'); });
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view };
+    const before = census();
+    try {
+      const onDone = vi.fn();
+      expect(openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0, onDone })).toBe(true);
+      expect(host.ownsFrame).toBe(false);
+      for (let i = 0; i < 400 && host.mode === 'play'; i++) host.update(0.1);
+      expect(host.mode).toBe('result');
+      host.close();
+      expect(view).not.toHaveBeenCalled();
+      expect(onDone).toHaveBeenCalledTimes(1);
+      expect(host.listenerCount).toBe(0);
+      expect(before.live).toBe(0);
+    } finally {
+      before.restore();
+    }
+  });
+});
+
 describe('teardown', () => {
   it('releases every listener it took, measured from the platform', () => {
     const c = census();
