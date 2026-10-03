@@ -18,7 +18,17 @@ Two rows exist to reach content that is otherwise gated behind a specific wave:
 `Game.startMinigame(id, wave, occurrence)` — the same public entry the real
 schedule uses, with the occurrence the schedule would have computed, so what you
 see is what a player on this seed would get (`docs/MINIGAMES.md` §10). **Loterie**
-does the same for the wager (`docs/LOTTERY.md`).
+does the same for the wager (`docs/LOTTERY.md`). **Bac à sable**, next to
+**Lancer**, opens the same rite, wave and seed in the rite sandbox in a new tab.
+
+**The rite sandbox, http://localhost:5273/rites.html.** One rite at a time
+through the real `MinigameHost`, with no board behind it, so it boots in under a
+second. Without a query it lists the six rites with a wave and a quality field.
+`?rite=<id>&wave=<n>&occ=<k>&seed=<s>&q=<quality>` launches one directly (only
+`rite` is required; `occ` defaults to what the schedule would compute for that
+wave). After the result, **Replay** (R) keeps the seed, **New seed** (N) rolls
+one, **Back to list** (B). Gold goes nowhere: the panel prints what the rite
+would have paid. Code in `src/dev/RiteSandbox.js`, page `rites.html`.
 
 **The button is the reliable way in.** A key alone was not: F9 is Mission Control
 on macOS and needs Fn on any keyboard whose F-row defaults to media, and AZERTY's
@@ -28,7 +38,9 @@ outside `#ui-root`, so nothing in the top bar can stack over it).
 
 It cannot ship: `src/dev/` is reached only from `if (import.meta.env.DEV)` in
 main.js, which Vite folds to `false` in a production build, so the module never
-enters the graph. `npm run build && node tools/check-no-dev.mjs` proves it
+enters the graph. The sandbox is reached only from `rites.html`, and `vite build`
+bundles `index.html` alone; the check also fails if `dist/rites.html` or the
+sandbox's strings appear. `npm run build && node tools/check-no-dev.mjs` proves it
 against the real `dist/` — verified failing when the string is planted, so the
 check is not vacuous.
 

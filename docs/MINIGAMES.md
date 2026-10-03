@@ -915,6 +915,14 @@ shake budget on something nobody can see.
 
 ## 9. Testing a rite
 
+**By hand, use the sandbox.** `npm run dev`, then
+http://localhost:5273/rites.html?rite=<id> (also `&wave=`, `&occ=`, `&seed=`,
+`&q=`), or the page without a query for a picker. It runs the real host with a
+stub for the five things it reads off `Game`, so the intro card, the clock, the
+result card and the would-be reward are the shipping ones, minus the board and
+the gold. Replay keeps the seed. Dev only; see docs/STATUS.md.
+`tests/e2e/sandbox.spec.js` covers it.
+
 Unit tests live in `tests/unit` with `environment: 'node'`. **You may not import
 `three` or `src/main.js` there**, which is exactly why the logic is separated
 from the rendering. A rite module imports only `contract.js`, `Rng.js`, `Config.js`
