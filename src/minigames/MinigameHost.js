@@ -204,12 +204,12 @@ export class MinigameHost {
             <div class="rite-intro" id="rite-intro" hidden>
               <div class="ri-card">
                 <span class="ri-kicker">How to play</span>
-                <h3 id="rite-intro-title"></h3>
                 <ul class="ri-rules" id="rite-rules"></ul>
                 <ul class="ri-keys" id="rite-keys"></ul>
                 <p class="ri-start">
                   <kbd>Space</kbd><span>or click to start</span>
                   <span class="ri-auto">starts in <b id="rite-count-num" aria-live="polite">10</b></span>
+                  <span class="ri-wait" hidden>loading the scene…</span>
                 </p>
               </div>
             </div>
@@ -255,7 +255,6 @@ export class MinigameHost {
     this.$canvas = q('#rite-canvas');
     this.$gl = q('#rite-gl');
     this.$intro = q('#rite-intro');
-    this.$introTitle = q('#rite-intro-title');
     this.$rules = q('#rite-rules');
     this.$keys = q('#rite-keys');
     this.$eyebrow = q('#rite-eyebrow');
@@ -267,6 +266,8 @@ export class MinigameHost {
     this.$skipLabel = q('#rite-skip-label');
     this.$count = q('#rite-count');
     this.$countNum = q('#rite-count-num');
+    this.$auto = q('.ri-auto');
+    this.$wait = q('.ri-wait');
     this.$suspend = q('#rite-suspend');
     this.$suspendNote = q('#rite-suspend-note');
     this.$result = q('#rite-result');
@@ -296,6 +297,7 @@ export class MinigameHost {
     this.mode = 'play';
 
     this._input = makeInput();
+    this._ptrSeen = false;
     this._pendingActions = 0;
     /** Secondary (right-button) commits queued since the last fixed step. */
     this._pendingAlt = 0;
@@ -405,10 +407,17 @@ export class MinigameHost {
     });
 
     this.mode = 'countdown';
+    // A 3D rite cannot start before its view exists: a press would be picked
+    // through no camera and land at the neutral (0, 0). See #beginPlay.
+    this._viewPending = !!def.view && canWebGL2();
+    this._startWanted = false;
+    this.$auto.hidden = false;
+    this.$wait.hidden = true;
     this._count = COUNTDOWN;
     this._countShown = Math.ceil(COUNTDOWN);
     this._goFlash = 0;
     this._input = makeInput();
+    this._ptrSeen = false;
     this._pendingActions = 0;
     this._pendingAlt = 0;
     this._pendingClicks.length = 0;
@@ -493,7 +502,6 @@ export class MinigameHost {
    * game's one keycap helper, so a def cannot inject markup.
    */
   #fillIntro(def) {
-    this.$introTitle.textContent = def.name;
     this.$rules.replaceChildren(...(def.rules ?? []).map((line) => {
       const li = document.createElement('li');
       li.textContent = line;
@@ -527,13 +535,20 @@ export class MinigameHost {
       this._stageP.catch(() => { this._stageP = null; });
     }
     Promise.all([this._stageP, def.view()]).then(([stage, mod]) => {
-      if (serial !== this._serial || !this.isOpen || !stage) return;
+      if (serial !== this._serial || !this.isOpen) return;
+      // No stage means no picture and no pick: abandoned, not played blind.
+      if (!stage) { this.#guard(() => { throw new Error('3D stage unavailable'); }); return; }
       this._stage = stage;
+      stage.setQuality(this.game.pipeline?.quality ?? 'high', this.game.pipeline?.renderer?.getPixelRatio?.());
       this.#guard(() => {
-        const view = mod.createView(stage, this.instance);
-        stage.compile(view);
-        this._view = view;
+        // Assigned before compile, so a compile that throws still has close()
+        // dispose the view instead of leaking its scene on the shared context.
+        this._view = mod.createView(stage, this.instance);
+        stage.compile(this._view);
       });
+      if (this._aborted) return;
+      this._viewPending = false;
+      if (this._startWanted) this.#beginPlay();
     }, (err) => {
       if (serial !== this._serial || !this.isOpen) return;
       this.#guard(() => { throw err; });
@@ -626,7 +641,7 @@ export class MinigameHost {
     // took away — which is the exact failure the window-level binding exists
     // to prevent.
     this.#hold(window, 'pointercancel', () => { this._input.down = false; });
-    this.#hold(this.$stage, 'pointerleave', () => { this._input.inside = false; });
+    this.#hold(this.$stage, 'pointerleave', () => { this._input.inside = false; this._ptrSeen = false; });
 
     /**
      * THE CONTEXT MENU, KILLED ON `$el` AND NOT ON `$stage`.
@@ -685,6 +700,7 @@ export class MinigameHost {
       try { this._view.dispose(); } catch (err) { console.error(`[rite] '${this.def?.id}' view failed to dispose:`, err); }
       this._view = null;
     }
+    this._stage?.release();
     this._serial++;
     const result = {
       id: this.def?.id ?? null,
@@ -732,18 +748,33 @@ export class MinigameHost {
    * no plane to hit, so the last known position is kept.
    */
   #syncPointer(e) {
+    this._ptrX = e.clientX;
+    this._ptrY = e.clientY;
+    this._ptrSeen = true;
+    this.#pickAt(e.clientX, e.clientY);
+  }
+
+  /**
+   * Also run once per 3D frame at the last client position (#render3D): a view
+   * may move its camera (a sway, a chase), and then the field point under a
+   * still pointer moves with it. Re-picking keeps the rite's aim on the pixel
+   * the player is pointing at, so a camera that moves can never move a shot.
+   */
+  #pickAt(clientX, clientY) {
     const canvas = this.def?.view ? this.$gl : this.$canvas;
     const r = canvas.getBoundingClientRect();
     let p = null;
-    if (this._view) p = this._stage.pick(this._view, e.clientX, e.clientY, r);
-    else if (!this.def?.view) p = this.painter.toField(e.clientX - r.left, e.clientY - r.top);
+    if (this._view) {
+      p = this.#guard(() => this._stage.pick(this._view, clientX, clientY, r)) ?? null;
+      if (this._aborted) return;
+    } else if (!this.def?.view) p = this.painter.toField(clientX - r.left, clientY - r.top);
     // Kept even when outside, deliberately — see NEUTRAL_INPUT's docblock.
     if (p) {
       this._input.x = p.x;
       this._input.y = p.y;
     }
-    this._input.inside = !!p && e.clientX >= r.left && e.clientX <= r.right
-      && e.clientY >= r.top && e.clientY <= r.bottom;
+    this._input.inside = !!p && clientX >= r.left && clientX <= r.right
+      && clientY >= r.top && clientY <= r.bottom;
   }
 
   /**
@@ -917,6 +948,13 @@ export class MinigameHost {
    */
   #beginPlay() {
     if (this.mode !== 'countdown') return;
+    if (this._viewPending) {
+      // Remembered, and honoured the moment the view is ready (#loadView).
+      this._startWanted = true;
+      this.$auto.hidden = true;
+      this.$wait.hidden = false;
+      return;
+    }
     this.mode = 'play';
     this._count = 0;
     this._acc = 0;
@@ -1249,6 +1287,10 @@ export class MinigameHost {
     if (cssW === 0 || cssH === 0) return;
     const dpr = Math.min(MINIGAMES.maxDpr, window.devicePixelRatio || 1);
     const alpha = Math.min(1, this._acc / MINIGAMES.dt);
+    if (this._ptrSeen && this.mode === 'play') {
+      this.#pickAt(this._ptrX, this._ptrY);
+      if (this._aborted) return;
+    }
     this.#guard(() => {
       if (this._stage.setSize(cssW, cssH, dpr)) view.layout(this._stage.aspect);
       view.render(alpha, dt);

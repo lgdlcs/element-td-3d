@@ -287,7 +287,6 @@ describe('the intro card', () => {
     expect(host.mode).toBe('countdown');
     expect(shown()).toBe(true);
     expect(num()).toBe('10');
-    expect(root.querySelector('#rite-intro-title').textContent).toBe(HOST_RITE.name);
     expect([...root.querySelectorAll('#rite-rules li')].map((li) => li.textContent))
       .toEqual(HOST_RITE.rules);
     const rows = [...root.querySelectorAll('#rite-keys li')].map((li) => ({
@@ -403,6 +402,78 @@ describe('a 3D rite without WebGL', () => {
     } finally {
       before.restore();
     }
+  });
+});
+
+// ===========================================================================
+describe('a 3D rite whose view has not loaded yet', () => {
+  /**
+   * Until the view exists there is no camera to pick through, so a press would
+   * land at the neutral (0, 0) and spend a round on nothing anybody can see.
+   * The stage promise is stubbed so the test controls when (and whether) the
+   * view arrives; WebGL2 is faked present so the host takes the 3D path.
+   */
+  let restore;
+  beforeEach(() => {
+    const had = 'WebGL2RenderingContext' in window;
+    const prev = window.WebGL2RenderingContext;
+    window.WebGL2RenderingContext = function WebGL2RenderingContext() {};
+    restore = () => { if (had) window.WebGL2RenderingContext = prev; else delete window.WebGL2RenderingContext; };
+  });
+  afterEach(() => restore());
+
+  it('holds the card through a start press and the whole countdown', () => {
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: () => new Promise(() => {}) };
+    host._stageP = new Promise(() => {});
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    key('Space');
+    expect(host.mode).toBe('countdown');
+    for (let i = 0; i < 200; i++) host.update(0.1);
+    expect(host.mode).toBe('countdown');
+    expect(root.querySelector('.ri-wait').hidden).toBe(false);
+    expect(root.querySelector('.ri-auto').hidden).toBe(true);
+  });
+
+  it('starts the moment the view is ready if the player already asked', async () => {
+    const view = { dispose: vi.fn(), layout() {}, render() {}, cue() {} };
+    const stage = { setQuality: vi.fn(), compile: vi.fn(), release: vi.fn(), dispose() {} };
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: async () => ({ createView: () => view }) };
+    host._stageP = Promise.resolve(stage);
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    key('Space');
+    expect(host.mode).toBe('countdown');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(stage.compile).toHaveBeenCalledWith(view);
+    expect(host.mode).toBe('play');
+    host.close();
+    expect(view.dispose).toHaveBeenCalledTimes(1);
+    expect(stage.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons, unpaid, when the stage cannot be had', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: async () => ({ createView: () => ({}) }) };
+    host._stageP = Promise.resolve(null);
+    const onDone = vi.fn();
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0, onDone });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(host.isOpen).toBe(false);
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ reward: 0, skipped: true }));
+    expect(game.addGold).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('disposes a view whose compile throws', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const view = { dispose: vi.fn() };
+    const stage = { setQuality() {}, compile: () => { throw new Error('compile'); }, release() {}, dispose() {} };
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: async () => ({ createView: () => view }) };
+    host._stageP = Promise.resolve(stage);
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(host.isOpen).toBe(false);
+    expect(view.dispose).toHaveBeenCalledTimes(1);
+    err.mockRestore();
   });
 });
 

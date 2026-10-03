@@ -30,6 +30,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { QUALITY_PRESETS } from '../core/Config.js';
 import { FIELD } from './contract.js';
 
 /** @typedef {{ origin: THREE.Vector3, ux: THREE.Vector3, uy: THREE.Vector3 }} FieldFrame */
@@ -101,7 +102,9 @@ export function placeOnRay(camera, frame, x, y, depth, out) {
  * The camera looks at the field centre from the plane's normal, tilted by
  * `tilt` degrees: POSITIVE tilt moves the camera toward field -y (the bottom
  * edge) — the natural "behind the near edge" view of a ground frame; a NEGATIVE
- * tilt on an upright frame looks slightly down at it from above. Distance is
+ * tilt on an upright frame looks slightly down at it from above. `yaw` then
+ * swings it around field +y: positive moves the camera toward field +x, so the
+ * right-hand faces of everything turn toward the player. Distance is
  * found by bisection so all four field corners (inset by `margin` of NDC) are in
  * view; it is a property of the corners, not of a formula that assumes the
  * camera is square to the plane.
@@ -109,7 +112,7 @@ export function placeOnRay(camera, frame, x, y, depth, out) {
  * @param {THREE.PerspectiveCamera} camera
  * @param {FieldFrame} frame
  * @param {number} aspect  canvas width / height
- * @param {{ fov?: number, tilt?: number, margin?: number, lookAt?: {x:number,y:number} }} [o]
+ * @param {{ fov?: number, tilt?: number, yaw?: number, margin?: number, lookAt?: {x:number,y:number} }} [o]
  */
 export function frameField(camera, frame, aspect, o = {}) {
   const fov = o.fov ?? 38;
@@ -123,6 +126,7 @@ export function frameField(camera, frame, aspect, o = {}) {
   const n = frameNormal(frame, new THREE.Vector3());
   const dir = n.clone().multiplyScalar(Math.cos(tilt))
     .addScaledVector(frame.uy.clone().normalize(), -Math.sin(tilt));
+  if (o.yaw) dir.applyAxisAngle(frame.uy.clone().normalize(), THREE.MathUtils.degToRad(o.yaw));
 
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]]
     .map(([sx, sy]) => fieldToWorld(frame, sx * FIELD.hw, sy * FIELD.hh));
@@ -182,11 +186,16 @@ export function addStandardLights(scene, o = {}) {
   return { hemi, key };
 }
 
-/** Dispose every geometry, material and texture under `root`. Idempotent enough to call once on teardown. */
+/**
+ * Dispose every geometry, material, texture and light under `root`. Lights
+ * count: a shadow-casting light's dispose() is the only thing that frees its
+ * shadow map, which otherwise outlives the view on the session-long context.
+ */
 export function disposeObject(root) {
   const seen = new Set();
   const drop = (r) => { if (r && !seen.has(r)) { seen.add(r); r.dispose?.(); } };
   root.traverse((o) => {
+    if (o.isLight) drop(o);
     drop(o.geometry);
     const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
     for (const m of mats) {
@@ -204,7 +213,7 @@ export function disposeObject(root) {
  */
 export class Bursts {
   /**
-   * @param {{ count?: number, size?: number, gravity?: number, additive?: boolean, drag?: number }} [o]
+   * @param {{ count?: number, size?: number, gravity?: number, additive?: boolean, drag?: number, seed?: number }} [o]
    */
   constructor(o = {}) {
     this.n = o.count ?? 160;
@@ -227,7 +236,7 @@ export class Bursts {
     this.points = new THREE.Points(g, m);
     this.points.frustumCulled = false;
     this._c = new THREE.Color();
-    this._seed = 0x9e3779b9;
+    this._seed = o.seed ?? 0x9e3779b9;
     /** True once every particle is dead AND that state has been uploaded: update() is then free. */
     this._idle = true;
   }
@@ -308,13 +317,13 @@ export class RiteView {
   /**
    * @param {Stage3D} stage
    * @param {object} rite   the live MinigameInstance; read-only from here
-   * @param {{ frame?: FieldFrame, fov?: number, tilt?: number, margin?: number, background?: THREE.ColorRepresentation }} [o]
+   * @param {{ frame?: FieldFrame, fov?: number, tilt?: number, yaw?: number, margin?: number, background?: THREE.ColorRepresentation }} [o]
    */
   constructor(stage, rite, o = {}) {
     this.stage = stage;
     this.rite = rite;
     this.frame = o.frame ?? FRAMES.upright;
-    this.framing = { fov: o.fov ?? 38, tilt: o.tilt ?? 0, margin: o.margin ?? 0 };
+    this.framing = { fov: o.fov ?? 38, tilt: o.tilt ?? 0, yaw: o.yaw ?? 0, margin: o.margin ?? 0 };
     this.scene = new THREE.Scene();
     if (o.background !== undefined) this.scene.background = new THREE.Color(o.background);
     this.camera = new THREE.PerspectiveCamera(this.framing.fov, 16 / 9, 0.1, 500);
@@ -368,27 +377,56 @@ export class Stage3D {
     }
   }
 
-  constructor(canvas, { quality = 'high' } = {}) {
+  constructor(canvas, { quality = 'high', boardDpr } = {}) {
     this.canvas = canvas;
-    const cheap = quality === 'potato';
+    // MSAA is the one setting fixed for the context's life; everything else
+    // follows the preset on every open (setQuality).
     this.renderer = new THREE.WebGLRenderer({
-      canvas, antialias: !cheap, alpha: false, powerPreference: 'high-performance', stencil: false,
+      canvas, antialias: quality !== 'potato', alpha: false, powerPreference: 'high-performance', stencil: false,
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.cssW = 0; this.cssH = 0; this.dpr = 0;
+    this._env = null;
+    this.setQuality(quality, boardDpr);
+  }
+
+  /**
+   * Follow the board's preset. Called by the host on every open, BEFORE the
+   * view is built, because views read `shadows` in their constructor.
+   *
+   * @param {string} quality   a QUALITY_PRESETS key
+   * @param {number} [boardDpr] the board renderer's current pixel ratio, which
+   *   already carries AdaptiveResolution's verdict on this machine
+   */
+  setQuality(quality, boardDpr) {
     /**
      * One small shadow map is affordable on a scene this size, except on the two
      * presets that exist because the machine could not afford the board.
      * Views read this and pass it to addStandardLights.
      */
-    this.shadows = !cheap && quality !== 'low';
+    this.shadows = quality !== 'potato' && quality !== 'low';
     this.renderer.shadowMap.enabled = this.shadows;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    /** DPR ceiling. A rite is a small scene, but a 4K panel at DPR 2 is 8 Mpx of it. */
-    this.maxDpr = cheap ? 1 : quality === 'low' ? 1.25 : 1.5;
+    /**
+     * DPR ceiling: never more pixels per CSS pixel than the board is allowed
+     * (its preset cap, and its live adaptive ratio), and never above 1.5 even
+     * on ultra: a rite is a small scene, but a 4K panel at DPR 2 is 8 Mpx of it.
+     */
+    const cap = QUALITY_PRESETS[quality]?.pixelRatioCap ?? 1.5;
+    this.maxDpr = Math.min(1.5, cap, boardDpr > 0 ? boardDpr : Infinity);
+    this.dpr = 0;
+  }
+
+  /**
+   * Drop the drawing buffer to 1x1 while no rite is up: the hidden canvas would
+   * otherwise hold a full-size (MSAA, at high) buffer through every wave.
+   */
+  release() {
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(1, 1, false);
     this.cssW = 0; this.cssH = 0; this.dpr = 0;
-    this._env = null;
   }
 
   /**
@@ -420,9 +458,16 @@ export class Stage3D {
     return true;
   }
 
-  /** Compile every material in the view's scene now, behind the intro card, instead of on the first played frame. */
+  /**
+   * Do the first frame's one-off GPU work now, behind the intro card: compile
+   * every material, then draw once so every texture in the scene is uploaded
+   * and the shadow map exists. compile() alone does neither of the last two,
+   * and a player who pressed Space during the load gets a first frame that is
+   * already a played one.
+   */
   compile(view) {
     this.renderer.compile(view.scene, view.camera);
+    this.renderer.render(view.scene, view.camera);
   }
 
   render(view) {
