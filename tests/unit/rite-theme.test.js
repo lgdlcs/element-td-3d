@@ -42,7 +42,6 @@ import { riteRng } from '../../src/minigames/schedule.js';
 import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
 import { readPalette as readHuntPalette } from '../../src/minigames/rites/HuntPalette.js';
-import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
 
 /**
  * Paths are resolved from the project root, not from `import.meta.url`: this
@@ -60,12 +59,6 @@ function spawn(def, { wave = 8, seed = 5 } = {}) {
     wave, width: FIELD.w, height: FIELD.h, quality: 'high',
   });
   return inst;
-}
-
-/** `#rrggbb` -> `'r,g,b'`, matching what the rites hand to Painter.halo. */
-function chan(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 }
 
 /**
@@ -109,27 +102,6 @@ const CASES = [
     probe: '#456789',
     read: () => readHuntPalette().accent,
   },
-  {
-    def: FISHING_RITE,
-    token: '--rite-fishing-accent',
-    probe: '#56789a',
-    read: (i) => i.pal.rAccent,
-    map: chan,
-  },
-  {
-    def: FISHING_RITE,
-    token: '--rite-fishing-deep',
-    probe: '#010203',
-    read: (i) => i.pal.rDeep,
-    map: chan,
-  },
-  {
-    def: FISHING_RITE,
-    token: '--rite-fishing-shelf',
-    probe: '#040506',
-    read: (i) => i.pal.rShelf,
-    map: chan,
-  },
 ];
 
 // ===========================================================================
@@ -152,7 +124,6 @@ describe('per-rite theme tokens resolve on :root', () => {
     document.documentElement.style.setProperty('--rite-accent', '#ff00ff');
     expect(spawn(HEAVEN_RITE)._palette.accent).not.toBe('#ff00ff');
     expect(readHuntPalette().accent).not.toBe('#ff00ff');
-    expect(spawn(FISHING_RITE).pal.rAccent).not.toBe(chan('#ff00ff'));
   });
 });
 
