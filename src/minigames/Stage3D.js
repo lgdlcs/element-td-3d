@@ -131,6 +131,12 @@ export function frameField(camera, frame, aspect, o = {}) {
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]]
     .map(([sx, sy]) => fieldToWorld(frame, sx * FIELD.hw, sy * FIELD.hh));
   const lim = 1 - margin;
+  // The clip planes left by the PREVIOUS framing must not take part: with them,
+  // every probe beyond the old far plane "fails", the bisection walks to `hi`,
+  // and every second layout() on one camera parked it 320 units away.
+  const span0 = frame.ux.length() * FIELD.w;
+  camera.near = 0.01;
+  camera.far = span0 * 100;
   const fits = (d) => {
     camera.position.copy(target).addScaledVector(dir, d);
     camera.lookAt(target);
