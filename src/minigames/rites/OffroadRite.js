@@ -310,40 +310,37 @@ const COIN_SPREAD = 1.15;
 const COIN_R = 0.34;
 
 const RIVAL_COUNT = 3;
+/** Overtake hysteresis, in standings-key units: about one car length of course. */
+const PASS_GAP = 1 / FLAG_AT;
 /** Amplitude of a rival's weave across the road, in world units. Pure, no draws. */
 const RIVAL_WEAVE = 1.0;
 /**
- * The rivals' clock, as a fraction of the player's.
+ * The rivals' clock, as a multiple of the player's, at wave 3 and wave 53.
  *
- * `SeededRivals` is tuned so a mid-skill ghost takes about COURSE_SECONDS (22 s)
- * to run a generic course; this rite's course takes a clean driver about 21 s,
- * and 22 against 21 puts the whole field inside a second of each other, where
- * the 20 % of the score they carry becomes a coin flip. Running them on a clock
- * 13 % short spreads the field across roughly 20-28 s, which is the range the
- * player's own driving spans.
+ * Scaling the result rather than reaching into rivals.js, as that module's
+ * docblock asks: the shared constants keep the six rites feeling like one game.
  *
- * SCALING THE RESULT RATHER THAN REACHING INTO rivals.js, exactly as that
- * module's docblock asks: the shared constants are what make the six rites feel
- * like one game, and a rite that wants a different rhythm is entitled to a
- * different rhythm, not to a different `CLAIM_BASE` for everybody.
+ * TUNED SO THE PLACE IS CONTESTED. At 1.55 flat the field was so slow that any
+ * car that stayed on the road beat all three at waves 3 and 28, the HUD read
+ * "1st" from the third second on, and 20 % of the score was free. Measured over
+ * 20 seeds (tools/scratch/offroad-law.mjs), the rivals beaten out of 3 are now:
  *
- * WHY IT IS NO LONGER 0.87. At 0.87 the field ran roughly 13 % quicker than its
- * own tuning intends, and the arithmetic of `SeededRivals.pressure` (0.42 at wave
- * 3, 0.78 at wave 53) then put the whole roster past a clean driver by the end of
- * the run: measured over 40 seeds, the best available driving beat 3.00 of 3
- * rivals at wave 3 and 1.63 of 3 at wave 53, and on the five calibration seeds it
- * was 0.2 of 3. That is a flat pay cut of most of the 20 % this term carries,
- * applied to a player who did everything right, with no counterplay. A difficulty axis that removes the ability
- * to win rather than making winning harder is a wall, not a curve.
+ *                               w3     w28    w53
+ *   clean driver, no boost      1.65   1.35   0.95
+ *   clean, boost mashed         2.05   1.55   1.25
+ *   clean, boost on the arrows  2.85   2.50   1.75
  *
- * At 1.06 the field is a little SLOWER than its generic tuning, which is the
- * right correction for a course a clean driver covers in ~21 s against the 22 s
- * `COURSE_SECONDS` assumes. A clean run now finishes 2nd of 4 at wave 53 (2.05 of
- * 3 beaten) and still 1st at wave 3 — the late game is a race you can lose rather
- * than one you have already lost, and the difficulty of the late game comes from
- * the road instead, which is the thing the player can actually drive at.
+ * The clock grows with the wave because SeededRivals' pressure already speeds
+ * the roster up by a quarter between wave 3 and 53; a flat clock would put the
+ * whole field past a flawless driver late in the run, a wall rather than a curve.
  */
-const RIVAL_CLOCK = 1.55;
+const RIVAL_CLOCK = Object.freeze([1.08, 1.26]);
+/**
+ * The grid: rival `id` starts GRID_GAP * (id + 1) units up the road and you
+ * start last. Without it the four cars share the line, the ghosts are faded
+ * into your own car, and you never see the field you are racing.
+ */
+const GRID_GAP = 2;
 
 /**
  * The three sine wavenumbers of the centreline, in radians per world unit.
@@ -417,6 +414,7 @@ class OffroadRite {
 
     /** 0 at the first rite of a run, 1 at the last. The difficulty axis, once. */
     this._waveT = clamp((ctx.wave - 3) / 50, 0, 1);
+    this._rivalClock = RIVAL_CLOCK[0] + (RIVAL_CLOCK[1] - RIVAL_CLOCK[0]) * this._waveT;
 
     /**
      * How hard the course bends. Wave 3 drives the base shape; wave 53 drives it
@@ -566,6 +564,10 @@ class OffroadRite {
     /** Cached standings, for the HUD only. score() recomputes and never reads these. */
     this.place = RIVAL_COUNT + 1;
     this.beaten = 0;
+    /** Which rivals are ahead, with PASS_GAP of hysteresis. Drives the overtake cues only. */
+    this._rivalAhead = Array.from({ length: RIVAL_COUNT }, () => true);
+    /** Each rival's finish time is a pure function of its id, so it is solved once. */
+    this._rivalFt = Array.from({ length: RIVAL_COUNT }, (_, id) => this.#rivalFinishTime(id));
 
     this._events = [{ type: 'start' }];
     this._started = false;
@@ -681,7 +683,7 @@ class OffroadRite {
 
   /** A rival's fraction of the course at wall-clock time `t`. See RIVAL_CLOCK. */
   rivalProgress(id, t) {
-    return this.rivals.positionAt(id, t / RIVAL_CLOCK);
+    return Math.min(1, this.rivals.positionAt(id, t / this._rivalClock) + (GRID_GAP * (id + 1)) / TRACK_LEN);
   }
 
   /** A rival's distance along the track at wall-clock time `t`. */
@@ -705,19 +707,13 @@ class OffroadRite {
     this.t += dt;
 
     // ---- steering ---------------------------------------------------------
-    // Keys win over the pointer when both are live: a player holding an arrow
-    // has made a deliberate choice, and mixing the two produces a car that
-    // fights itself.
+    // THE ARROWS ONLY. The pointer used to steer too ("the car goes where the
+    // pointer is"), and under a chase camera that rule drove the car by itself:
+    // the camera follows the road, so a mouse resting on the stage kept picking
+    // the centreline and a hands-off run scored ~0.5. A parked hand must be an
+    // idle car, so the pointer has no say in where the car goes.
     const ax = input.axis?.x || 0;
-    let cmd = 0;
-    if (ax !== 0) {
-      cmd = ax > 0 ? 1 : -1;
-    } else if (input.inside) {
-      // Positional: the car goes where the pointer is. The view's field frame
-      // puts field x = 0 on the centreline at the car, so `input.x` is a lateral
-      // offset like `u` and this is a straight difference.
-      cmd = clamp((input.x - (this.x - this.centreAt(this.s))) / 2.0, -1, 1);
-    }
+    const cmd = ax > 0 ? 1 : ax < 0 ? -1 : 0;
     const k = Math.min(1, dt / LAT_TAU);
     this.vx += (cmd * LAT_SPEED - this.vx) * k;
     this.x += this.vx * dt;
@@ -797,6 +793,7 @@ class OffroadRite {
     const st = this.#standings();
     this.place = st.place;
     this.beaten = st.beaten;
+    this.#overtakes();
 
     if (this.s >= FLAG_AT) {
       this.s = FLAG_AT;
@@ -897,15 +894,39 @@ class OffroadRite {
    * HUD, `score()` recomputes it, and the two can never disagree.
    */
   #standings() {
-    const mine = this.finished ? 2 - this.finishT / DURATION : this.s / FLAG_AT;
-
+    const mine = this.#myKey();
     let ahead = 0, beaten = 0;
     for (let id = 0; id < RIVAL_COUNT; id++) {
-      const ft = this.#rivalFinishTime(id);
-      const key = ft <= this.t ? 2 - ft / DURATION : this.rivalProgress(id, this.t);
-      if (key >= mine) ahead++; else beaten++;
+      if (this.#rivalKey(id) >= mine) ahead++; else beaten++;
     }
     return { place: ahead + 1, beaten };
+  }
+
+  #myKey() { return this.finished ? 2 - this.finishT / DURATION : this.s / FLAG_AT; }
+
+  #rivalKey(id) {
+    const ft = this._rivalFt[id];
+    return ft <= this.t ? 2 - ft / DURATION : this.rivalProgress(id, this.t);
+  }
+
+  /**
+   * One cue per overtake, either way. The race was invisible when you led it:
+   * the ghosts fade once level with you, so passing one was a silent change of
+   * a digit. PASS_GAP of hysteresis on the same key the standings use, so two
+   * cars wheel to wheel never chatter.
+   */
+  #overtakes() {
+    const mine = this.#myKey();
+    for (let id = 0; id < RIVAL_COUNT; id++) {
+      const lead = this.#rivalKey(id) - mine;
+      if (this._rivalAhead[id] && lead < -PASS_GAP) {
+        this._rivalAhead[id] = false;
+        this.#cue('tick', 'pass', this.rivalLateral(id, this.t), id);
+      } else if (!this._rivalAhead[id] && lead > PASS_GAP) {
+        this._rivalAhead[id] = true;
+        this.#cue('claim', 'passed', this.rivalLateral(id, this.t), id);
+      }
+    }
   }
 
   /**
@@ -968,7 +989,7 @@ export const OFFROAD_RITE = {
     'You have 3 boosts. They are strongest on the yellow arrows.',
   ],
   keys: [
-    { keys: ['←', '→', 'Mouse'], action: 'Steer' },
+    { keys: ['←', '→'], action: 'Steer' },
     { keys: ['Space', 'Click'], action: 'Boost' },
   ],
   duration: DURATION,

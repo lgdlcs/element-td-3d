@@ -31,6 +31,7 @@ import { FIELD, makeInput } from '../../src/minigames/contract.js';
 import { mulberry32 } from '../../src/core/Rng.js';
 import { riteRng } from '../../src/minigames/schedule.js';
 import { assertRiteContract } from './helpers/rite-contract.js';
+import { offroadTarget, offroadSteer } from './helpers/reference-player.js';
 import {
   OFFROAD_RITE, RAND_CALLS, DURATION, TRACK_LEN, FLAG_AT, GATE_COUNT, COIN_COUNT,
   RIVAL_COUNT, BOOST_CHARGES, HALF_W,
@@ -59,50 +60,31 @@ function play(strategy, { seed = 1234, wave = 8 } = {}) {
 }
 
 /**
- * A driver: aim at the next nugget, fall back to the next gate, and boost only
- * while standing in a fast stretch.
+ * A keyboard driver: pick the next nugget (or the gate before it), hold the
+ * arrow toward it, and boost only while standing in a fast stretch. The arrows
+ * are the only steering the rite reads, so this is the only kind of player.
  *
- * WRITTEN AGAINST THE GAME'S PUBLIC SURFACE ONLY (`s`, `coins`, `gates`,
- * `centreAt`, `rivalDist`) so it is a player rather than a second copy of the
- * physics. It aims 2.2 units FURTHER ALONG the line than the thing it wants,
- * which is how a human copes with a car that does not self-centre: lead the
- * corner instead of chasing it.
+ * WRITTEN AGAINST THE GAME'S PUBLIC SURFACE ONLY (`s`, `x`, `coins`, `gates`,
+ * `centreAt`, `isFast`); the steering is the calibration player's own
+ * (`offroadSteer`), so the two suites drive the same way.
  */
-function driver({ boost = 'fast' } = {}) {
+function driver({ boost = 'fast', target = offroadTarget } = {}) {
   return (inst) => {
-    const cam = inst.centreAt(inst.s);
-    const u = inst.x - cam;
-
-    let target = null;
-    for (const c of inst.coins) {
-      if (c.taken || c.s < inst.s) continue;
-      if (c.s - inst.s > 9) break;
-      target = { s: c.s, u: c.u };
-      break;
-    }
-    if (!target) {
-      const g = inst.gates[inst.nextGate];
-      target = g ? { s: g.s, u: 0 } : { s: inst.s + 5, u: 0 };
-    }
-
+    const u = inst.x - inst.centreAt(inst.s);
     // WHERE, NOT WHETHER. A charge is worth BOOST_MUL inside a fast stretch and
-    // barely anything outside one, so the author's bot reads the road and holds
-    // the button until the car is standing in one. `boost: 'mash'` is the same
-    // driver with that one line removed, and the pair is what the ablation
-    // measures — see the "spending a boost well" block below.
+    // barely anything outside one. `boost: 'mash'` is the same driver with the
+    // road-reading removed, and the pair is what the ablation below measures.
     const ready = inst.boostT <= 0 && inst.boostLeft > 0 && Math.abs(u) < HALF_W;
     const wantBoost = boost === 'never' ? false
       : boost === 'mash' ? true
       : ready && inst.isFast(inst.s);
-
-    return makeInput({
-      x: inst.centreAt(target.s + 2.2) + target.u - cam,
-      y: 0,
-      inside: true,
-      action: wantBoost ? 1 : 0,
-    });
+    return makeInput({ axis: offroadSteer(inst, target(inst)), action: wantBoost ? 1 : 0 });
   };
 }
+
+/** The same keys, aimed at the centreline only: a car that holds the road and collects nothing. */
+const holdLine = (inst) => ({ s: inst.s + 6, u: 0 });
+const hold = driver({ boost: 'never', target: holdLine });
 
 // ---------------------------------------------------------------------------
 
@@ -138,7 +120,7 @@ describe('offroad rite — the track is a pure function of distance', () => {
       expect(a.slopeAt(s)).toBe(b.slopeAt(s));
     }
     // ...and asking `a` again, after `b` has been driven a while, still agrees.
-    for (let n = 0; n < 300; n++) b.update(DT, makeInput({ inside: true, x: 3 }));
+    for (let n = 0; n < 300; n++) b.update(DT, makeInput({ axis: { x: 1, y: 0 } }));
     for (const s of order.slice(0, 120)) expect(a.centreAt(s)).toBe(b.centreAt(s));
   });
 
@@ -248,7 +230,7 @@ describe('offroad rite — the idle band', () => {
 
 describe('offroad rite — the charges are finite', () => {
   it('three boosts, however hard the button is held', () => {
-    const inst = play(() => makeInput({ inside: true, x: 0, action: 3 }), { seed: 17, wave: 30 });
+    const inst = play(() => makeInput({ action: 3 }), { seed: 17, wave: 30 });
     expect(inst.boostLeft).toBe(0);
     expect(BOOST_CHARGES).toBe(3);
   });
@@ -257,8 +239,8 @@ describe('offroad rite — the charges are finite', () => {
     // Forgiving by design: a double click must not silently burn a third of the
     // supply. Two presses one step apart are one boost.
     const inst = spawn(3, 10);
-    inst.update(DT, makeInput({ inside: true, x: 0, action: 1 }));
-    inst.update(DT, makeInput({ inside: true, x: 0, action: 1 }));
+    inst.update(DT, makeInput({ action: 1 }));
+    inst.update(DT, makeInput({ action: 1 }));
     expect(inst.boostLeft).toBe(BOOST_CHARGES - 1);
   });
 
@@ -276,6 +258,49 @@ describe('offroad rite — the charges are finite', () => {
     expect(noisy.s).toBe(plain.s);
     expect(noisy.score()).toEqual(plain.score());
     expect(noisy.boostLeft).toBe(plain.boostLeft);
+  });
+});
+
+describe('offroad rite — the arrows are the only steering', () => {
+  it('a pointer parked over the stage is an idle car, to the bit', () => {
+    // Under the chase camera a still mouse kept picking the centreline, and
+    // when the pointer steered that drove the car for you (~0.5 hands-off).
+    for (const wave of [3, 28, 53]) {
+      const idle = play(() => makeInput(), { seed: 4242, wave });
+      const parked = play(() => makeInput({ inside: true, x: 0, y: 0 }), { seed: 4242, wave });
+      const waved = play((inst, n) => makeInput({ inside: true, x: Math.sin(n / 9) * 3, y: 1 }), { seed: 4242, wave });
+      expect(parked.s).toBe(idle.s);
+      expect(parked.x).toBe(idle.x);
+      expect(waved.x).toBe(idle.x);
+      expect(parked.score()).toEqual(idle.score());
+    }
+  });
+});
+
+describe('offroad rite — the place is contested', () => {
+  // Mean rivals beaten (out of 3) over twelve seeds. Before the retune any car
+  // that stayed on the road beat all three at waves 3 and 28, so the 20 % rival
+  // term was free and the HUD read "1st" from the third second.
+  const SEEDS = [1, 7, 42, 99, 1234, 4242, 90210, 31337, 555, 8, 909, 2468];
+  const beaten = (opts, wave) => SEEDS
+    .reduce((a, seed) => a + play(driver(opts), { seed, wave }).beaten, 0) / SEEDS.length;
+
+  it('a clean driver who never boosts finishes mid-pack at wave 3', () => {
+    const b = beaten({ boost: 'never' }, 3);
+    expect(b).toBeGreaterThan(0.8);
+    expect(b).toBeLessThan(2.5);
+  });
+
+  it('boosting on the arrows is what wins the race', () => {
+    for (const wave of [3, 53]) {
+      expect(beaten({}, wave), `wave ${wave}`).toBeGreaterThan(beaten({ boost: 'never' }, wave) + 0.5);
+    }
+  });
+
+  it('the field starts ahead of you on the grid', () => {
+    const inst = spawn(4242, 12);
+    for (let id = 0; id < RIVAL_COUNT; id++) expect(inst.rivalDist(id, 0)).toBeGreaterThan(0);
+    expect(inst.place).toBe(RIVAL_COUNT + 1);
   });
 });
 
@@ -298,8 +323,8 @@ describe('offroad rite — the score is the blend, itemised', () => {
 
   it('is monotone in skill: better driving never scores worse', () => {
     const idle = play(() => makeInput(), { seed: 55, wave: 22 }).score().ratio;
-    const mash = play(() => makeInput({
-      inside: true, x: 0, down: true, action: 1,
+    const mash = play((inst, n) => makeInput({
+      axis: { x: n % 2 ? 1 : -1, y: 0 }, down: true, action: 1,
     }), { seed: 55, wave: 22 }).score().ratio;
     const good = play(driver(), { seed: 55, wave: 22 }).score().ratio;
     expect(idle).toBeLessThan(good);
@@ -331,7 +356,8 @@ describe('offroad rite — the definition', () => {
     expect(first.map((e) => e.type)).toEqual(['start']);
 
     const drive = driver();
-    const seen = { gate: 0, miss: 0, coin: 0, boost: 0 };
+    const seen = { gate: 0, miss: 0, coin: 0, boost: 0, pass: 0 };
+    const lastOvertake = new Array(RIVAL_COUNT).fill('passed');
     let last = null;
     for (let n = 0; n < STEP_CAP; n++) {
       const done = inst.update(DT, drive(inst, n)) === true;
@@ -351,6 +377,15 @@ describe('offroad rite — the definition', () => {
           expect(['good', 'tick']).toContain(e.type);
           expect(inst.boostT).toBeGreaterThan(0);
           seen.boost++;
+        } else if (e.what === 'pass' || e.what === 'passed') {
+          // Per rival the overtakes alternate, and the first one is yours:
+          // every rival starts ahead of you on the grid.
+          expect(e.i).toBeGreaterThanOrEqual(0);
+          expect(e.i).toBeLessThan(RIVAL_COUNT);
+          expect(e.type).toBe(e.what === 'pass' ? 'tick' : 'claim');
+          expect(e.what).not.toBe(lastOvertake[e.i]);
+          lastOvertake[e.i] = e.what;
+          if (e.what === 'pass') seen.pass++;
         } else {
           expect(e).toMatchObject({ type: 'perfect', what: 'flag' });
         }
@@ -361,6 +396,7 @@ describe('offroad rite — the definition', () => {
     expect(seen.gate).toBe(inst.gatesHit);
     expect(seen.miss).toBe(inst.missedGates.length);
     expect(seen.boost).toBe(BOOST_CHARGES - inst.boostLeft);
+    expect(seen.pass, 'a good run overtakes somebody, and says so').toBeGreaterThan(0);
     expect(last).not.toBeNull();
   });
 });
@@ -419,11 +455,10 @@ describe('offroad rite — spending a boost well beats spending it at all', () =
     const cold = spawn(4242, 12);
     // Drive both to the start of the first fast stretch, holding the line.
     const zone = hot.fastZones[0];
-    const hold = (inst) => makeInput({ inside: true, x: 0, y: 0 });
     while (hot.s < zone.s0 + 0.5) { hot.update(DT, hold(hot)); hot.drainEvents(); }
     while (cold.s < zone.s0 + 0.5) { cold.update(DT, hold(cold)); cold.drainEvents(); }
     expect(hot.s).toBeCloseTo(cold.s, 9);
-    hot.update(DT, makeInput({ inside: true, x: 0, action: 1 }));
+    hot.update(DT, { ...hold(hot), action: 1 });
     cold.update(DT, hold(cold));
     expect(hot.boostHot, 'the first fast zone did not read as fast').toBe(true);
     for (let n = 0; n < 90; n++) { hot.update(DT, hold(hot)); cold.update(DT, hold(cold)); }
@@ -433,7 +468,7 @@ describe('offroad rite — spending a boost well beats spending it at all', () =
     while (late.s < zone.s1 + 3) { late.update(DT, hold(late)); late.drainEvents(); }
     const before = spawn(4242, 12);
     while (before.s < zone.s1 + 3) { before.update(DT, hold(before)); before.drainEvents(); }
-    late.update(DT, makeInput({ inside: true, x: 0, action: 1 }));
+    late.update(DT, { ...hold(late), action: 1 });
     before.update(DT, hold(before));
     expect(late.boostHot, 'a charge lit past the zone should be cold').toBe(false);
     for (let n = 0; n < 90; n++) { late.update(DT, hold(late)); before.update(DT, hold(before)); }
@@ -529,21 +564,7 @@ describe('offroad rite — occurrence mirrors the course and nothing else', () =
   it('a mirrored driver scores exactly what the original did', () => {
     // The difficulty claim, executed rather than asserted: the same bot with its
     // steering reflected produces the same race.
-    const mirrored = (inst) => {
-      const cam = inst.centreAt(inst.s);
-      let target = null;
-      for (const c of inst.coins) {
-        if (c.taken || c.s < inst.s) continue;
-        if (c.s - inst.s > 9) break;
-        target = { s: c.s, u: c.u };
-        break;
-      }
-      if (!target) {
-        const g = inst.gates[inst.nextGate];
-        target = g ? { s: g.s, u: 0 } : { s: inst.s + 5, u: 0 };
-      }
-      return makeInput({ x: inst.centreAt(target.s + 2.2) + target.u - cam, y: 0, inside: true });
-    };
+    const mirrored = driver({ boost: 'never' });
     for (const seed of [1, 42, 4242]) {
       const runs = mirrorPair(seed, 18).map((inst) => {
         for (let n = 0; n < STEP_CAP; n++) {
@@ -564,11 +585,7 @@ describe('offroad rite — the flag is reachable and not free', () => {
   it('a driver who races rather than collects can take it', () => {
     // FLAG_AT exists because at TRACK_LEN exactly nobody ever crossed the line
     // and the whole finisher branch of the standings was dead code.
-    const sprint = (inst) => makeInput({
-      inside: true, y: 0,
-      x: inst.centreAt(inst.s + 2.2) - inst.centreAt(inst.s),
-      action: inst.boostT <= 0 && inst.boostLeft > 0 && inst.isFast(inst.s) ? 1 : 0,
-    });
+    const sprint = driver({ target: holdLine });
     let finished = 0;
     for (const seed of [1, 7, 42, 99, 1234, 4242, 90210, 31337, 555, 8, 909, 2468]) {
       if (play(sprint, { seed, wave: 3 }).finished) finished++;

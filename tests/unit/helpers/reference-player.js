@@ -503,36 +503,65 @@ function luckyAim(inst) {
 
 /* ---- offroad ----------------------------------------------------------- */
 /**
- * From `tests/unit/offroad-rite.test.js` (`driver()`). Aim at the next nugget,
- * fall back to the next gate, boost whenever on the road. Written against the
- * public surface only, and it leads the corner by 2.2 units because the car
- * does not self-centre.
+ * From `tests/unit/offroad-rite.test.js` (`driver()`). Pick the next nugget,
+ * fall back to the next gate, boost once standing on a fast stretch. The rite
+ * steers on the arrows only, so this is a keyboard player: the CHOICE of target
+ * is the intent (lagged by the body), the arrow held toward it is the servo
+ * (`axis` as a function, evaluated live), exactly as `platforms` splits it.
  */
 function offroadIntent(inst) {
-  const cam = inst.centreAt(inst.s);
-  const u = inst.x - cam;
+  const target = offroadTarget(inst);
+  const u = inst.x - inst.centreAt(inst.s);
+  const boost = inst.boostT <= 0 && inst.boostLeft > 0 && Math.abs(u) < HALF_W && inst.isFast(inst.s);
+  return { aim: null, axis: () => offroadSteer(inst, target), fire: boost, alt: false };
+}
 
-  let target = null;
+/**
+ * The next thing worth being over: the next nugget, unless a gate comes first,
+ * in which case the gate, threaded on the side the nugget after it lies.
+ */
+export function offroadTarget(inst) {
+  let coin = null;
   for (const c of inst.coins) {
     if (c.taken || c.s < inst.s) continue;
-    if (c.s - inst.s > 9) break;
-    target = { s: c.s, u: c.u };
+    if (c.s - inst.s <= 12) coin = c;
     break;
   }
-  if (!target) {
-    const g = inst.gates[inst.nextGate];
-    target = g ? { s: g.s, u: 0 } : { s: inst.s + 5, u: 0 };
+  const g = inst.gates[inst.nextGate];
+  if (g && (!coin || g.s < coin.s)) {
+    const side = coin ? clampAbs(coin.u, g.hw * 0.5) : 0;
+    return { s: g.s, u: side };
   }
-
-  const boost = inst.boostT <= 0 && inst.boostLeft > 0 && Math.abs(u) < HALF_W;
-
-  return {
-    aim: { x: inst.centreAt(target.s + 2.2) + target.u - cam, y: 0 },
-    axis: null,
-    fire: boost,
-    alt: false,
-  };
+  return coin ? { s: coin.s, u: coin.u } : { s: inst.s + 6, u: 0 };
 }
+
+const clampAbs = (v, m) => Math.max(-m, Math.min(m, v));
+
+/**
+ * The arrow a driver holds to arrive over `target`: the lateral speed that gets
+ * there in the time left, less what the ruts and the corner already do to the
+ * car (the rite's DRIFT_RATE and CENTRIFUGAL, which a player learns by feel).
+ */
+export function offroadSteer(inst, target) {
+  const speed = inst.speed || 7.4;
+  const T = Math.max(0.18, (target.s - inst.s) / speed);
+  const want = inst.centreAt(target.s) + target.u;
+  const drift = 0.45 * (inst.x - inst.centreAt(inst.s)) - 0.35 * inst.slopeAt(inst.s) * speed;
+  const need = (want - inst.x) / T - drift;
+  const err = need - inst.vx;
+  // Press and hold, not flutter: a held arrow is released only once the car has
+  // overshot what it needs. A human taps a few times a second, and the body
+  // rolls its misread per change of key, so a servo that chatters would be
+  // charged for presses no player makes.
+  const held = OFFROAD_HELD.get(inst) ?? 0;
+  let x = held;
+  if (held === 0) x = err > 0.9 ? 1 : err < -0.9 ? -1 : 0;
+  else if (held * err < -0.2) x = 0;
+  OFFROAD_HELD.set(inst, x);
+  return { x, y: 0 };
+}
+
+const OFFROAD_HELD = new WeakMap();
 
 /* ---- hunt -------------------------------------------------------------- */
 /**

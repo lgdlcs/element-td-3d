@@ -10,14 +10,13 @@
  *     road, the gates, the gold and the rivals are built once at their true
  *     places and only the camera moves. `centreAt` is a pure function of `s`,
  *     so the whole course (terrain, road, gates) is meshed in the constructor.
- *  2. A CHASE CAMERA, AND A FIELD FRAME THAT RIDES WITH THE CAR. The gameplay
- *     plane is the ground, with its origin on the centreline level with the
- *     car, so a pointer pick lands in the rite as a lateral offset from the
- *     road, which is what the rite's pointer steering compares against `u`.
- *     The host re-picks every frame, so the camera may follow freely.
- *  3. THE HUD IS IN THE SCENE, PARENTED TO THE CAMERA. Three small canvas
- *     textures repainted only when their numbers change, and a progress bar
- *     made of meshes so the markers can move every frame without an upload.
+ *  2. A CHASE CAMERA. The rite steers on the arrows only, so the pointer
+ *     carries no aim here; the field frame rides with the car only so the
+ *     host's pick stays well defined while the camera follows freely.
+ *  3. THE HUD IS IN THE SCENE, PARENTED TO THE CAMERA. Small canvas textures
+ *     repainted only when their content changes, and a progress bar made of
+ *     meshes so the markers can move every frame without an upload. All of
+ *     it sits over the sky, never over the road.
  */
 
 import * as THREE from 'three';
@@ -55,6 +54,13 @@ const ROCKS = 170;
 const BALES = 46;
 const POLE_STEP = 5;
 const DUST = 260;
+
+/** HUD floors, in CSS pixels of height, so a short viewport keeps its labels legible. */
+const HUD_CORNER_PX = 96;
+const HUD_BOOST_PX = 54;
+const HUD_CALLOUT_PX = 40;
+/** How long an overtake callout stays up, in seconds. */
+const CALLOUT_T = 1.6;
 
 const RIVAL_COLOURS = [0x2f7fe0, 0x35b65a, 0xb052e0];
 const RIVAL_CSS = ['#5aa2ff', '#5fd67f', '#cf86ff'];
@@ -214,6 +220,7 @@ class OffroadView extends RiteView {
     this._e = new THREE.Euler();
     this._s = new THREE.Vector3();
     this._hud = { gates: -1, gold: -1, place: -1, boost: -1, armed: -1, missed: -1, gp: -1, mp: -1 };
+    this.calloutAt = -10;
 
     this.#buildLights();
     this.#buildTextures();
@@ -729,10 +736,12 @@ class OffroadView extends RiteView {
     const R = this.rite;
     this.player = this.#makeCar(new THREE.Color(this.P.accent), 0xfff1dc, true);
     this.rivalCars = [];
+    this.rivalNames = [];
     const roster = R.rivals.roster();
     for (let id = 0; id < RIVAL_COUNT; id++) {
       const c = this.#makeCar(RIVAL_COLOURS[id], 0xf4f4f4, false);
       const name = roster[id]?.name ?? `Rival ${id + 1}`;
+      this.rivalNames.push(name.toUpperCase());
       const tex = canvasTexture(256, 64, (g, w, h) => {
         g.font = "italic 800 34px 'Trebuchet MS', system-ui, sans-serif";
         g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -777,6 +786,11 @@ class OffroadView extends RiteView {
     this.hudL = mk(512, 200);
     this.hudR = mk(512, 200);
     this.hudB = mk(1024, 150);
+    // Who you just passed, or who just passed you. Always drawn, at opacity 0
+    // when quiet, so its texture is uploaded behind the intro card.
+    this.callout = mk(1024, 120);
+    this.callout.mesh.material.opacity = 0;
+    this.callout.mesh.renderOrder = 25;
     const flat = (color, opacity) => new THREE.MeshBasicMaterial({
       color, transparent: true, opacity, depthTest: false, depthWrite: false, toneMapped: false, fog: false,
     });
@@ -813,27 +827,57 @@ class OffroadView extends RiteView {
     cam.updateProjectionMatrix();
     if (!this._built) return;
     // The HUD sits one unit in front of the lens and is sized off the view
-    // height, so it keeps its proportions on a phone and on a wide monitor.
+    // height, with a floor in CSS pixels so a phone held sideways can still
+    // read the small labels.
     const d = 1;
     const H = 2 * d * Math.tan(THREE.MathUtils.degToRad(FOV / 2));
     const W = H * cam.aspect;
     const m = H * 0.035;
-    const place = (hud, hFrac, ax, ay) => {
-      const h = H * hFrac;
-      const w = h * (hud.w / hud.h);
-      hud.mesh.scale.set(w, h, 1);
-      hud.mesh.position.set(ax * (W / 2 - m - w / 2), ay * (H / 2 - m - h / 2), -d);
-      return w;
+    const cssH = this.stage.cssH || 900;
+    const frac = (f, px) => Math.max(f, px / cssH);
+    const place = (hud, h, x, y) => {
+      hud.mesh.scale.set(h * (hud.w / hud.h), h, 1);
+      hud.mesh.position.set(x, y, -d);
     };
-    place(this.hudL, 0.17, -1, 1);
-    place(this.hudR, 0.17, 1, 1);
-    place(this.hudB, 0.105, 0, -1);
-    const bw = Math.min(W * 0.5, H * 1.1);
-    this.bar.position.set(0, -H / 2 + m + H * 0.105 + H * 0.03, -d);
+    // The race at a glance runs the full width of the top edge, over the sky.
+    const barY = H / 2 - m * 0.9;
+    const bw = W - 2 * m;
+    this.bar.position.set(0, barY, -d);
     this.bar.scale.set(bw, H * 0.12, 1);
     // Keep the dots round on a stretched bar.
     const sx = (H * 0.12) / bw;
     for (const c of this.barMarks) c.scale.x = sx;
+
+    // The two panels hang under it in the corners, never wider than lets them
+    // keep a gap between them.
+    const ratio = this.hudL.w / this.hudL.h;
+    const ph = Math.min(H * frac(0.17, HUD_CORNER_PX), (W - 3 * m) / (2 * ratio) * 0.8);
+    const pw = ph * ratio;
+    const top = barY - m * 0.9;
+    place(this.hudL, ph, -(W / 2 - m - pw / 2), top - ph / 2);
+    place(this.hudR, ph, W / 2 - m - pw / 2, top - ph / 2);
+    const bh = H * frac(0.105, HUD_BOOST_PX);
+    place(this.hudB, bh, 0, -(H / 2 - m - bh / 2));
+    const ch = Math.min(H * frac(0.07, HUD_CALLOUT_PX), (W - 2 * m) * (this.callout.h / this.callout.w));
+    place(this.callout, ch, 0, top - ph - m * 0.4 - ch / 2);
+  }
+
+  /** Paint the overtake callout. A cue, not a frame: it allocates a string and uploads once. */
+  #paintCallout(id, passed) {
+    const { canvas, tex, w, h } = this.callout;
+    const g = canvas.getContext('2d');
+    g.clearRect(0, 0, w, h);
+    g.font = "italic 900 64px 'Trebuchet MS', system-ui, sans-serif";
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const name = this.rivalNames[id];
+    const text = passed ? `PASSED ${name}` : `${name} PASSED YOU`;
+    const tw = Math.min(w - 8, g.measureText(text).width + 60);
+    g.fillStyle = 'rgba(14,11,8,0.62)';
+    g.beginPath(); g.roundRect((w - tw) / 2, 8, tw, h - 16, 28); g.fill();
+    g.fillStyle = passed ? RIVAL_CSS[id] : this.P.danger;
+    g.fillText(text, w / 2, h / 2 + 2, w - 40);
+    tex.needsUpdate = true;
+    this.calloutAt = this.clock;
   }
 
   // ---- cues ---------------------------------------------------------------
@@ -864,6 +908,8 @@ class OffroadView extends RiteView {
     } else if (ev.what === 'boost') {
       this.boostGlow = 1;
       this.shake = Math.max(this.shake, 0.35);
+    } else if ((ev.what === 'pass' || ev.what === 'passed') && ev.i >= 0 && ev.i < RIVAL_COUNT) {
+      this.#paintCallout(ev.i, ev.what === 'pass');
     } else if (ev.what === 'flag') {
       v.set(R.centreAt(FLAG_AT), 3, -FLAG_AT);
       this.sparks.emit(v, 80, FX.flag);
@@ -981,7 +1027,7 @@ class OffroadView extends RiteView {
     this.lineMat[G_NEXT].opacity = 0.5 + 0.4 * pulse;
 
     // ---- the boost arrows: bright while there is a charge to spend
-    const armed = R.boostLeft > 0 && !boosting && R.isFast(R.s);
+    const armed = R._started && R.boostLeft > 0 && !boosting && R.isFast(R.s);
     const arrowA = R.boostLeft > 0 ? 0.55 + 0.4 * (armed ? pulse : 0.3) : 0.18;
     this.arrowMat.opacity = arrowA;
     this.arrowMat.color.setRGB(1, 0.78 + 0.2 * (armed ? pulse : 0), 0.2);
@@ -1039,12 +1085,20 @@ class OffroadView extends RiteView {
 
     // ---- HUD
     this.#paintHud(armed, pulse);
+    const ca = (this.clock - this.calloutAt) / CALLOUT_T;
+    this.callout.mesh.material.opacity = ca < 0 || ca > 1 ? 0 : Math.min(1, ca * 8, (1 - ca) * 4);
     const prog = clamp(s / FLAG_AT, 0, 1);
     this.barFill.scale.x = Math.max(0.0001, prog);
     this.barMe.position.x = prog - 0.5;
     for (let id = 0; id < RIVAL_COUNT; id++) {
       this.barRivals[id].position.x = clamp(R.rivalDist(id, t) / FLAG_AT, 0, 1) - 0.5;
     }
+  }
+
+  #panel(g, w, hh) {
+    g.clearRect(0, 0, w, hh);
+    g.fillStyle = 'rgba(14,11,8,0.58)';
+    g.beginPath(); g.roundRect(4, 4, w - 8, hh - 8, 26); g.fill();
   }
 
   /** Repainted only when a number on it changed: a canvas upload per frame is the one cost here worth avoiding. */
@@ -1055,11 +1109,6 @@ class OffroadView extends RiteView {
     const mp = this.missPulse > 0.3 ? 1 : 0;
     const ap = armed ? (pulse > 0.5 ? 2 : 1) : 0;
     const P = this.P;
-    const panel = (g, w, hh) => {
-      g.clearRect(0, 0, w, hh);
-      g.fillStyle = 'rgba(14,11,8,0.58)';
-      g.beginPath(); g.roundRect(4, 4, w - 8, hh - 8, 26); g.fill();
-    };
     const big = "italic 900 84px 'Trebuchet MS', system-ui, sans-serif";
     const small = "800 30px 'Trebuchet MS', system-ui, sans-serif";
 
@@ -1067,7 +1116,7 @@ class OffroadView extends RiteView {
       h.gates = R.gatesHit; h.gold = R.coinsTaken; h.missed = R.missedGates.length; h.gp = gp; h.mp = mp;
       const { canvas, tex, w, h: hh } = this.hudL;
       const g = canvas.getContext('2d');
-      panel(g, w, hh);
+      this.#panel(g, w, hh);
       g.textBaseline = 'alphabetic';
       g.textAlign = 'left';
       g.font = small; g.fillStyle = 'rgba(233,235,243,0.7)';
@@ -1096,7 +1145,7 @@ class OffroadView extends RiteView {
       h.place = R.place;
       const { canvas, tex, w, h: hh } = this.hudR;
       const g = canvas.getContext('2d');
-      panel(g, w, hh);
+      this.#panel(g, w, hh);
       g.textAlign = 'right';
       g.font = small; g.fillStyle = 'rgba(233,235,243,0.7)';
       g.fillText('POSITION', w - 30, 52);

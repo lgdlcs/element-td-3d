@@ -1306,9 +1306,12 @@ gate arches, thirty spinning gold nuggets, three boosts, three rival cars, a
 START and a FINISH arch. The longest clock of the six, because a race under
 20 s is not a race.
 
-- **Two verbs: steer and boost.** `axis.x` steers (arrows, A/Q, D), or the
-  pointer if no key is held (keys win: mixing the two produces a car that
-  fights itself). The throttle is automatic. **Boost** is `action` (Space,
+- **Two verbs: steer and boost.** `axis.x` steers (arrows, A/Q, D), and
+  nothing else does. Pointer steering was cut after review: under the chase
+  camera a mouse resting on the stage kept picking the centreline, so a
+  hands-off run scored ~0.5, and pointing exactly at a nugget scored worse than
+  the arrows. A test pins that a parked or waved pointer is an idle car to the
+  bit. The throttle is automatic. **Boost** is `action` (Space,
   Enter, left click), three charges. The bomb from the original description
   (secondary button or Digit1, a mine that called `applyPenalty` on a rival)
   was **cut in the 3D rework**: it needed its own button and a paragraph on the
@@ -1331,18 +1334,27 @@ START and a FINISH arch. The longest clock of the six, because a race under
   0.5–1.1 s of drag; the arch turns red for the rest of the race and the HUD
   counts the misses. The next gate pulses yellow; a clean pass turns it green
   with confetti.
+- **The race is contested.** You start last on a staggered grid (rival `id`
+  is `GRID_GAP × (id + 1)` units up the road), and the field's clock
+  (`RIVAL_CLOCK`, 1.08 at wave 3 to 1.26 at wave 53) is tuned so a clean
+  driver who never boosts beats 1.65 / 1.35 / 0.95 of 3 at waves 3 / 28 / 53
+  and one who boosts on the arrows 2.85 / 2.50 / 1.75 (20 seeds,
+  `tools/scratch/offroad-law.mjs`). Every overtake is a cue (`what: 'pass'`,
+  sound `tick`; `what: 'passed'`, sound `claim`) with one car length of
+  hysteresis, and the view shows `PASSED KAVI` or `KAVI PASSED YOU`.
 - **Score.** `0.45 × gates + 0.35 × gold + 0.20 × rivals beaten`, and the result
   card **itemises the blend** (`9/12 gates · 21 gold · 2nd of 4`).
 - **The view.** The world is the track itself: world X is the rite's `x`, world
   −Z is the distance `s`, so terrain, road, arrows, gates and gold are meshed
   once in the constructor and only the camera moves. The field frame rides
-  with the car (origin on the centreline level with it), so a pointer pick
-  lands as a lateral offset from the road, which is what the rite compares.
+  with the car only so the host's pick stays defined; the pointer aims nothing.
   Rivals are ghosts: they fade out when level with you or behind, so they never
   park between the camera and your car. The HUD (gates, gold, position, boost,
-  a progress bar with every car on it) is parented to the camera; its three
-  canvases repaint only when a number changes. Every effect starts from a cue,
-  which carries `{ type, what: 'gate' | 'coin' | 'boost' | 'flag', i, x }`.
+  a progress bar with every car on it, the overtake callout) is parented to the
+  camera, sits over the sky except the boost panel, and has a floor in CSS
+  pixels so a phone held sideways can read it; its canvases repaint only when
+  their content changes. Every effect starts from a cue, which carries
+  `{ type, what: 'gate' | 'coin' | 'boost' | 'flag' | 'pass' | 'passed', i, x }`.
 
 ### `hunt` — Game Hunt · 20 s · 69 draws · rivals
 

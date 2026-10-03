@@ -420,8 +420,8 @@ export class SeededRivals {
    * evaluated at any `t` in any order and gives the same answer. That is what
    * makes it testable at 500 sampled times and identical on every client.
    *
-   * The penalty is subtracted from `t` rather than from the result: a bomb costs
-   * a rival SECONDS, which is a thing a player can feel and a commentator can
+   * The penalty is subtracted from `t` rather than from the result: a penalty
+   * costs a rival SECONDS, which is a thing a player can feel and a commentator can
    * say, not an abstract percentage of a track.
    */
   positionAt(id, t) {
@@ -438,7 +438,8 @@ export class SeededRivals {
    * does from now on, deterministically.
    *
    * THE ONE WRITE IN THE WHOLE INTERFACE, and the reason "block your opponents"
-   * means something: an offroad bomb calls this, and the rival's entire future —
+   * means something. No rite calls it today (offroad's bomb, its only caller,
+   * was cut in the 3D rework); when one does, the rival's entire future —
    * every position, every claim — shifts with it, without anything being
    * re-simulated. Negative values are ignored rather than treated as a boost;
    * there is no verb in any rite that helps a rival, and silently supporting one
