@@ -16,7 +16,7 @@ outright, in one commit, and everything below describes what replaced them.
 | escape from gay heaven | `heaven` | 20 s | steer a mote, pointer or `axis` | seconds survived | 121 | — |
 | Falling Platforms | `platforms` | 24 s | steer a marker, `axis` only | survival + who you outlasted | 41 | yes |
 | Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
-| Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
+| Offroad Racing **(3D)** | `offroad` | 26 s | steer, boost | gates + gold + placing | 58 | yes |
 | Game Hunt | `hunt` | 20 s | reaction shot | animals taken out of 8 | 69 | yes |
 | Fishing | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
 
@@ -46,7 +46,7 @@ Files:
 | `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 dalles, they all fall. |
 | `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery's logic. **The reference rite.** |
 | `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
-| `src/minigames/rites/OffroadRite.js` | `offroad` — top-down rally, boost and bomb. |
+| `src/minigames/rites/OffroadRite.js` | `offroad` — rally logic: steer and boost. Drawn by `OffroadView.js` (chase camera). |
 | `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot. |
 | `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot. |
 | `src/ui/minigames.css` | The overlay's styling. Tokens only, plus one `[data-rite]` block per rite. |
@@ -208,8 +208,7 @@ Beyond the cap the host **drops** clicks silently rather than growing the queue.
 Twelve primary commits inside one frame is a macro or a stuck button, not a
 player, and an unbounded queue is an unbounded frame.
 
-All four shooting-shaped rites (`luckyshot`, `hunt`, `fishing`, and `offroad`'s
-mines only indirectly) read `clicks` and **never** `action`/`altAction` for the
+All three shooting-shaped rites (`luckyshot`, `hunt`, `fishing`) read `clicks` and **never** `action`/`altAction` for the
 same press — counting both fires twice.
 
 ### 1.2 Right-click is an alias, never a requirement
@@ -229,13 +228,10 @@ press with a settling delay. In a game measured in tens of milliseconds, making
 the secondary button the only route to the primary verb is a handicap applied to
 one platform and to nobody else.
 
-`offroad` is the single exception, and it is an exception because the two buttons
-there are **two genuinely different decisions**, not two ways to say the same
-thing: primary = **boost**, secondary = **bomb**. Neither is time-critical to the
-millisecond, and — note, because it is stronger than the rule requires — **both
-are still keyboard-reachable**: boost takes `action` (so Space/Enter), bomb takes
-`altAction` **or** `slots[0]` (Digit1). So even in `offroad` the secondary button
-is a convenience, not a gate.
+`offroad` used to be the single exception (primary = boost, secondary = bomb).
+The bomb was cut in its 3D rework, so today **no rite gives the secondary
+button a meaning of its own**: `offroad` ignores `altAction` and `slots`, and a
+left click, Space or Enter is its one commit (boost).
 
 ### `slots` is for rites whose verb is *choose*
 
@@ -244,8 +240,8 @@ of several a player picked. The host translates `Digit1..Digit6` and
 `Numpad1..Numpad6` (by `e.code`, so the same six physical keys on AZERTY) into
 six counters, in the same shape and for the same reason as `action`. A rite that
 does not care never reads the field. `SLOT_COUNT` is 6 because six is the number
-of elements, which is the only fixed-arity choice this game has. Today exactly
-one rite reads it: `offroad`, for the bomb.
+of elements, which is the only fixed-arity choice this game has. Today no rite
+reads it (`offroad` did, for its bomb, until the bomb was cut).
 
 The letters `A S D F G H` were rejected: `A`, `S`, `D`, `W`, `Z` and `Q` are all
 in the host's `AXIS_KEYS`, so a rite using them would be steering at the same
@@ -1130,7 +1126,7 @@ called a variable number of times per step. Keep particle simulation in
 you need per-frame scratch space in a legacy `draw`, put the buffer at
 **module** scope, not on `this` — `draw` must not mutate the instance, and a test
 proves it. That is legal only because the host draws exactly one rite at a time,
-on one thread; `offroad` says so at the buffer's declaration. A 3D view has no
+on one thread. A 3D view has no
 such problem: its scratch lives on the view, which is not the rite.
 
 **Do not read `input.x/y` when `input.inside` is false.** The host leaves the
@@ -1182,8 +1178,8 @@ host's CSS kick on the stage is the impact channel.
 `hunt` does it better for its own shape: a shot that hits nothing **spooks the
 animal**, which punishes exactly the behaviour the rite is about resisting and
 says "you scared it off" instead of "you have run out". `fishing` uses the reel
-(1.05 s per empty cycle against 0.65 s for a landed one). `offroad` makes boost
-in the scrub a net loss. `platforms` and `heaven` do not need one: their verb is
+(1.05 s per empty cycle against 0.65 s for a landed one). `offroad` caps boost at
+three charges and makes one spent off the yellow arrows nearly worthless. `platforms` and `heaven` do not need one: their verb is
 position, and there is nothing to mash.
 
 **Scale one thing with the wave, not two.** A rite's payout already scales with
@@ -1301,33 +1297,52 @@ up; a miss leaves a bullet hole in the back wall. The gameplay numbers are the
   1.50), which is what makes "the frontmost target wins" a rule with teeth; the
   targets array is built front-first so the hit test is two lines and not a sort.
 
-### `offroad` — Offroad Racing · 26 s · 58 draws · rivals · **the two-button rite**
+### `offroad` — Offroad Racing · 26 s · 58 draws · rivals · **3D**
 
-Twelve gates, thirty nuggets, three boosts, two bombs, one dirt track. The
-longest clock of the six, because a race under 20 s is not a race.
+A rally stage seen from behind the car, **in 3D** (`OffroadView.js`): a dirt
+road with worn ruts winding through green hills, pines, rocks and hay bales,
+red-and-white marker poles down both edges, mountains on the horizon. Twelve
+gate arches, thirty spinning gold nuggets, three boosts, three rival cars, a
+START and a FINISH arch. The longest clock of the six, because a race under
+20 s is not a race.
 
-- **Top-down, not pseudo-3D**, and that is a decision rather than a shortcut.
-  This Painter has no perspective texture mapping and no path primitive, so an
-  Out Run road would be flat-shaded quads whose seams pop as they scroll — it
-  reads as a rendering bug, not as a road receding. The speed comes from the
-  ground rushing past, which top-down gets for free.
-- **Controls.** `axis.x` steers, or the pointer's x if no key is held (keys win —
-  mixing the two produces a car that fights itself). The throttle is automatic.
-  **Primary = boost** ×3 (`action`, so Space/Enter too), **secondary = bomb** ×2
-  (`altAction` *or* Digit1). The car does not self-centre: understeer pushes you
-  *outward* from the racing line and every corner slides you to its outside, so
-  holding the line is continuous work — and, measured, that is also what makes
-  the idle score a property of the *rite* rather than of the seed. Without those
-  two terms an unattended car drove dead straight and one seed in twenty paid
-  over 0.15.
-- **The bomb is the only write in the whole rival interface.** A mine dropped
-  2 u behind the car calls `applyPenalty(id, 1.5)` and shifts that rival's entire
-  future — every position, every claim — with nothing re-simulated. That is what
-  makes "block your opponents" mean something. (Denominated in *rival* seconds,
-  so ≈1.3 s of wall clock at this rite's `RIVAL_CLOCK` of 0.87.)
+- **Two verbs: steer and boost.** `axis.x` steers (arrows, A/Q, D), or the
+  pointer if no key is held (keys win: mixing the two produces a car that
+  fights itself). The throttle is automatic. **Boost** is `action` (Space,
+  Enter, left click), three charges. The bomb from the original description
+  (secondary button or Digit1, a mine that called `applyPenalty` on a rival)
+  was **cut in the 3D rework**: it needed its own button and a paragraph on the
+  intro card, it was worth 0.02–0.03 of ratio to an expert bot, and the
+  calibration player scored identically with and without it. `altAction` and
+  `slots` are ignored, and a test pins that.
+- **The boost is a decision, shown on the road.** A charge lit on a *fast
+  stretch* (the yellow arrows painted on the road, where the track stays
+  straight for the next 12 units) runs at ×1.85; anywhere else at ×1.15, and the
+  charge is gone either way. The HUD's boost panel turns gold and reads
+  `BOOST NOW` while the car is on the arrows with a charge in hand. Reading the
+  road beats mashing, and mashing still beats never pressing (pinned in the
+  suite).
+- **Holding the line is continuous work.** The car does not self-centre:
+  understeer pushes you outward from the racing line and every corner slides
+  you to its outside. That is also what makes the idle score a property of the
+  rite rather than of the seed (an unattended car is in the grass within
+  seconds, at 0.52 of the speed).
+- **Gates credit only from inside.** A gate run wide costs the credit and
+  0.5–1.1 s of drag; the arch turns red for the rest of the race and the HUD
+  counts the misses. The next gate pulses yellow; a clean pass turns it green
+  with confetti.
 - **Score.** `0.45 × gates + 0.35 × gold + 0.20 × rivals beaten`, and the result
-  card **itemises the blend** (`9/12 gates · 21 gold · 2nd of 4`) — a blended
-  ratio with an unitemised card is an opaque score.
+  card **itemises the blend** (`9/12 gates · 21 gold · 2nd of 4`).
+- **The view.** The world is the track itself: world X is the rite's `x`, world
+  −Z is the distance `s`, so terrain, road, arrows, gates and gold are meshed
+  once in the constructor and only the camera moves. The field frame rides
+  with the car (origin on the centreline level with it), so a pointer pick
+  lands as a lateral offset from the road, which is what the rite compares.
+  Rivals are ghosts: they fade out when level with you or behind, so they never
+  park between the camera and your car. The HUD (gates, gold, position, boost,
+  a progress bar with every car on it) is parented to the camera; its three
+  canvases repaint only when a number changes. Every effect starts from a cue,
+  which carries `{ type, what: 'gate' | 'coin' | 'boost' | 'flag', i, x }`.
 
 ### `hunt` — Game Hunt · 20 s · 69 draws · rivals
 
@@ -1449,8 +1464,9 @@ Everything falls out of that:
 
 A ghost **never bluffs**, never camps a spot because you are near it, never
 changes plan because you took the lead or because you showed up at all. The one
-exception is `offroad`'s bomb — the single write in the interface — and it is
-deterministic: seconds added to that rival's entire future.
+exception was `offroad`'s bomb, the single write in the interface
+(`applyPenalty`: seconds added to that rival's entire future). The bomb was cut,
+so today no rite calls it; the method and its tests in `rivals.test.js` remain.
 
 Beating "Kavi" is beating a number. **"The first one who clicks wins" has become
 "beat a deadline that has a name on it."** That is a real loss and it is worth

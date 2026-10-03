@@ -2,7 +2,7 @@
  * ONE SIMULATED PLAYER, SIX RITES — the instrument that makes them comparable.
  *
  * The six rites have four different verbs (chase a point, hop on an 8-way grid,
- * click a target, steer plus two buttons). Nothing can play all of them with one
+ * click a target, steer plus a boost). Nothing can play all of them with one
  * body of code, and a bot that tried would be a strawman in five of them and a
  * fair test in one. So this file splits the player in two:
  *
@@ -74,9 +74,7 @@ import {
   PLATFORMS_RITE, cellX, cellY, cellAt, neighbours,
 } from '../../../src/minigames/rites/PlatformsRite.js';
 import { LUCKY_SHOT_RITE, TARGETS } from '../../../src/minigames/rites/LuckyShotRite.js';
-import {
-  OFFROAD_RITE, HALF_W, RIVAL_COUNT as OFFROAD_RIVALS,
-} from '../../../src/minigames/rites/OffroadRite.js';
+import { OFFROAD_RITE, HALF_W } from '../../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../../src/minigames/rites/HuntRite.js';
 import { FISHING_RITE, FISH, SINK, SWIMMING } from '../../../src/minigames/rites/FishingRite.js';
 
@@ -505,10 +503,10 @@ function luckyAim(inst) {
 
 /* ---- offroad ----------------------------------------------------------- */
 /**
- * From `tests/unit/offroad-rite.test.js` (`driver()`), bombs on. Aim at the next
- * nugget, fall back to the next gate, boost only while on the road, mine when a
- * rival is behind. Written against the public surface only, and it leads the
- * corner by 2.2 units because the car does not self-centre.
+ * From `tests/unit/offroad-rite.test.js` (`driver()`). Aim at the next nugget,
+ * fall back to the next gate, boost whenever on the road. Written against the
+ * public surface only, and it leads the corner by 2.2 units because the car
+ * does not self-centre.
  */
 function offroadIntent(inst) {
   const cam = inst.centreAt(inst.s);
@@ -528,18 +526,11 @@ function offroadIntent(inst) {
 
   const boost = inst.boostT <= 0 && inst.boostLeft > 0 && Math.abs(u) < HALF_W;
 
-  let bomb = false;
-  if (inst.bombsLeft > 0 && Math.abs(u) < 0.35) {
-    for (let id = 0; id < OFFROAD_RIVALS; id++) {
-      if (inst.s - inst.rivalDist(id, inst.t) > 3) { bomb = true; break; }
-    }
-  }
-
   return {
     aim: { x: inst.centreAt(target.s + 2.2) + target.u - cam, y: 0 },
     axis: null,
     fire: boost,
-    alt: bomb,
+    alt: false,
   };
 }
 

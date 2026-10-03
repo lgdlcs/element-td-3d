@@ -1,53 +1,34 @@
 /**
- * OFFROAD RACING — steer a dirt track, take the gates, sweep the gold, and use
- * the two verbs the other five rites do not have.
+ * OFFROAD RACING — steer a dirt track, take the gates, sweep the gold, and
+ * spend three boosts where they count. Drawn in 3D by OffroadView.js.
  *
  * "course de voiture avec des points de passage, avec un boost pour accélérer et
  * une bombe pour bloquer ses adversaires. Des golds sont à ramasser sur la
- * route." Twelve gates, thirty nuggets, three boosts, two bombs, 26 seconds.
+ * route." Twelve gates, thirty nuggets, three boosts, 26 seconds.
  *
- * WHY IT IS TOP-DOWN AND NOT PSEUDO-3D. The obvious idea is the Out Run road —
- * a stack of trapezoids widening toward the camera — and it is a trap in THIS
- * painter. There is no perspective texture mapping and no path primitive, so the
- * road would be flat-shaded quads whose seams pop as they scroll and whose
- * "distance" is carried by nothing but width. That does not read as a road
- * receding, it reads as a rendering bug. Top-down is honest about what the
- * toolkit can express: one uniform scale, one vertical scroll, and every
- * position on screen means exactly what it is. The sense of speed comes from the
- * ground rushing past, which top-down gets for free and fake-3D has to fake
- * twice.
+ * TWO VERBS, NOT THREE. The bomb from the original description shipped once
+ * and was cut in the 3D rework. It needed the secondary button (or Digit1), a
+ * paragraph on the intro card, and a rival behind you to be worth anything; the
+ * ablation below priced it at 0.02-0.03 of ratio, and the calibration player
+ * scored the same to three decimals with and without it. Steer and boost are
+ * the whole game now: one hand on the arrows, one thumb on Space.
  *
- * WHAT EACH VERB IS WORTH, MEASURED, BECAUSE THE LAST VERSION'S ANSWER WAS "NOTHING".
- *
- * A clean-driving bot, 40 seeds, mean ratio, one option removed at a time. This
- * table is the rite's specification as much as any sentence above it, and
- * `tests/unit/offroad-rite.test.js` re-derives the two rows that matter so an
- * "improvement" cannot quietly flatten it again:
+ * WHAT THE BOOST IS WORTH, MEASURED (clean-driving bot, 40 seeds, mean ratio,
+ * taken with the bomb still in; its row is kept as the evidence for the cut):
  *
  *                            w3      w28     w53
  *   everything            0.794   0.750   0.704
  *   boost mashed          0.769   0.731   0.678
- *   boost anywhere on road0.768   0.730   0.674
  *   never boost           0.756   0.718   0.662
  *   never bomb            0.768   0.730   0.672
  *   ignore the gold       0.584   0.485   0.347
  *
- * Read it in this order. Spending the three charges on the fast stretches beats
- * mashing them by 0.025 / 0.019 / 0.026 and beats never pressing at all by
- * 0.038 / 0.032 / 0.042 — so the button is worth having AND worth thinking
- * about, which are two different claims and the old build satisfied neither
- * (mashing then tied or beat deliberate play at every wave; see BOOST_DIRT_MUL).
- * The bomb is worth 0.026 / 0.020 / 0.032. And the gold is still the largest
- * single thing on the table, which is right: this is a race with a collection
- * layered on it, and the collection is the part you are always doing.
- *
- * THE ONE RITE WHERE THE TWO MOUSE BUTTONS ARE TWO DIFFERENT THINGS. Everywhere
- * else (`luckyshot`, `hunt`, `fishing`) left, right and Space are the same verb,
- * because a right click on a macOS trackpad is a two-finger press with a settle
- * delay and making that the only path to the primary verb handicaps one platform
- * in a reaction game. Here the distinction earns its keep: boost and bomb are
- * genuinely different decisions, both are keyboard-reachable (Space / Digit1),
- * and neither is time-critical to the millisecond.
+ * Spending the three charges on the fast stretches (the yellow arrows on the
+ * road) beats mashing them by about 0.02 and beats never pressing by about
+ * 0.04, so the button is worth having AND worth thinking about.
+ * `tests/unit/offroad-rite.test.js` re-derives that ordering. The gold is the
+ * largest single term, which is right: this is a race with a collection layered
+ * on it, and the collection is the part you are always doing.
  *
  * THE DETERMINISM-CRITICAL PART IS THE TRACK. `centreAt(s)` is a sum of three
  * sines of the distance travelled — a PURE FUNCTION of `s`, with no per-step
@@ -58,10 +39,10 @@
  * screenshots. See docs/MINIGAMES.md §3 and §4.
  *
  * NO DOM, NO THREE, NO Math.random — the unit suite imports this in node.
+ * The 3D view is a dynamic import (`def.view`), so three.js never loads here.
  */
 
 import { clamp, lerp } from '../contract.js';
-import { mulberry32 } from '../../core/Rng.js';
 import { SeededRivals, PER_RIVAL } from '../rivals.js';
 
 // ---------------------------------------------------------------------------
@@ -122,12 +103,6 @@ const FLAG_AT = TRACK_LEN * 0.98;
 
 /** Half the drivable width. Outside it you are in the scrub and slower. */
 const HALF_W = 1.6;
-
-/** Where the car sits on screen. Low, so most of the field is the road ahead. */
-const CAR_Y = -3.15;
-
-/** How far ahead the player can see, in world units. Field top (4.5) minus CAR_Y. */
-const LOOKAHEAD = 4.5 - CAR_Y;
 
 const BASE_SPEED = 7.4;
 /** Seconds of rolling start. Not a countdown: a countdown spends the clock. */
@@ -334,14 +309,6 @@ const COIN_STEP = TRACK_LEN * 0.03165;
 const COIN_SPREAD = 1.15;
 const COIN_R = 0.34;
 
-const BOMB_CHARGES = 2;
-/** How far behind the car a mine is dropped. You block the people behind you. */
-const MINE_BACK = 2.0;
-/** Lateral catch radius. Wider than the rivals' weave, narrower than the road. */
-const MINE_R = 1.05;
-/** Seconds a mine costs a rival. The one WRITE into RivalSource in the whole game. */
-const MINE_PENALTY = 1.5;
-
 const RIVAL_COUNT = 3;
 /** Amplitude of a rival's weave across the road, in world units. Pure, no draws. */
 const RIVAL_WEAVE = 1.0;
@@ -360,17 +327,13 @@ const RIVAL_WEAVE = 1.0;
  * like one game, and a rite that wants a different rhythm is entitled to a
  * different rhythm, not to a different `CLAIM_BASE` for everybody.
  *
- * Consequence to keep in mind: MINE_PENALTY is denominated in RIVAL seconds, so
- * a mine costs MINE_PENALTY * RIVAL_CLOCK seconds of wall clock.
- *
  * WHY IT IS NO LONGER 0.87. At 0.87 the field ran roughly 13 % quicker than its
  * own tuning intends, and the arithmetic of `SeededRivals.pressure` (0.42 at wave
  * 3, 0.78 at wave 53) then put the whole roster past a clean driver by the end of
  * the run: measured over 40 seeds, the best available driving beat 3.00 of 3
  * rivals at wave 3 and 1.63 of 3 at wave 53, and on the five calibration seeds it
  * was 0.2 of 3. That is a flat pay cut of most of the 20 % this term carries,
- * applied to a player who did everything right, with no counterplay — two 1.5 s
- * mines cannot close a three-way gap. A difficulty axis that removes the ability
+ * applied to a player who did everything right, with no counterplay. A difficulty axis that removes the ability
  * to win rather than making winning harder is a wall, not a curve.
  *
  * At 1.06 the field is a little SLOWER than its generic tuning, which is the
@@ -419,28 +382,6 @@ const WAVE_AMP = 0.28;
  * see on the road ahead and act on.
  */
 
-/**
- * The road is drawn as one closed strip: STRIP_HALF samples down the left edge,
- * the same samples back up the right. Sized from the visible window (4.0 behind
- * the car plus LOOKAHEAD plus a margin) so the buffer is a module constant and
- * the per-frame work has no length to grow.
- */
-const STRIP_STEP = 0.55;
-const STRIP_HALF = Math.ceil((4.0 + LOOKAHEAD + 0.6) / STRIP_STEP) + 1;
-/**
- * The buffer itself, at MODULE scope rather than on the instance, and that is
- * deliberate: `draw` must not mutate the rite (the contract says so and this
- * rite's test proves it), and a scratch buffer hanging off `this` is a mutation
- * however cosmetic its contents. Safe to share because the host draws exactly
- * one rite at a time on one thread — stated here rather than assumed, because it
- * is the only thing making this legal.
- */
-const STRIP = Array.from({ length: 2 * STRIP_HALF }, () => [0, 0]);
-
-/** Scenery repeats on this period, so a fixed pool tiles an unbounded track. */
-const SCENERY_SPAN = 40;
-const SCENERY_N = 72;
-
 /** Cap on the cue queue. The host drains every step; this is the belt to that brace. */
 const MAX_EVENTS = 24;
 
@@ -473,7 +414,6 @@ const W_RIVALS = 0.20;
 class OffroadRite {
   init(ctx) {
     this.wave = ctx.wave;
-    this._pal = readPalette();
 
     /** 0 at the first rite of a run, 1 at the last. The difficulty axis, once. */
     this._waveT = clamp((ctx.wave - 3) / 50, 0, 1);
@@ -580,20 +520,9 @@ class OffroadRite {
     this.rivals = new SeededRivals(ctx.rand, { count: RIVAL_COUNT, wave: ctx.wave });
 
     // ---- 5. presentation noise, from ONE draw -----------------------------
-    // Everything cosmetic hangs off this generator so that no amount of scenery
-    // detail can ever move the rand budget. docs/MINIGAMES.md §3.
-    const nz = mulberry32(Math.floor(ctx.rand() * 0xffffffff));
-    /** @type {{s:number, side:number, u:number, r:number, kind:number}[]} */
-    this.scenery = [];
-    for (let i = 0; i < SCENERY_N; i++) {
-      this.scenery.push({
-        s: nz() * SCENERY_SPAN,
-        side: nz() < 0.5 ? -1 : 1,
-        u: HALF_W + 0.35 + nz() * 5.4,
-        r: 0.1 + nz() * 0.26,
-        kind: nz(),
-      });
-    }
+    // The view seeds its scenery (trees, rocks, hills) from this, so no amount
+    // of scenery detail can ever move the rand budget. docs/MINIGAMES.md §3.
+    this.fxSeed = Math.floor(ctx.rand() * 0xffffffff);
 
     // ---- state ------------------------------------------------------------
     this.t = 0;
@@ -610,18 +539,12 @@ class OffroadRite {
     this.boostHot = false;
     /** How many of the three were spent well. Not scored — the HUD and the tests read it. */
     this.boostsHot = 0;
-    this.bombsLeft = BOMB_CHARGES;
     this.dragT = 0;
-
-    /** @type {{s:number, u:number, live:boolean, flash:number}[]} */
-    this.mines = [];
-    this.bombHits = 0;
 
     this.gatesHit = 0;
     /**
-     * Which gates were run wide. Drawn as a permanent red cross on the gate, so
-     * a player who looked away during the flash can still see what happened when
-     * they glance at the mirror. A bounded array — at most GATE_COUNT entries.
+     * Which gates were run wide. The view turns those arches red for the rest
+     * of the race. A bounded array — at most GATE_COUNT entries.
      * @type {number[]}
      */
     this.missedGates = [];
@@ -646,14 +569,6 @@ class OffroadRite {
 
     this._events = [{ type: 'start' }];
     this._started = false;
-    /** Cosmetic only, driven in update because draw must not mutate. */
-    this._shake = 0;
-    this._goldFlash = 0;
-    this._gateFlash = 0;
-    this._boostFlash = 0;
-    /** The MISSED wash, and which side of the gate the car was on. See `draw`. */
-    this._missFlash = 0;
-    this._missSide = 1;
   }
 
   // ---- the track --------------------------------------------------------
@@ -756,9 +671,9 @@ class OffroadRite {
    * A rival's lateral position at time `t`, relative to the centreline.
    *
    * Derived from the id rather than drawn, so it costs no rand and can never
-   * disagree between two clients. It exists for ONE reason: a bomb has to be
-   * aimable. A rival pinned to the centreline would make every mine a coin flip
-   * on distance alone; a rival that visibly weaves is a rival you can wait for.
+   * disagree between two clients. Presentation only: the standings read
+   * distance, never this. A rival that weaves reads as a driver; one pinned to
+   * the centreline reads as a train.
    */
   rivalLateral(id, t) {
     return RIVAL_WEAVE * Math.sin(1.3 * t + id * 2.399);
@@ -787,7 +702,6 @@ class OffroadRite {
 
     this._prevS = this.s;
     this._prevX = this.x;
-    const tPrev = this.t;
     this.t += dt;
 
     // ---- steering ---------------------------------------------------------
@@ -799,8 +713,9 @@ class OffroadRite {
     if (ax !== 0) {
       cmd = ax > 0 ? 1 : -1;
     } else if (input.inside) {
-      // Positional: the car goes where the pointer is. `u` is already the car's
-      // screen x (see the mapping in draw), so this is a straight difference.
+      // Positional: the car goes where the pointer is. The view's field frame
+      // puts field x = 0 on the centreline at the car, so `input.x` is a lateral
+      // offset like `u` and this is a straight difference.
       cmd = clamp((input.x - (this.x - this.centreAt(this.s))) / 2.0, -1, 1);
     }
     const k = Math.min(1, dt / LAT_TAU);
@@ -853,28 +768,9 @@ class OffroadRite {
       this.boostT = BOOST_TIME;
       this.boostHot = this.isFast(this.s);
       this.boostsHot += this.boostHot ? 1 : 0;
-      this._boostFlash = 1;
-      this.#cue(this.boostHot ? 'good' : 'tick', this.x - this.centreAt(this.s));
+      this.#cue(this.boostHot ? 'good' : 'tick', 'boost', this.x - this.centreAt(this.s), -1);
     }
     if (this.boostT > 0) this.boostT = Math.max(0, this.boostT - dt);
-
-    // ---- bomb -------------------------------------------------------------
-    // Right button OR Digit1, for the same reason the boost takes Space: no verb
-    // in this game is reachable only through the secondary button.
-    const bomb = (input.altAction | 0) > 0 || ((input.slots?.[0] | 0) > 0);
-    if (bomb && this.bombsLeft > 0) {
-      this.bombsLeft--;
-      this.mines.push({
-        s: Math.max(0, this.s - MINE_BACK),
-        u: this.x - this.centreAt(this.s),
-        live: true,
-        flash: 0.35,
-      });
-      // 'good', not 'miss': laying a trap is a deliberate positive act. 'boom'
-      // is saved for the moment it actually catches someone, which is the part
-      // that deserves the explosion and the stage kick.
-      this.#cue('good', this.x - this.centreAt(this.s));
-    }
 
     // ---- throttle ---------------------------------------------------------
     const uNow = this.x - this.centreAt(this.s);
@@ -897,15 +793,6 @@ class OffroadRite {
 
     this.#resolveGates();
     this.#resolveCoins();
-    this.#resolveMines(tPrev, this.t);
-
-    // ---- cosmetics (in update, never in draw) -----------------------------
-    this._shake = Math.max(0, this._shake - dt * 3);
-    this._goldFlash = Math.max(0, this._goldFlash - dt * 2.6);
-    this._boostFlash = Math.max(0, this._boostFlash - dt * 2.2);
-    this._gateFlash = Math.max(0, this._gateFlash - dt * 2.2);
-    this._missFlash = Math.max(0, this._missFlash - dt * 1.4);
-    for (const m of this.mines) if (m.flash > 0) m.flash = Math.max(0, m.flash - dt);
 
     const st = this.#standings();
     this.place = st.place;
@@ -916,7 +803,7 @@ class OffroadRite {
       this.finishT = this.t;
       this.finished = true;
       this._over = true;
-      this.#cue('perfect');
+      this.#cue('perfect', 'flag', this.x - this.centreAt(this.s));
       return true;
     }
     if (this.t >= DURATION) { this._over = true; return true; }
@@ -950,22 +837,19 @@ class OffroadRite {
       this.gatesPassed++;
       if (Math.abs(u) <= gate.hw) {
         this.gatesHit++;
-        this._gateFlash = 1;
-        this.#cue('good', u);
+        this.#cue('good', 'gate', u, i0);
       } else {
         this.dragT = this._wideTime;
-        this._shake = 0.6;
         this.missedGates.push(i0);
-        this._missFlash = 1;
-        this._missSide = u > 0 ? 1 : -1;
-        this.#cue('miss', u);
+        this.#cue('miss', 'gate', u, i0);
       }
       this.nextGate++;
     }
   }
 
   #resolveCoins() {
-    for (const c of this.coins) {
+    for (let i = 0; i < this.coins.length; i++) {
+      const c = this.coins[i];
       if (c.taken || c.s > this.s || c.s < this._prevS) continue;
       const span = this.s - this._prevS;
       const f = span > 1e-9 ? clamp((c.s - this._prevS) / span, 0, 1) : 1;
@@ -973,48 +857,20 @@ class OffroadRite {
       if (Math.abs(u - c.u) <= COIN_R) {
         c.taken = true;
         this.coinsTaken++;
-        this._goldFlash = 1;
-        this.#cue('gold', c.u);
+        this.#cue('gold', 'coin', c.u, i);
       }
     }
   }
 
   /**
-   * The bomb — the one place a ghost reacts to the player.
-   *
-   * A mine sits at a track distance and a lateral offset. When a rival's
-   * distance crosses it within MINE_R laterally, `applyPenalty` fires and that
-   * rival's ENTIRE FUTURE moves: every later position, every claim, its finishing
-   * time and therefore the standings. Nothing is re-simulated and nothing is
-   * stored — the penalty is an offset inside a pure function. That single write
-   * is what makes "bloquer ses adversaires" mean something instead of being a
-   * particle effect.
-   *
-   * One mine takes one rival. A mine that caught the whole field would make the
-   * two charges strictly better than any driving.
+   * One presentation cue. `what` says which object it is about ('gate',
+   * 'coin', 'boost', 'flag') and `i` which one, because the host's sound table
+   * is keyed on `type` alone and 'good' is both a clean gate and a hot boost.
+   * `x` is the lateral offset from the centreline, in field units.
    */
-  #resolveMines(t0, t1) {
-    for (const m of this.mines) {
-      if (!m.live) continue;
-      for (let id = 0; id < RIVAL_COUNT; id++) {
-        const a = this.rivalDist(id, t0);
-        const b = this.rivalDist(id, t1);
-        if (!(a <= m.s && m.s <= b)) continue;
-        if (Math.abs(this.rivalLateral(id, t1) - m.u) > MINE_R) continue;
-        this.rivals.applyPenalty(id, MINE_PENALTY);
-        m.live = false;
-        m.flash = 0.5;
-        this.bombHits++;
-        this._shake = 1;
-        this.#cue('boom', m.u);
-        break;
-      }
-    }
-  }
-
-  #cue(type, x) {
+  #cue(type, what, x = 0, i = -1) {
     if (this._events.length >= MAX_EVENTS) return;
-    this._events.push(x === undefined ? { type } : { type, x });
+    this._events.push({ type, what, x, i });
   }
 
   // ---- standings --------------------------------------------------------
@@ -1036,10 +892,6 @@ class OffroadRite {
    * `2 - finishTime / DURATION` (always above 1, better when earlier) and a
    * non-finisher's is `distance / TRACK_LEN` (always at or below 1). Total order,
    * continuous inside each branch, no ties outside exact simultaneity.
-   *
-   * The bomb reads straight through it: MINE_PENALTY seconds of penalty either
-   * pushes a rival's finish later or leaves them short of the flag, and both move
-   * the key downward by construction.
    *
    * PURE. Reads instance state, writes none — `update` caches the result for the
    * HUD, `score()` recomputes it, and the two can never disagree.
@@ -1103,574 +955,33 @@ class OffroadRite {
 
   drainEvents() { const e = this._events; this._events = []; return e; }
   teardown() { this._events = []; }
-
-  // ---- draw -------------------------------------------------------------
-
-  /**
-   * THE SCREEN MAPPING, once, here, because everything below depends on it.
-   *
-   *   camera  = centreAt(s_car)              the road is centred under the car
-   *   screenX = worldX - camera
-   *   screenY = CAR_Y + (worldS - s_car)     one world unit per world unit
-   *
-   * Uniform scale on both axes, no compression, no perspective. The consequence
-   * worth naming: the car's own screen x IS its offset from the centreline, so
-   * "am I on the road" and "where am I on screen" are the same number and the
-   * player never has to translate between them.
-   *
-   * MUTATES NOTHING. Every value it needs was computed in update; `alpha`
-   * interpolates the car between the last two steps and nothing else.
-   */
-  draw(g, alpha) {
-    const P = this._pal;
-    const a = clamp(alpha ?? 0, 0, 1);
-    const s = lerp(this._prevS, this.s, a);
-    const x = lerp(this._prevX, this.x, a);
-    const cam = this.centreAt(s);
-    const u = x - cam;
-    const sLo = s - 4.0;
-    const sHi = s + LOOKAHEAD + 0.6;
-    const boosting = this.boostT > 0;
-
-    g.clipField(() => {
-    g.save();
-    if (this._shake > 0) g.translate(0, -0.06 * this._shake);
-
-    // ---- ground -----------------------------------------------------------
-    g.rect(0, 0, 16, 9, {
-      fill: g.linearFill(0, 4.5, 0, -4.5, [
-        [0, rgba(P.c.ink4, 0.16)],
-        [0.55, rgba(P.c.ink4, 0.07)],
-        [1, rgba(P.c.accent, 0.05)],
-      ]),
-    });
-
-    // ---- the ground streaming past -----------------------------------------
-    // THE SUBJECT OF THIS RITE IS SPEED AND THE FIRST BUILD HAD NO CUE FOR IT.
-    // What was here was a pool of flat grey ellipses and thin vertical ticks on
-    // a brown gradient, and in a still they read as potholes and scratches on the
-    // canvas rather than as ground going past — damage, not motion. Three things
-    // fix it and all three are functions of `s`, so they cost no state:
-    //
-    //  - every scenery item is a rock with a LIT TOP and a shadow, so it reads as
-    //    an object sitting on the ground rather than as a hole in it;
-    //  - each one drags a STREAK behind it whose length is the distance the car
-    //    covers in ~0.11 s, so the streaks stretch when the car is quick and
-    //    collapse to nothing when it is slow. That is the whole speedometer: at a
-    //    boost they are twice as long as at a standstill;
-    //  - and the streaks are warm rather than grey, so the scrub reads as dust.
-    const vel = this.speed || BASE_SPEED;
-    const streak = clamp(vel * 0.11, 0.08, 1.1);
-    for (const it of this.scenery) {
-      const base = it.s + Math.ceil((sLo - it.s) / SCENERY_SPAN) * SCENERY_SPAN;
-      for (let ws = base; ws <= sHi; ws += SCENERY_SPAN) {
-        const px = this.centreAt(ws) - cam + it.side * it.u;
-        if (px < -8.6 || px > 8.6) continue;
-        const py = CAR_Y + (ws - s);
-        // The streak first, so the rock sits on top of its own motion blur.
-        g.line(px, py, px, py - streak * (0.6 + it.r), rgba(P.c.accent, 0.16), it.r * 0.7, 'round');
-        if (it.kind < 0.55) {
-          // A rock: dark base, lit crown. Two shapes, one object.
-          g.ellipse(px, py, it.r * 1.15, it.r * 0.72, 0, { fill: rgba(P.c.ink4, 0.55) });
-          g.ellipse(px, py + it.r * 0.2, it.r * 0.72, it.r * 0.36, 0, { fill: rgba(P.c.accent, 0.28) });
-        } else if (it.kind < 0.82) {
-          // A tuft of scrub: three blades, leaning the way the car is going.
-          for (const k of [-1, 0, 1]) {
-            g.line(px + k * it.r * 0.45, py - it.r * 0.3,
-              px + k * it.r * 0.7, py + it.r * 1.1, rgba(P.c.ink3, 0.4), 0.05, 'round');
-          }
-        } else {
-          // A marker stake, with a shadow so it stands up off the ground.
-          g.line(px + 0.06, py - 0.04, px + 0.06, py + it.r * 1.5, 'rgba(0,0,0,0.35)', 0.07, 'round');
-          g.line(px, py, px, py + it.r * 1.6, rgba(P.c.ink2, 0.45), 0.06, 'round');
-        }
-      }
-    }
-
-    // ---- the road ---------------------------------------------------------
-    // ONE POLYGON, NOT A CHAIN OF CAPSULES, and the first version was the chain.
-    // A stadium per segment is the obvious way to sweep a width along a curve,
-    // and it produces two artefacts at once on screen: the round caps bulge past
-    // the edge so the border scallops, and — worse — a translucent fill STACKS in
-    // every overlap, so the road is drawn as a string of brighter beads with dark
-    // notches between them. Caught in a screenshot, not by a test, because
-    // nothing about it throws. Down the left edge, back up the right, filled once.
-    // The point buffer is allocated once at module load and MUTATED IN PLACE — a
-    // rite that builds a fresh 50-entry array of pairs every frame allocates
-    // megabytes a minute for a shape whose size never changes.
-    //
-    // TWO PASSES, NOT ONE, AND THE FIRST IS THE FIX FOR THE REAL BUG. The strip
-    // used to be filled once at alpha 0.17, which in a rally game means the
-    // subject of the picture — the surface you are driving on — was a warm smudge
-    // that faded into the background before it reached the top of the frame. You
-    // could not see where the road ENDED, which is the one thing the whole rite
-    // asks you to judge. The shoulder is drawn wider and darker first so the road
-    // has an edge to be brighter than, and the surface itself now goes on at 0.42.
-    const strip = STRIP;
-    const layStrip = (halfW) => {
-      for (let i = 0; i < STRIP_HALF; i++) {
-        const ws = sLo + i * STRIP_STEP;
-        const c = this.centreAt(ws) - cam;
-        const y = CAR_Y + (ws - s);
-        const l = strip[i], r = strip[2 * STRIP_HALF - 1 - i];
-        l[0] = c - halfW; l[1] = y;
-        r[0] = c + halfW; r[1] = y;
-      }
-    };
-    layStrip(HALF_W + 0.34);
-    g.poly(strip, { fill: 'rgba(0,0,0,0.42)' });
-    layStrip(HALF_W);
-    // `poly`, not `blob`: the edges of a road are the edges of a road, and a
-    // smoothing pass would round the two ends of the strip off into a lozenge.
-    g.poly(strip, { fill: rgba(P.c.accent, 0.42) });
-
-    // ---- the fast stretches, lit on the road --------------------------------
-    // THE BOOST'S AFFORDANCE, and it is drawn rather than explained because a
-    // rule the player cannot see is a rule the player cannot use. A charge lit
-    // inside one of these runs at BOOST_MUL; anywhere else it is nearly wasted
-    // (BOOST_COLD_MUL). So the stretch is painted as a brighter panel of surface
-    // with chevrons pointing up it — the shape a road paints on itself when it
-    // wants you to go — and it scrolls with the ground because it is a function
-    // of distance, not of time.
-    for (const z of this.fastZones) {
-      if (z.s1 < sLo || z.s0 > sHi) continue;
-      const a0 = Math.max(z.s0, sLo), a1 = Math.min(z.s1, sHi);
-      const lit = this.boostLeft > 0 ? 0.16 : 0.07;
-      for (let ws = a0; ws < a1; ws += STRIP_STEP) {
-        const w1 = Math.min(ws + STRIP_STEP, a1);
-        const c0 = this.centreAt(ws) - cam, c1 = this.centreAt(w1) - cam;
-        const y0 = CAR_Y + (ws - s), y1 = CAR_Y + (w1 - s);
-        g.poly([[c0 - HALF_W, y0], [c0 + HALF_W, y0], [c1 + HALF_W, y1], [c1 - HALF_W, y1]],
-          { fill: rgba(P.c.goldHi, lit) });
-      }
-      // Chevrons, on the distance so they stream at the car's own speed.
-      for (let ws = Math.ceil(a0 / 2.2) * 2.2; ws < a1 - 0.6; ws += 2.2) {
-        const cx = this.centreAt(ws) - cam, cy = CAR_Y + (ws - s);
-        const col = rgba(P.c.goldHi, this.boostLeft > 0 ? 0.5 : 0.18);
-        g.line(cx - 0.5, cy, cx, cy + 0.42, col, 0.07, 'round');
-        g.line(cx + 0.5, cy, cx, cy + 0.42, col, 0.07, 'round');
-      }
-    }
-
-    // Edges, dashed on the DISTANCE itself rather than on a timer, so the dashes
-    // rush at exactly the speed the car is doing and stop dead when it does.
-    //
-    // BRIGHT, THICK AND WHITE. They used to be the same grey at the same weight
-    // as the wheel ruts three lines below, so the two read as four lane markings
-    // on a highway and the actual EDGE of the drivable surface was indistinguish-
-    // able from a decoration in the middle of it. The edge is the rule; it gets
-    // the strongest mark on the road.
-    for (const side of [-1, 1]) {
-      for (let ws = Math.floor(sLo / 1.4) * 1.4; ws <= sHi; ws += 2.8) {
-        const y0 = CAR_Y + (ws - s), y1 = CAR_Y + (ws + 1.1 - s);
-        g.line(this.centreAt(ws) - cam + side * HALF_W, y0,
-          this.centreAt(ws + 1.1) - cam + side * HALF_W, y1,
-          rgba(P.c.ink, 0.85), 0.11, 'round');
-      }
-    }
-    // A pair of wheel ruts down the racing line. Cheap, and it is what tells the
-    // player where the line IS when no gate is in view — DARK and thin, so they
-    // read as worn-in grooves in the surface rather than as painted lines.
-    for (const side of [-0.5, 0.5]) {
-      for (let ws = sLo; ws <= sHi; ws += 1.2) {
-        g.line(this.centreAt(ws) - cam + side, CAR_Y + (ws - s),
-          this.centreAt(ws + 1.2) - cam + side, CAR_Y + (ws + 1.2 - s),
-          'rgba(0,0,0,0.3)', 0.16);
-      }
-    }
-
-    // ---- gates ------------------------------------------------------------
-    for (let i = 0; i < this.gates.length; i++) {
-      const gate = this.gates[i];
-      if (gate.s < sLo - 1 || gate.s > sHi) continue;
-      const gx = this.centreAt(gate.s) - cam;
-      const gy = CAR_Y + (gate.s - s);
-      const done = i < this.nextGate;
-      const next = i === this.nextGate;
-      // THE STATE OF A GATE IS TOLD TWICE: once in colour and once in shape.
-      // Under deuteranopia the gold of a live gate and the grey of a spent one
-      // are close enough to be one colour, so a spent gate also loses its
-      // crossbar and keeps only two short stubs, and a MISSED one is struck
-      // through. See the note on the palette at the bottom of the file.
-      const missed = done && this.missedGates.includes(i);
-      const col = missed ? P.c.danger : done ? P.c.ink4 : next ? P.c.gold : P.c.ink2;
-      const al = done ? (missed ? 0.7 : 0.35) : next ? 1 : 0.6;
-      g.save().alpha(al);
-      // The bunting first, so the posts read as ends of a line rather than as
-      // two unrelated sticks — the shape a player has to judge is the GAP.
-      g.line(gx - gate.hw, gy, gx + gate.hw, gy, rgba(col, done ? 0.25 : 0.6), 0.05);
-      for (const side of [-1, 1]) {
-        g.capsule(gx + side * gate.hw, gy - 0.16, gx + side * gate.hw, gy + 0.16, 0.13,
-          { fill: rgba(col, 0.9) });
-        // A chevron on each post pointing INTO the gap: a non-colour channel for
-        // "this is the way through", and the thing that survives a dichromat.
-        if (!done) {
-          g.line(gx + side * (gate.hw + 0.02), gy + 0.19,
-            gx + side * (gate.hw - 0.22), gy + 0.34, rgba(col, 0.8), 0.05, 'round');
-        }
-      }
-      // The strike-through on a gate that was run wide. This is the permanent
-      // half of the miss feedback — the flash below is the loud half.
-      if (missed) {
-        const r = gate.hw + 0.18;
-        g.line(gx - r, gy - 0.3, gx + r, gy + 0.3, rgba(P.c.danger, 0.8), 0.08, 'round');
-        g.line(gx - r, gy + 0.3, gx + r, gy - 0.3, rgba(P.c.danger, 0.8), 0.08, 'round');
-      }
-      if (next) {
-        g.save().add();
-        g.halo(gx, gy, 1.5, chan(P.c.gold), 0.16);
-        g.restore();
-      }
-      g.text(String(i + 1), gx, gy + 0.52, { size: 0.3, fill: rgba(col, 0.75) });
-      g.restore();
-    }
-
-    // ---- MISSED --------------------------------------------------------------
-    // FIVE GATES WENT PAST WITH NO ACKNOWLEDGEMENT AT ALL in the last build: the
-    // HUD said 1/12 with gate 6 on screen and nothing on the frame had ever said
-    // otherwise. "Gates credit only from inside" is the single rule the whole idle
-    // score rests on, so it is the one rule the player must be able to SEE fire.
-    // It now fires three ways at once, on purpose, because one of them is always
-    // where the player is not looking: the gate keeps a permanent red cross (see
-    // above), the screen takes a red wash from the edge the car missed on, and
-    // the word lands under the car. `_missFlash` and `_missSide` are set in
-    // update; draw only reads them.
-    if (this._missFlash > 0) {
-      const f = this._missFlash;
-      g.save().alpha(clamp(f, 0, 1));
-      // A wash from the side the car was on, so the flash also says WHICH WAY.
-      g.rect(this._missSide * 6.2, 0, 7.6, 9, {
-        fill: g.linearFill(this._missSide * 9.5, 0, 0, 0, [
-          [0, rgba(P.c.danger, 0.4)], [1, rgba(P.c.danger, 0)],
-        ]),
-      });
-      g.text('MISSED', 0, CAR_Y + 1.15, {
-        size: 0.5 + 0.12 * f, fill: rgba(P.c.danger, 0.95), tracking: 0.18, weight: 700,
-      });
-      g.restore();
-    }
-
-    // ---- the next gate, when it is still over the horizon -------------------
-    // GATE_STEP (17.3) is longer than the visible strip (12.25), so for most of
-    // the race there is NO gate on screen at all. A racer whose objective is
-    // invisible most of the time is a racer you cannot plan in — the first
-    // screenshot of this rite had the car threading an empty road with the HUD
-    // saying 8/12 and nothing on screen explaining what the eighth had been. So
-    // the pending gate gets a marker pinned to the top edge, at the lateral
-    // position it will have when it arrives, with the distance to it.
-    //
-    // IT SITS BELOW y = 4.5 AND ALWAYS DID NOT. The label used to be at 4.36 with
-    // an ascender on top of that, i.e. off the field — invisible only because the
-    // stage was being letterboxed at the time. Everything here is laid out
-    // downward from the arrow now, inside the clip.
-    const pending = this.gates[this.nextGate];
-    if (pending && pending.s > sHi) {
-      const px = clamp(this.centreAt(pending.s) - cam, -7.0, 7.0);
-      const away = pending.s - s;
-      g.save().alpha(clamp(1.4 - away / 26, 0.3, 1));
-      g.poly([[px - 0.28, 4.00], [px + 0.28, 4.00], [px, 4.34]], { fill: P.c.gold });
-      // Bunting width to scale, so "this one is narrow" is readable before it is
-      // reachable — which is the only thing that makes an early line worth taking.
-      g.line(px - pending.hw, 3.82, px + pending.hw, 3.82, rgba(P.c.gold, 0.5), 0.05);
-      g.text(`${this.nextGate + 1}`, px, 3.50, { size: 0.28, fill: rgba(P.c.gold, 0.9) });
-      g.restore();
-    }
-
-    // ---- gold -------------------------------------------------------------
-    // A COIN, NOT A DOT. Under a dichromat simulation the old flat gold disc sat
-    // at the same lightness as the road it was lying on and vanished; the ring
-    // plus the dark core plus the bob give it an outline and an interior, which
-    // is a shape channel that no colour blindness can take away.
-    for (const c of this.coins) {
-      if (c.taken || c.s < sLo || c.s > sHi) continue;
-      const px = this.centreAt(c.s) - cam + c.u;
-      const py = CAR_Y + (c.s - s);
-      const bob = 0.9 + 0.1 * Math.sin(c.s * 2.1 + this.t * 4);
-      g.save().add();
-      g.halo(px, py, 0.5, chan(P.c.gold), 0.22 * bob);
-      g.restore();
-      g.circle(px, py, 0.22 * bob, { fill: 'rgba(0,0,0,0.5)' });
-      g.circle(px, py, 0.2 * bob, { fill: P.c.goldHi });
-      g.circle(px, py, 0.1 * bob, { stroke: rgba(P.c.accent, 0.85), width: 0.05 });
-    }
-
-    // ---- mines ------------------------------------------------------------
-    for (const m of this.mines) {
-      if (m.s < sLo - 1 || m.s > sHi) continue;
-      const px = this.centreAt(m.s) - cam + m.u;
-      const py = CAR_Y + (m.s - s);
-      if (m.live) {
-        const pulse = 0.55 + 0.45 * Math.sin(this.t * 11);
-        g.circle(px, py, 0.24, { fill: rgba(P.c.danger, 0.85) });
-        g.circle(px, py, 0.24 + 0.16 * pulse, { stroke: rgba(P.c.danger, 0.5), width: 0.05 });
-        // Spikes: a mine is not a coin, and at this size the only thing keeping
-        // the two apart for a dichromat is that one of them is round.
-        for (let k = 0; k < 6; k++) {
-          const th = (k / 6) * Math.PI * 2 + this.t * 0.9;
-          g.line(px + Math.cos(th) * 0.22, py + Math.sin(th) * 0.22,
-            px + Math.cos(th) * 0.36, py + Math.sin(th) * 0.36,
-            rgba(P.c.danger, 0.8), 0.06, 'round');
-        }
-      } else if (m.flash > 0) {
-        g.save().add();
-        g.halo(px, py, 1.6 * (1.4 - m.flash), chan(P.c.danger), m.flash * 1.6);
-        g.restore();
-      }
-    }
-
-    // ---- rivals -----------------------------------------------------------
-    // THE LABELS USED TO PILE UP. Three ghosts leave the line together and weave
-    // on phase-shifted sines, so at t = 0 they are on top of each other and their
-    // three names were drawn at the same height, overlapping into "Iroerahck".
-    // Two fixes, both cheap: each rival's label sits on its OWN rung (0.62, 0.92,
-    // 1.22 above the car, by id) so three labels can never share a baseline, and
-    // a label is dropped entirely while another rival is within 0.55 of it
-    // laterally and on a lower rung — at which point the cars are visibly one
-    // clump and naming them individually is noise.
-    const roster = this.rivals.roster();
-    for (let id = 0; id < RIVAL_COUNT; id++) {
-      const rs = this.rivalDist(id, this.t);
-      if (rs < sLo || rs > sHi) continue;
-      const px = this.centreAt(rs) - cam + this.rivalLateral(id, this.t);
-      const py = CAR_Y + (rs - s);
-      // Rivals are DARK and the player is LIGHT. That contrast is the one that
-      // has to survive a dichromat, so it is carried by lightness, not by hue.
-      drawCar(g, px, py, 0, P.c.ink4, P.c.ink2, false);
-      let clear = true;
-      for (let o = 0; o < id; o++) {
-        const os = this.rivalDist(o, this.t);
-        const ox = this.centreAt(os) - cam + this.rivalLateral(o, this.t);
-        if (Math.abs(ox - px) < 0.55 && Math.abs(os - rs) < 1.2) { clear = false; break; }
-      }
-      if (!clear) continue;
-      g.text(roster[id].name, px, py + 0.62 + id * 0.3,
-        { size: 0.26, fill: rgba(P.c.ink2, 0.9) });
-    }
-
-    // ---- the player -------------------------------------------------------
-    const heading = Math.atan2(-this.vx, Math.max(1, this.speed || BASE_SPEED)) * 0.9;
-    const offRoad = Math.abs(u) > HALF_W;
-    if (boosting || offRoad) {
-      // Dust: a fixed rosette behind the car, phase-driven. No particle list, so
-      // no allocation and nothing to leak. A COLD boost throws a third as much of
-      // it as a hot one, which is the feedback that the charge was wasted.
-      const heat = offRoad ? 1 : this.boostHot ? 1 : 0.35;
-      g.save().add();
-      for (let i = 0; i < 7; i++) {
-        const ph = (this.t * 5 + i * 0.61) % 1;
-        g.halo(u - this.vx * 0.06 * i + Math.sin(i * 2.3 + this.t * 9) * 0.18,
-          CAR_Y - 0.45 - ph * 1.5, (0.32 * (1 - ph) + 0.1) * heat,
-          chan(offRoad ? P.c.accent : P.c.goldHi), 0.24 * (1 - ph) * heat);
-      }
-      g.restore();
-    }
-    g.ellipse(u, CAR_Y - 0.08, 0.42, 0.6, 0, { fill: 'rgba(0,0,0,0.45)' });
-    // THE PLAYER'S CAR IS THE LIGHTEST THING ON THE ROAD, and that is a colour-
-    // blindness fix rather than a style choice. It used to be `--rite-offroad-
-    // accent`, a mid orange, painted on a surface tinted with the same token: run
-    // through a deuteranope simulation the car, the road, the coins and the gate
-    // all collapsed to one yellow and the car was the same colour as the thing it
-    // was driving on. Now the shell is near-white ink with a dark outline and the
-    // accent is demoted to the roof panel, so the separation is carried by
-    // LIGHTNESS — which no form of dichromacy touches — and the hue is decoration
-    // on top of a picture that already works without it.
-    drawCar(g, u, CAR_Y, heading, P.c.ink, P.c.ink4, true, boosting ? P.c.goldHi : P.c.accent);
-
-    g.restore();
-    });
-
-    // ---- HUD --------------------------------------------------------------
-    this.#drawHud(g, P);
-  }
-
-  #drawHud(g, P) {
-    const st = { place: this.place, beaten: this.beaten };
-
-    // Top-left: gates and gold, the two things the score is mostly made of.
-    // The counter flashes gold on a credit and RED on a miss, so the number the
-    // player is watching is also the number that tells them the rule fired.
-    g.text(`GATES ${this.gatesHit}/${GATE_COUNT}`, -7.5, 4.05,
-      { size: 0.36, align: 'left', tracking: 0.06,
-        fill: this._missFlash > 0.35 ? P.c.danger
-          : this._gateFlash > 0.4 ? P.c.gold : P.c.ink2 });
-    // ...and the misses are carried as their own count rather than left to
-    // subtraction. `12 - 5` is arithmetic; `5 MISSED` is a fact.
-    if (this.missedGates.length > 0) {
-      g.text(`${this.missedGates.length} MISSED`, -7.5, 3.14, {
-        size: 0.28, align: 'left', tracking: 0.08,
-        fill: rgba(P.c.danger, this._missFlash > 0.35 ? 1 : 0.65),
-      });
-    }
-    g.text(`GOLD ${this.coinsTaken}/${COIN_COUNT}`, -7.5, 3.55,
-      { size: 0.36, align: 'left', fill: this._goldFlash > 0.4 ? P.c.goldHi : P.c.ink2, tracking: 0.06 });
-
-    // Top-right: the standing, live. A race you cannot see yourself losing is a
-    // solitaire with extra steps.
-    g.text(`${PLACES[clamp(st.place - 1, 0, 3)]} of ${RIVAL_COUNT + 1}`, 7.5, 4.05,
-      { size: 0.42, align: 'right', fill: st.place === 1 ? P.c.goldHi : P.c.ink, tracking: 0.04 });
-    const left = Math.max(0, DURATION - this.t);
-    g.text(`${left.toFixed(1)}s`, 7.5, 3.5,
-      { size: 0.34, align: 'right', fill: left < 5 ? P.c.danger : P.c.ink3 });
-
-    // Bottom: the two verbs, as charges. Pips rather than a number, because the
-    // question a player asks mid-corner is "have I got one left", not "how many".
-    //
-    // ROUND FOR BOOST, SQUARE FOR BOMB. Both rows used to be discs told apart by
-    // hue alone — gold against red — and under a deuteranope simulation the two
-    // converge, so the player is left with "some pips at the left and some pips
-    // at the right" and no way to know which row is which if the labels are read
-    // in a hurry. The shape says it without the colour, and the colour still says
-    // it for everyone else.
-    const pip = (i, filled, col, cx) => {
-      g.circle(cx + i * 0.42, -4.05, 0.14, filled
-        ? { fill: col } : { stroke: rgba(col, 0.4), width: 0.05 });
-    };
-    const chip = (i, filled, col, cx) => {
-      g.rect(cx + i * 0.42, -4.05, 0.25, 0.25, filled
-        ? { fill: col, radius: 0.04 } : { stroke: rgba(col, 0.4), width: 0.05, radius: 0.04 });
-    };
-    // BOOST goes bright while the car is standing in a fast stretch with a charge
-    // in hand — the HUD half of the affordance the road paints in `draw`. It is
-    // the difference between "you have three boosts" and "spend one HERE".
-    const armed = this.boostLeft > 0 && this.boostT <= 0 && this.isFast(this.s);
-    g.text(armed ? 'BOOST NOW' : 'BOOST', -7.5, -4.05,
-      { size: 0.3, align: 'left', tracking: 0.1, fill: armed ? P.c.goldHi : rgba(P.c.ink3, 0.9) });
-    for (let i = 0; i < BOOST_CHARGES; i++) {
-      pip(i, i < this.boostLeft, armed ? P.c.goldHi : P.c.gold, -4.85);
-    }
-    g.text('BOMB', 4.2, -4.05, { size: 0.3, align: 'left', fill: rgba(P.c.ink3, 0.9), tracking: 0.1 });
-    for (let i = 0; i < BOMB_CHARGES; i++) chip(i, i < this.bombsLeft, P.c.danger, 6.0);
-
-    // Progress bar along the bottom edge: the only place the whole course
-    // become a picture, and the only cue that the flag is coming.
-    const prog = clamp(this.s / FLAG_AT, 0, 1);
-    g.line(-3.4, -4.32, 3.4, -4.32, rgba(P.c.ink4, 0.8), 0.05, 'round');
-    g.line(-3.4, -4.32, -3.4 + 6.8 * prog, -4.32, P.c.accent, 0.07, 'round');
-    for (let id = 0; id < RIVAL_COUNT; id++) {
-      const rp = clamp(this.rivalDist(id, this.t) / FLAG_AT, 0, 1);
-      g.circle(-3.4 + 6.8 * rp, -4.32, 0.06, { fill: rgba(P.c.ink2, 0.8) });
-    }
-    g.circle(-3.4 + 6.8 * prog, -4.32, 0.1, { fill: P.c.goldHi });
-
-    if (this.finished) {
-      g.text('FLAG', 0, 0.6, { size: 0.9, fill: P.c.goldHi, tracking: 0.2 });
-    }
-  }
 }
-
-// ---------------------------------------------------------------------------
-// Drawing helpers — free functions, so nothing here can touch instance state.
-// ---------------------------------------------------------------------------
-
-/**
- * A car, seen from directly above: shell, roof, four wheels.
- *
- * `blob` rather than `poly` for the shell, because a car body is a smooth closed
- * silhouette and a six-point `poly` reads as a badly tessellated curve rather
- * than as stylisation (see the Painter docblock). `ellipse` rather than a scaled
- * circle for the wheels, so the outline keeps one width on both axes.
- */
-function drawCar(g, x, y, rot, body, trim, isPlayer, roof) {
-  g.save().translate(x, y).rotate(rot);
-  for (const sx of [-1, 1]) {
-    g.ellipse(sx * 0.3, 0.28, 0.09, 0.17, 0, { fill: 'rgba(0,0,0,0.72)' });
-    g.ellipse(sx * 0.3, -0.28, 0.1, 0.19, 0, { fill: 'rgba(0,0,0,0.72)' });
-  }
-  g.blob([
-    [0, 0.52], [0.26, 0.3], [0.28, -0.28], [0.16, -0.5],
-    [-0.16, -0.5], [-0.28, -0.28], [-0.26, 0.3],
-  ], { fill: body, stroke: rgba(trim, isPlayer ? 0.9 : 0.45), width: isPlayer ? 0.06 : 0.045 });
-  g.rect(0, 0.06, 0.3, 0.3, { fill: roof ?? rgba(trim, 0.3), radius: 0.08 });
-  // The player gets a nose flash the ghosts do not: one more non-colour channel
-  // separating "me" from "them" for anyone the hues have collapsed for.
-  if (isPlayer) {
-    g.poly([[-0.13, 0.34], [0.13, 0.34], [0, 0.52]], { fill: rgba(trim, 0.85) });
-  }
-  g.restore();
-}
-
-/**
- * Design tokens, read ONCE per rite from the document element.
- *
- * The pattern is `Lottery.js#readPalette` verbatim, and the two halves both
- * matter: read once (a getComputedStyle per frame is a forced style recalc every
- * frame) and fall back to literals (this module is imported by the unit suite in
- * node, where there is no `document` at all).
- *
- * The accent is read under its PREFIXED name, `--rite-offroad-accent`, which is
- * declared on `:root`. The generic `--rite-accent` is set on `#rite` — an
- * element a rite never has a handle on — so reading that one missed every time
- * and the literal below was silently what painted. The `[data-rite]` block
- * aliases the prefixed token into the generic one for the chrome's use.
- */
-function readPalette() {
-  const cs = (typeof document !== 'undefined' && typeof getComputedStyle === 'function')
-    ? getComputedStyle(document.documentElement) : null;
-  const tok = (name, fallback) => (cs?.getPropertyValue(name) || '').trim() || fallback;
-  const c = {
-    ink: tok('--ink', '#e9ebf3'),
-    ink2: tok('--ink-2', '#a3a9bb'),
-    ink3: tok('--ink-3', '#6d7488'),
-    ink4: tok('--ink-4', '#4a5064'),
-    gold: tok('--gold', '#e5bd79'),
-    goldHi: tok('--gold-hi', '#f7dfae'),
-    danger: tok('--danger', '#ff5f57'),
-    accent: tok('--rite-offroad-accent', '#d98b4a'),
-  };
-  return { c };
-}
-
-/**
- * `#rrggbb` -> `'r,g,b'`, the bare-channel form `Painter.halo` wants.
- *
- * Exists so glows are derived FROM THE TOKENS rather than from a second set of
- * hardcoded numbers next to them — the failure mode being a palette change that
- * moves every fill and leaves every glow behind. A token that is not a hex (a
- * project could legally define one as `rgb(...)`) falls back to a neutral warm
- * grey rather than producing an unparseable colour, which `addColorStop` throws
- * on and a throw inside draw() abandons the rite.
- */
-function chan(hex) {
-  if (typeof hex !== 'string') return '229,189,121';
-  const h = hex.trim();
-  if (/^#[0-9a-f]{6}$/i.test(h)) {
-    return `${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)}`;
-  }
-  if (/^#[0-9a-f]{3}$/i.test(h)) {
-    return `${parseInt(h[1] + h[1], 16)},${parseInt(h[2] + h[2], 16)},${parseInt(h[3] + h[3], 16)}`;
-  }
-  return '229,189,121';
-}
-
-/** A token at an alpha, as a css colour. Same reasoning as `chan`. */
-function rgba(hex, a) { return `rgba(${chan(hex)},${a})`; }
 
 /** @type {import('../contract.js').MinigameDef} */
 export const OFFROAD_RITE = {
   id: 'offroad',
   name: 'Offroad Racing',
-  hint: 'Steer through the gates — click to boost, right-click to drop a bomb',
+  hint: 'Gates, gold and your finishing place all pay',
   rules: [
-    'The car drives itself: steer it through the gates.',
-    'Stay on the dirt road. The scrub slows you down.',
-    'Gates, gold nuggets and beating your rivals all pay.',
+    'The car drives itself. Steer it through the gates and over the gold.',
+    'Stay on the dirt road: grass and missed gates slow you down.',
+    'You have 3 boosts. They are strongest on the yellow arrows.',
   ],
   keys: [
-    { keys: ['←', '→', 'A/Q', 'D'], action: 'Steer (or the mouse, when no key is held)' },
-    { keys: ['Space', 'Click'], action: 'Boost (3 charges)' },
-    { keys: ['1', 'Right-click'], action: 'Drop a bomb behind you (2)' },
+    { keys: ['←', '→', 'Mouse'], action: 'Steer' },
+    { keys: ['Space', 'Click'], action: 'Boost' },
   ],
   duration: DURATION,
   theme: 'offroad',
   eyebrow: 'Rally',
   abandonNote: 'You pulled off the track',
-  // The only rite that is steered rather than aimed AND uses both buttons as
-  // separate verbs; a crosshair over a car would read as "click the car".
+  // Steered, not aimed: a crosshair over a car would read as "click the car".
   cursor: 'default',
   create: () => new OffroadRite(),
+  view: () => import('./OffroadView.js'),
 };
 
 export {
   OffroadRite, RAND_CALLS, DURATION, TRACK_LEN, FLAG_AT, GATE_COUNT, COIN_COUNT,
-  RIVAL_COUNT, BOOST_CHARGES, BOMB_CHARGES, HALF_W,
+  RIVAL_COUNT, BOOST_CHARGES, BOOST_TIME, HALF_W, COIN_R,
 };

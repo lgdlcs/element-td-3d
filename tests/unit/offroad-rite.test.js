@@ -15,13 +15,11 @@
  *  - GATES CREDIT ONLY FROM INSIDE, which is the rule the whole idle score rests
  *    on. Both halves are asserted: an unattended car CROSSES nearly every gate
  *    line, and is CREDITED with almost none of them.
- *  - A LANDED BOMB CHANGES THE STANDINGS. `applyPenalty` is the only write into
- *    `RivalSource` in the whole game, and if it does not move a result it is a
- *    particle effect with extra steps.
- *  - THE CHARGES ARE FINITE. Three boosts, two bombs, however hard the button is
- *    held.
- *  - `draw()` DOES NOT MUTATE. Enforced against a stub painter rather than a
- *    canvas, so this file stays in the `node` environment.
+ *  - THE CHARGES ARE FINITE. Three boosts, however hard the button is held,
+ *    and no second verb: the bomb was cut, so the right button and Digit1 do
+ *    nothing at all.
+ *  - EVERY CUE NAMES ITS OBJECT. The 3D view starts every effect from a cue
+ *    (`what` + `i`), so the cue stream is the view's contract with the logic.
  *
  * node env (vitest.config.js default): this rite imports only `contract.js`,
  * `Rng.js` and `rivals.js`, none of which touch the DOM.
@@ -35,7 +33,7 @@ import { riteRng } from '../../src/minigames/schedule.js';
 import { assertRiteContract } from './helpers/rite-contract.js';
 import {
   OFFROAD_RITE, RAND_CALLS, DURATION, TRACK_LEN, FLAG_AT, GATE_COUNT, COIN_COUNT,
-  RIVAL_COUNT, BOOST_CHARGES, BOMB_CHARGES, HALF_W,
+  RIVAL_COUNT, BOOST_CHARGES, HALF_W,
 } from '../../src/minigames/rites/OffroadRite.js';
 
 const DT = MINIGAMES.dt;
@@ -61,8 +59,8 @@ function play(strategy, { seed = 1234, wave = 8 } = {}) {
 }
 
 /**
- * A driver: aim at the next nugget, fall back to the next gate, boost only while
- * on the road, and drop a mine when a rival is behind and the car is on the line.
+ * A driver: aim at the next nugget, fall back to the next gate, and boost only
+ * while standing in a fast stretch.
  *
  * WRITTEN AGAINST THE GAME'S PUBLIC SURFACE ONLY (`s`, `coins`, `gates`,
  * `centreAt`, `rivalDist`) so it is a player rather than a second copy of the
@@ -70,7 +68,7 @@ function play(strategy, { seed = 1234, wave = 8 } = {}) {
  * which is how a human copes with a car that does not self-centre: lead the
  * corner instead of chasing it.
  */
-function driver({ bombs = true, boost = 'fast' } = {}) {
+function driver({ boost = 'fast' } = {}) {
   return (inst) => {
     const cam = inst.centreAt(inst.s);
     const u = inst.x - cam;
@@ -97,66 +95,13 @@ function driver({ bombs = true, boost = 'fast' } = {}) {
       : boost === 'mash' ? true
       : ready && inst.isFast(inst.s);
 
-    let bomb = false;
-    if (bombs && inst.bombsLeft > 0 && Math.abs(u) < 0.35) {
-      for (let id = 0; id < RIVAL_COUNT; id++) {
-        // A mine sits BEHIND the car, so only a rival that has not reached it
-        // yet can ever cross it. Three units of clearance covers MINE_BACK.
-        if (inst.s - inst.rivalDist(id, inst.t) > 3) { bomb = true; break; }
-      }
-    }
-
     return makeInput({
       x: inst.centreAt(target.s + 2.2) + target.u - cam,
       y: 0,
       inside: true,
       action: wantBoost ? 1 : 0,
-      altAction: bomb ? 1 : 0,
     });
   };
-}
-
-/**
- * A painter that records nothing and draws nothing.
- *
- * `Painter` needs a live CanvasRenderingContext2D and this file runs in node, so
- * the purity check gets a stub with the same SHAPE: every method chains, and
- * `linearFill` returns a sentinel rather than undefined, because a rite is
- * entitled to pass that straight back as a fill. If `draw` ever reaches for a
- * primitive that is not here, the test fails loudly with the missing name —
- * which is the right failure, not a silent pass.
- */
-function stubPainter() {
-  const g = {};
-  const chain = [
-    'save', 'restore', 'alpha', 'add', 'translate', 'rotate', 'scale', 'glow',
-    'noGlow', 'circle', 'arc', 'rect', 'line', 'poly', 'blob', 'ellipse',
-    'capsule', 'halo', 'text', 'clear',
-  ];
-  for (const m of chain) g[m] = () => g;
-  g.linearFill = () => '<gradient>';
-  g.clipRect = (_cx, _cy, _w, _h, fn) => { fn(g); return g; };
-  // `clipField` is `clipRect` over the whole field and this rite wraps its ENTIRE
-  // world layer in it. The stub has to run the callback rather than swallow it,
-  // or the purity check above would be asserting about an empty function.
-  g.clipField = (fn) => { fn(g); return g; };
-  return g;
-}
-
-/** A structural clone, for the mutation checks. Handles the typed array in SeededRivals. */
-function snap(o, depth = 0, seen = new Set()) {
-  if (o === null || typeof o !== 'object') {
-    return typeof o === 'number' && !Number.isFinite(o) ? String(o) : o;
-  }
-  if (seen.has(o) || depth > 5) return '[deep]';
-  seen.add(o);
-  if (Array.isArray(o) || ArrayBuffer.isView(o)) return Array.from(o, (v) => snap(v, depth + 1, seen));
-  const out = {};
-  for (const k of Object.keys(o)) {
-    if (typeof o[k] === 'function') continue;
-    out[k] = snap(o[k], depth + 1, seen);
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,72 +246,11 @@ describe('offroad rite — the idle band', () => {
   });
 });
 
-describe('offroad rite — the bomb is the one write into RivalSource', () => {
-  it('a landed bomb changes the final standings', () => {
-    // Seed 34 / wave 43 is a race the player is losing by one place. Two runs,
-    // the SAME driving script, differing only in whether the two mines are laid.
-    const bombed = play(driver({ bombs: true }), { seed: 34, wave: 43 });
-    const control = play(driver({ bombs: false }), { seed: 34, wave: 43 });
-
-    expect(bombed.bombHits, 'the mines never caught anybody').toBeGreaterThan(0);
-    expect(control.bombHits).toBe(0);
-    // Same driving, so the parts of the score the bomb does not touch must be
-    // identical — otherwise this compares two different races.
-    expect(bombed.gatesHit).toBe(control.gatesHit);
-    expect(bombed.coinsTaken).toBe(control.coinsTaken);
-    // ...and the part it does touch moved.
-    expect(bombed.beaten).toBeGreaterThan(control.beaten);
-    expect(bombed.place).toBeLessThan(control.place);
-    expect(bombed.score().ratio).toBeGreaterThan(control.score().ratio);
-  });
-
-  it('the penalty lands on the rival, not on the scoreboard', () => {
-    // The mechanism, not the outcome: the caught rival is genuinely further back
-    // for the rest of the race, through SeededRivals.positionAt and nothing else.
-    const bombed = play(driver({ bombs: true }), { seed: 34, wave: 43 });
-    const control = play(driver({ bombs: false }), { seed: 34, wave: 43 });
-    // Swept rather than sampled at the whistle: `positionAt` clamps at 1, so a
-    // rival who finished before the clock reads 1.0 in both runs and the penalty
-    // hides behind the ceiling. It shows up everywhere BEFORE that.
-    let moved = 0;
-    for (let id = 0; id < RIVAL_COUNT; id++) {
-      let behind = false;
-      for (let t = 4; t <= DURATION; t += 0.5) {
-        if (bombed.rivalProgress(id, t) < control.rivalProgress(id, t) - 1e-9) { behind = true; break; }
-      }
-      if (behind) moved++;
-    }
-    expect(moved).toBe(bombed.bombHits);
-  });
-
-  it('laying a mine never makes the standings worse', () => {
-    // The weak but universal version of the claim above, over a spread of races.
-    for (const seed of [1, 2, 3, 11, 42, 909]) {
-      for (const wave of [13, 33, 53]) {
-        const bombed = play(driver({ bombs: true }), { seed, wave });
-        const control = play(driver({ bombs: false }), { seed, wave });
-        expect(bombed.beaten, `seed ${seed} wave ${wave}: bombing lost a place`)
-          .toBeGreaterThanOrEqual(control.beaten);
-      }
-    }
-  });
-
-  it('one mine takes at most one rival', () => {
-    const inst = play(driver({ bombs: true }), { seed: 34, wave: 43 });
-    expect(inst.bombHits).toBeLessThanOrEqual(BOMB_CHARGES);
-  });
-});
-
 describe('offroad rite — the charges are finite', () => {
-  it('three boosts and two bombs, however hard the buttons are held', () => {
-    const inst = play(() => makeInput({
-      inside: true, x: 0, action: 3, altAction: 3, slots: [3, 0, 0, 0, 0, 0],
-    }), { seed: 17, wave: 30 });
+  it('three boosts, however hard the button is held', () => {
+    const inst = play(() => makeInput({ inside: true, x: 0, action: 3 }), { seed: 17, wave: 30 });
     expect(inst.boostLeft).toBe(0);
-    expect(inst.bombsLeft).toBe(0);
-    expect(inst.mines.length).toBe(BOMB_CHARGES);
     expect(BOOST_CHARGES).toBe(3);
-    expect(BOMB_CHARGES).toBe(2);
   });
 
   it('a boost pressed while boosting costs no charge', () => {
@@ -378,51 +262,20 @@ describe('offroad rite — the charges are finite', () => {
     expect(inst.boostLeft).toBe(BOOST_CHARGES - 1);
   });
 
-  it('the bomb answers Digit1 as well as the right button', () => {
-    const key = spawn(3, 10);
-    key.update(DT, makeInput({ inside: true, slots: [1, 0, 0, 0, 0, 0] }));
-    expect(key.bombsLeft).toBe(BOMB_CHARGES - 1);
-
-    const rmb = spawn(3, 10);
-    rmb.update(DT, makeInput({ inside: true, altAction: 1 }));
-    expect(rmb.bombsLeft).toBe(BOMB_CHARGES - 1);
-  });
-
-  it('a right click never spends a boost, and a left click never spends a bomb', () => {
-    const inst = spawn(3, 10);
-    inst.update(DT, makeInput({ inside: true, altAction: 1 }));
-    expect(inst.boostLeft).toBe(BOOST_CHARGES);
-    const other = spawn(3, 10);
-    other.update(DT, makeInput({ inside: true, action: 1 }));
-    expect(other.bombsLeft).toBe(BOMB_CHARGES);
-  });
-});
-
-describe('offroad rite — draw() does not mutate state', () => {
-  it('is a read-only pass, at every interpolation fraction', () => {
-    const inst = spawn(808, 27);
+  it('has no second verb: the right button and Digit1 change nothing', () => {
+    // The bomb was cut in the 3D rework. Two runs, one hammering every button
+    // the bomb used to answer, must be the same race to the bit.
+    const plain = play(driver(), { seed: 34, wave: 43 });
     const drive = driver();
-    const g = stubPainter();
-    for (let n = 0; n < 700; n++) {
-      if (inst.update(DT, drive(inst, n)) === true) break;
-      inst.drainEvents?.();
-    }
-    const before = snap(inst);
-    for (const alpha of [0, 0.25, 0.5, 0.999, 1]) inst.draw(g, alpha);
-    inst.draw(g);                     // and with alpha omitted entirely
-    expect(snap(inst), 'draw() moved something').toEqual(before);
-    // Nothing queued either: a draw that pushes a cue plays a sound per frame.
-    expect(inst.drainEvents()).toEqual([]);
-  });
-
-  it('draws a fresh instance and a finished one without reaching for anything missing', () => {
-    const g = stubPainter();
-    expect(() => spawn(9, 4).draw(g, 0)).not.toThrow();
-    // Seed 20 is one of the courses a coin-chasing driver can still get to the
-    // flag on — most are not, by design (see FLAG_AT).
-    const done = play(driver(), { seed: 20, wave: 3 });
-    expect(done.finished).toBe(true);
-    expect(() => done.draw(g, 0.5)).not.toThrow();
+    const noisy = play((inst, n) => {
+      const inp = drive(inst, n);
+      inp.altAction = 2;
+      inp.slots = [1, 1, 0, 0, 0, 0];
+      return inp;
+    }, { seed: 34, wave: 43 });
+    expect(noisy.s).toBe(plain.s);
+    expect(noisy.score()).toEqual(plain.score());
+    expect(noisy.boostLeft).toBe(plain.boostLeft);
   });
 });
 
@@ -446,7 +299,7 @@ describe('offroad rite — the score is the blend, itemised', () => {
   it('is monotone in skill: better driving never scores worse', () => {
     const idle = play(() => makeInput(), { seed: 55, wave: 22 }).score().ratio;
     const mash = play(() => makeInput({
-      inside: true, x: 0, down: true, action: 1, altAction: 1,
+      inside: true, x: 0, down: true, action: 1,
     }), { seed: 55, wave: 22 }).score().ratio;
     const good = play(driver(), { seed: 55, wave: 22 }).score().ratio;
     expect(idle).toBeLessThan(good);
@@ -461,7 +314,10 @@ describe('offroad rite — the score is the blend, itemised', () => {
 });
 
 describe('offroad rite — the definition', () => {
-  it('publishes its dressing, including the cursor that says "steered, not aimed"', () => {
+  it('publishes its dressing and a 3D view', () => {
+    expect(typeof OFFROAD_RITE.view).toBe('function');
+    expect(OFFROAD_RITE.draw).toBeUndefined();
+    expect(typeof OFFROAD_RITE.create().draw).toBe('undefined');
     expect(OFFROAD_RITE.id).toBe('offroad');
     expect(OFFROAD_RITE.theme).toBe('offroad');
     expect(OFFROAD_RITE.cursor).toBe('default');
@@ -469,23 +325,43 @@ describe('offroad rite — the definition', () => {
     expect(OFFROAD_RITE.hint.length).toBeLessThan(80);
   });
 
-  it('emits a start cue on the first step and a boom when a mine catches', () => {
-    const inst = spawn(34, 43);
+  it('every cue names its object, and the object agrees with the state', () => {
+    const inst = spawn(4242, 15);
     const first = inst.drainEvents();
-    expect(first.some((e) => e.type === 'start')).toBe(true);
+    expect(first.map((e) => e.type)).toEqual(['start']);
 
     const drive = driver();
-    let sawBoom = false, sawGold = false;
+    const seen = { gate: 0, miss: 0, coin: 0, boost: 0 };
+    let last = null;
     for (let n = 0; n < STEP_CAP; n++) {
       const done = inst.update(DT, drive(inst, n)) === true;
       for (const e of inst.drainEvents()) {
-        if (e.type === 'boom') sawBoom = true;
-        if (e.type === 'gold') sawGold = true;
+        last = e;
+        expect(Number.isFinite(e.x), `${e.type}/${e.what} has no x`).toBe(true);
+        if (e.what === 'coin') {
+          expect(e.type).toBe('gold');
+          expect(inst.coins[e.i].taken).toBe(true);
+          expect(e.x).toBe(inst.coins[e.i].u);
+          seen.coin++;
+        } else if (e.what === 'gate') {
+          expect(e.i).toBe(inst.nextGate - 1);
+          if (e.type === 'miss') { expect(inst.missedGates).toContain(e.i); seen.miss++; }
+          else { expect(e.type).toBe('good'); seen.gate++; }
+        } else if (e.what === 'boost') {
+          expect(['good', 'tick']).toContain(e.type);
+          expect(inst.boostT).toBeGreaterThan(0);
+          seen.boost++;
+        } else {
+          expect(e).toMatchObject({ type: 'perfect', what: 'flag' });
+        }
       }
       if (done) break;
     }
-    expect(sawBoom).toBe(true);
-    expect(sawGold).toBe(true);
+    expect(seen.coin).toBe(inst.coinsTaken);
+    expect(seen.gate).toBe(inst.gatesHit);
+    expect(seen.miss).toBe(inst.missedGates.length);
+    expect(seen.boost).toBe(BOOST_CHARGES - inst.boostLeft);
+    expect(last).not.toBeNull();
   });
 });
 
@@ -588,11 +464,11 @@ describe('offroad rite — spending a boost well beats spending it at all', () =
 });
 
 describe('offroad rite — missing a gate is visible', () => {
-  it('records which gates were run wide, and flashes when one is', () => {
+  it('records which gates were run wide', () => {
     // The rule "gates credit only from inside" is what holds the idle score at
-    // nothing, and the last build fired it in total silence: GATES 1/12 with gate
-    // 6 on screen and no mark anywhere on the frame. `missedGates` is what the
-    // permanent cross is drawn from and `_missFlash` is the loud half.
+    // nothing, and an early build fired it in total silence. `missedGates` is
+    // what the view turns red for the rest of the race; the 'miss' cue is the
+    // loud half.
     const inst = play(() => makeInput({ axis: { x: 1, y: 0 } }), { seed: 31337, wave: 12 });
     expect(inst.gatesHit).toBe(0);
     expect(inst.missedGates.length).toBe(inst.gatesPassed);

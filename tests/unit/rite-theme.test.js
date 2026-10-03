@@ -41,7 +41,6 @@ import { FIELD } from '../../src/minigames/contract.js';
 import { riteRng } from '../../src/minigames/schedule.js';
 import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
 import { PLATFORMS_RITE } from '../../src/minigames/rites/PlatformsRite.js';
-import { OFFROAD_RITE } from '../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
 import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
 
@@ -90,6 +89,11 @@ function declared(name) {
  * Deliberately a data table rather than five near-identical tests: the point is
  * that all six rites obey ONE rule, and a table makes a rite that quietly opts
  * out show up as a missing row rather than as a test nobody wrote.
+ *
+ * A rite drawn by a 3D view has no row: its logic paints nothing, and the view
+ * that reads the token imports three.js, which this file cannot load.
+ * `offroad` is one (OffroadView reads `--rite-offroad-accent` once, for the
+ * player's car and the progress bar); `luckyshot` never had one.
  */
 const CASES = [
   {
@@ -103,12 +107,6 @@ const CASES = [
     token: '--rite-platforms-accent',
     probe: '#234567',
     read: (i) => i.palette.accent,
-  },
-  {
-    def: OFFROAD_RITE,
-    token: '--rite-offroad-accent',
-    probe: '#345678',
-    read: (i) => i._pal.c.accent,
   },
   {
     def: HUNT_RITE,
@@ -171,7 +169,6 @@ describe('per-rite theme tokens resolve on :root', () => {
     document.documentElement.style.setProperty('--rite-accent', '#ff00ff');
     expect(spawn(HEAVEN_RITE)._palette.accent).not.toBe('#ff00ff');
     expect(spawn(PLATFORMS_RITE).palette.accent).not.toBe('#ff00ff');
-    expect(spawn(OFFROAD_RITE)._pal.c.accent).not.toBe('#ff00ff');
     expect(spawn(HUNT_RITE).forest.rim).not.toBe('#ff00ff');
     expect(spawn(FISHING_RITE).pal.rAccent).not.toBe(chan('#ff00ff'));
   });
