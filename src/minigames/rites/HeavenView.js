@@ -15,7 +15,7 @@
  *    fades. One warm-up pass makes every pooled mesh visible for the host's
  *    compile draw, so no program or texture is created mid-rite.
  *  - Fixed lights: hemisphere, sun (the one shadow caster), a light on the
- *    mote, and a pink light that follows the latest strike at intensity 0
+ *    mote, and a warm light that follows the latest strike at intensity 0
  *    when idle.
  */
 
@@ -34,9 +34,6 @@ const MOTE_H = 0.38;
 const WALL_H = 1.5;
 const FALL_FROM = 11;
 const POPS = 6;
-/** Camera drift toward the mote, world units at the field edge. */
-const SWAY_X = 1.0;
-const SWAY_Z = 0.5;
 
 function canvasTexture(w, h, paint) {
   const c = document.createElement('canvas');
@@ -93,11 +90,8 @@ class HeavenView extends RiteView {
     this.clock = 0;
     this.hitFlash = 0;
     this.dodgeFlash = 0;
-    this.sway = { x: 0, z: 0 };
     this.trailAcc = 0;
     this._v = new THREE.Vector3();
-    this._camBase = new THREE.Vector3();
-    this._camLook = new THREE.Vector3();
     this._hud = { cleared: -1, burned: -1, seen: -1 };
     this.landed = new Uint8Array(HAZARDS);
 
@@ -186,8 +180,9 @@ class HeavenView extends RiteView {
     });
     this.hemi = hemi; this.key = key;
     this.moteLight = new THREE.PointLight(0xfff1d0, 2.5, 4.5, 1.6);
-    this.pinkLight = new THREE.PointLight(this.pink, 0, 9, 1.5);
-    this.scene.add(this.moteLight, this.pinkLight);
+    // Warm, never pink: a pink pool on the floor would read as a strike.
+    this.strikeLight = new THREE.PointLight(0xffe2b0, 0, 9, 1.5);
+    this.scene.add(this.moteLight, this.strikeLight);
   }
 
   #buildSky() {
@@ -292,6 +287,9 @@ class HeavenView extends RiteView {
     this.coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
     this.core = new THREE.Mesh(new THREE.SphereGeometry(0.18, 20, 14), this.coreMat);
     this.core.castShadow = true;
+    // A gold rim, so the white light still separates from the pale marble.
+    this.rim = new THREE.Mesh(new THREE.SphereGeometry(0.245, 20, 14),
+      new THREE.MeshBasicMaterial({ color: 0xc07f12, side: THREE.BackSide }));
     this.glow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: this.glowTex, color: 0xfff0c8, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.75,
     }));
@@ -307,7 +305,7 @@ class HeavenView extends RiteView {
     this.wingR.scale.x = -1;
     this.wingL.position.set(0.08, 0.04, 0.02);
     this.wingR.position.set(-0.08, 0.04, 0.02);
-    this.mote.add(this.core, this.glow, this.halo, this.wingL, this.wingR);
+    this.mote.add(this.rim, this.core, this.glow, this.halo, this.wingL, this.wingR);
     this.scene.add(this.mote);
 
     this.shadow = new THREE.Mesh(flat(new THREE.CircleGeometry(0.34, 24)),
@@ -467,8 +465,6 @@ class HeavenView extends RiteView {
   layout(aspect) {
     super.layout(aspect);
     if (!this._built) return;
-    this._camBase.copy(this.camera.position);
-    this.world(0, 0, this._camLook);
     // The scoreboard hangs over the far edge, facing the camera.
     this.world(0, FIELD.hh + 1.2, this.hud.position);
     this.hud.position.y = 2.1;
@@ -517,17 +513,8 @@ class HeavenView extends RiteView {
     const mx = R.pmx + (R.mx - R.pmx) * a;
     const my = R.pmy + (R.my - R.pmy) * a;
 
-    // Camera: drift a little toward the mote so the columns slide against the clouds.
-    const k = Math.min(1, dt * 2.5);
-    this.sway.x += (mx / FIELD.hw - this.sway.x) * k;
-    this.sway.z += (my / FIELD.hh - this.sway.z) * k;
-    const cam = this.camera;
-    cam.position.copy(this._camBase);
-    cam.position.x += this.sway.x * SWAY_X;
-    cam.position.z -= this.sway.z * SWAY_Z;
-    cam.lookAt(this._camLook);
-    cam.updateMatrixWorld();
-
+    // No camera drift: the host re-picks a resting pointer every frame, so a
+    // drifting camera would read as pointer motion and steal the mote from the keys.
     this.#renderMote(mx, my, dt);
     this.#renderStrikes(t);
     this.#paintHud(t);
@@ -588,22 +575,22 @@ class HeavenView extends RiteView {
     for (const s of this.heartPool) s.used = -1;
     for (const s of this.beamPool) s.used = -1;
     for (const s of this.ringPool) s.used = -1;
-    let pinkI = 0;
+    let strikeI = 0;
     let hp = 0, bp = 0, rp = 0;
     for (let i = 0; i < R.nextAim; i++) {
       const h = R.hazards[i];
       if (t > h.end + 0.6) continue;
-      if (h.kind === HEART && hp < POOL) { this.#heart(this.heartPool[hp++], i, h, t); pinkI = Math.max(pinkI, this.#heat(h, t)); }
-      else if (h.kind === BEAM && bp < POOL) { this.#beam(this.beamPool[bp++], i, h, t); pinkI = Math.max(pinkI, this.#heat(h, t)); }
-      else if (h.kind === RING && rp < POOL) { this.#ring(this.ringPool[rp++], i, h, t); pinkI = Math.max(pinkI, this.#heat(h, t)); }
+      if (h.kind === HEART && hp < POOL) { this.#heart(this.heartPool[hp++], i, h, t); strikeI = Math.max(strikeI, this.#heat(h, t)); }
+      else if (h.kind === BEAM && bp < POOL) { this.#beam(this.beamPool[bp++], i, h, t); strikeI = Math.max(strikeI, this.#heat(h, t)); }
+      else if (h.kind === RING && rp < POOL) { this.#ring(this.ringPool[rp++], i, h, t); strikeI = Math.max(strikeI, this.#heat(h, t)); }
     }
     for (; hp < POOL; hp++) this.#hideHeart(this.heartPool[hp]);
     for (; bp < POOL; bp++) this.#hideBeam(this.beamPool[bp]);
     for (; rp < POOL; rp++) this.#hideRing(this.ringPool[rp]);
-    this.pinkLight.intensity = pinkI * 14;
+    this.strikeLight.intensity = strikeI * 10;
   }
 
-  /** 0..1: how hot a strike is right now, for the pink light. */
+  /** 0..1: how hot a strike is right now, for the strike light. */
   #heat(h, t) {
     if (t < h.strike) return 0.3 * clamp((t - h.t0) / (h.strike - h.t0), 0, 1);
     return t <= h.end ? 1 : 0;
@@ -645,8 +632,8 @@ class HeavenView extends RiteView {
       heart.rotation.set(0, this.clock * 1.6 + k, 0);
     }
     if (live) {
-      this.world(h.ax, h.ay, this.pinkLight.position);
-      this.pinkLight.position.y = 1;
+      this.world(h.ax, h.ay, this.strikeLight.position);
+      this.strikeLight.position.y = 1;
     }
     if (t >= h.strike && !this.landed[i]) {
       this.landed[i] = 1;
@@ -714,8 +701,8 @@ class HeavenView extends RiteView {
     }
     s.lane.position.y = 0.012;
     if (firing && t <= h.end) {
-      if (along) this.world(w, h.gc, this.pinkLight.position); else this.world(h.gc, w, this.pinkLight.position);
-      this.pinkLight.position.y = 1;
+      if (along) this.world(w, h.gc, this.strikeLight.position); else this.world(h.gc, w, this.strikeLight.position);
+      this.strikeLight.position.y = 1;
     }
   }
 
@@ -757,8 +744,8 @@ class HeavenView extends RiteView {
       s.band.scale.set(rad, 1.1, rad);
       s.bandMat.opacity = 0.85 * fade * clamp(1.2 - rad / 20, 0.3, 1);
       if (t <= h.end) {
-        this.world(this.rite.mx, this.rite.my, this.pinkLight.position);
-        this.pinkLight.position.y = 1.2;
+        this.world(h.sx, h.sy, this.strikeLight.position);
+        this.strikeLight.position.y = 1.2;
       }
     }
   }
@@ -774,32 +761,32 @@ class HeavenView extends RiteView {
     const g = this.hudCanvas.getContext('2d');
     const W = this.hudCanvas.width, H = this.hudCanvas.height;
     g.clearRect(0, 0, W, H);
-    g.textBaseline = 'middle';
-    g.textAlign = 'center';
-    g.font = '700 92px Georgia, serif';
-    g.lineWidth = 10;
-    g.strokeStyle = 'rgba(20, 26, 60, 0.55)';
-    const label = `${R.cleared}`;
-    g.strokeText(label, W / 2 - 80, 52);
-    g.fillStyle = this.P.gold;
-    g.fillText(label, W / 2 - 80, 52);
-    g.font = '600 42px ui-monospace, Menlo, monospace';
-    g.textAlign = 'left';
-    g.strokeText(`/ ${R.presented} DODGED`, W / 2 - 22, 60);
-    g.fillStyle = 'rgba(255, 246, 226, 0.92)';
-    g.fillText(`/ ${R.presented} DODGED`, W / 2 - 22, 60);
-    // One pip per strike in the course: blue dodged, pink touched, pale still to come.
+    // A dark plate under the text: the set behind it is cream and white.
     const n = R.presented;
-    const span = Math.min(W - 120, n * 40);
+    const span = Math.min(W - 160, n * 44);
+    const plateW = Math.max(span + 70, 560);
+    g.fillStyle = 'rgba(22, 28, 64, 0.62)';
+    g.beginPath();
+    g.roundRect((W - plateW) / 2, 4, plateW, H - 8, 34);
+    g.fill();
+    g.textBaseline = 'middle';
+    g.textAlign = 'right';
+    g.font = '700 96px Georgia, serif';
+    g.fillStyle = this.P.gold;
+    g.fillText(`${R.cleared}`, W / 2 - 12, 58);
+    g.textAlign = 'left';
+    g.font = '600 50px ui-monospace, Menlo, monospace';
+    g.fillStyle = '#fff6e2';
+    g.fillText(`/ ${n} DODGED`, W / 2 + 8, 62);
+    // One pip per strike in the course: blue dodged, pink touched, pale still to come.
     let idx = 0;
     for (let i = 0; i < HAZARDS && idx < n; i++) {
       if (!R.inCourse[i]) continue;
       const x = W / 2 - span / 2 + (span * (idx + 0.5)) / n;
       g.beginPath();
-      g.arc(x, 128, R.touched[i] || R.passed[i] ? 13 : 9, 0, Math.PI * 2);
-      g.fillStyle = R.touched[i] ? this.P.pink : R.passed[i] ? this.P.accent : 'rgba(255,255,255,0.45)';
+      g.arc(x, 124, R.touched[i] || R.passed[i] ? 14 : 10, 0, Math.PI * 2);
+      g.fillStyle = R.touched[i] ? this.P.pink : R.passed[i] ? this.P.accent : 'rgba(255,255,255,0.35)';
       g.fill();
-      g.lineWidth = 3; g.strokeStyle = 'rgba(20, 26, 60, 0.5)'; g.stroke();
       idx++;
     }
     this.hudTex.needsUpdate = true;

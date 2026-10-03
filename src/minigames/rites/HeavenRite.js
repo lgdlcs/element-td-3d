@@ -154,13 +154,17 @@ function heartDiscs(h, P, x, y) {
 /**
  * The kind table. `hit` is the instantaneous clearance (negative = touching).
  * `threat` is the clearance from everything this strike will still do after
- * `t`: what the telegraph shows and what a player plans against. Both return
- * Infinity once the strike can no longer touch that point.
+ * `t`; it is Infinity once the strike can no longer touch that point, which is
+ * how a strike is known to have passed the mote. `way` is the clearance from
+ * the telegraph alone: negative on pink, positive in the blue way out. It is
+ * what a player plans against, because a spot the wall has already swept is
+ * safe but behind the wall.
  */
 const KINDS = [
   {
     // HEART
     duration: () => HEART_LIVE,
+    way: heartDiscs,
     hit(h, P, x, y, t) {
       return t < h.strike || t > h.strike + HEART_LIVE ? Infinity : heartDiscs(h, P, x, y);
     },
@@ -171,6 +175,7 @@ const KINDS = [
   {
     // BEAM
     duration: (h, P) => (2 * ((h.axis === 0 ? FIELD.hw : FIELD.hh) + BEAM_OUT)) / P.beamSpeed,
+    way(h, P, x, y) { return P.beamGap - Math.abs((h.axis === 0 ? y : x) - h.gc) - MOTE_R; },
     hit(h, P, x, y, t) {
       if (t < h.strike || t > h.end) return Infinity;
       const q = h.axis === 0 ? x : y;
@@ -188,6 +193,7 @@ const KINDS = [
   {
     // RING
     duration: (h, P) => RING_REACH / P.ringSpeed,
+    way: wedgeClearance,
     hit(h, P, x, y, t) {
       if (t < h.strike || t > h.end) return Infinity;
       const d = Math.hypot(x - h.sx, y - h.sy);
@@ -208,17 +214,18 @@ function inside(x, y) {
 
 // ---------------------------------------------------------------------------
 // Aiming: lay a strike out around the mote, from the rolls drawn at init.
-// No `ctx.rand` here: the rolls are already on the hazard.
+// No `ctx.rand` here: the rolls are already on the hazard, and a variant only
+// rotates them, so the draw count never depends on play.
 // ---------------------------------------------------------------------------
 
 const AIM = [
-  function aimHearts(h, P) {
+  function aimHearts(h, P, r1) {
     const rho = 2 * P.heartR;
     const step = TAU / HEART_SLOTS;
     // The empty slot must open into the arena. Try the rolled angle, then the
     // other slots in order, and keep the first whose way out is on the floor.
     const reach = P.heartR + 0.6;
-    let gap = h.r1 * TAU;
+    let gap = r1 * TAU;
     let bestM = -Infinity;
     let best = gap;
     for (let k = 0; k < HEART_SLOTS; k++) {
@@ -237,24 +244,24 @@ const AIM = [
       h.hy[k] = h.ay + Math.sin(a) * rho;
     }
   },
-  function aimBeam(h, P) {
-    const q = Math.min(3, Math.floor(h.r1 * 4));
-    h.axis = q >> 1;
-    h.dir = q & 1 ? -1 : 1;
+  function aimBeam(h, P, r1, r2, r3) {
+    // The axis is fixed by the schedule (it sets the sweep's duration); the
+    // side it comes from is free.
+    h.dir = Math.floor(r1 * 4) & 1 ? -1 : 1;
     // The gap is off the mote by more than its own half-width, so standing
     // still is always a hit, and by at most BEAM_REACH, so it is always reachable.
-    const off = lerp(P.beamGap + 0.35, P.beamGap + P.beamReach, h.r2);
-    const sign = h.r3 < 0.5 ? -1 : 1;
+    const off = lerp(P.beamGap + 0.35, P.beamGap + P.beamReach, r2);
+    const sign = r3 < 0.5 ? -1 : 1;
     const p = h.axis === 0 ? h.ay : h.ax;
     const lim = (h.axis === 0 ? PLAY_HH : PLAY_HW) - P.beamGap * 0.5;
     let gc = p + sign * off;
     if (Math.abs(gc) > lim) gc = p - sign * off;
     h.gc = clamp(gc, -lim, lim);
   },
-  function aimRing(h, P) {
+  function aimRing(h, P, r1, r2, r3) {
     for (let flip = 0; flip < 2; flip++) {
-      const phi = h.r1 * TAU + flip * Math.PI;
-      const dS = lerp(3.5, 5.5, h.r2);
+      const phi = r1 * TAU + flip * Math.PI;
+      const dS = lerp(3.5, 5.5, r2);
       h.sx = clamp(h.ax + Math.cos(phi) * dS, -FIELD.hw, FIELD.hw);
       h.sy = clamp(h.ay + Math.sin(phi) * dS, -FIELD.hh, FIELD.hh);
       if (Math.hypot(h.ax - h.sx, h.ay - h.sy) >= RING_MIN_DIST) break;
@@ -263,8 +270,8 @@ const AIM = [
     const bearing = Math.atan2(h.ay - h.sy, h.ax - h.sx);
     // Off the mote's bearing by more than the wedge's half-angle (standing
     // still is a hit), toward whichever side keeps the way out on the floor.
-    const delta = lerp(P.ringAlpha + 0.35, P.ringAlpha + RING_SWING, (h.r3 * 2) % 1);
-    const sign = h.r3 < 0.5 ? -1 : 1;
+    const delta = lerp(P.ringAlpha + 0.35, P.ringAlpha + RING_SWING, (r3 * 2) % 1);
+    const sign = r3 < 0.5 ? -1 : 1;
     const g1 = bearing + sign * delta;
     const g2 = bearing - sign * delta;
     const m1 = inside(h.sx + Math.cos(g1) * dist, h.sy + Math.sin(g1) * dist);
@@ -272,6 +279,23 @@ const AIM = [
     h.gap = m1 >= 0 || m1 >= m2 ? g1 : g2;
   },
 ];
+
+/**
+ * STRIKES THAT OVERLAP MUST AGREE. A strike is aimed while the one before may
+ * still be sweeping, and two ways out that point in different directions are a
+ * coin toss, not a dodge. So a strike tries its rolled layout and then up to
+ * AIM_VARIANTS - 1 rotations of the same rolls, and keeps the first that leaves
+ * a spot within reach that is clear of it AND of every strike still live. The
+ * rotation is a fixed function of the rolls, so the course stays deterministic.
+ */
+const AIM_VARIANTS = 12;
+const PHI = 0.6180339887498949;
+/** Clearance a shared way out must leave from every strike. */
+const AGREE_ROOM = 0.15;
+const AGREE_RADII = Object.freeze([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]);
+const AGREE_ANGLES = 16;
+
+const frac = (v) => v - Math.floor(v);
 
 class HeavenRite {
   init(ctx) {
@@ -281,16 +305,16 @@ class HeavenRite {
      * the first half flat, which the calibration gate's "later is never
      * easier" rule then read as noise.
      */
-    const waveT = Math.pow(clamp((ctx.wave - 3) / 50, 0, 1), 0.5);
+    const waveT = Math.pow(clamp((ctx.wave - 3) / 50, 0, 1), 0.66);
     this.waveT = waveT;
     // Per kind. A heart lands where its telegraph is. A ring still travels to
     // the mote after it fires, so it warns for less. A beam can fire from the
     // edge the mote is standing on, so its warning is the time its worst move
     // takes inside the speed budget, and not a second less.
-    const warn = lerp(0.82, 0.46, waveT);
+    const warn = lerp(0.70, 0.35, waveT);
     const beamReach = lerp(1.8, 2.6, waveT);
     this.params = Object.freeze({
-      warn: Object.freeze([warn, (beamReach + MOTE_R) / (MOVE_SPEED * SPEED_BUDGET), warn * 0.7]),
+      warn: Object.freeze([warn, (beamReach + MOTE_R) / (MOVE_SPEED * SPEED_BUDGET), warn * 0.92]),
       interval: lerp(0.3, 0.0, waveT),
       heartR: lerp(1.0, 1.25, waveT),
       beamGap: lerp(0.9, 0.7, waveT),
@@ -313,6 +337,10 @@ class HeavenRite {
     this.tx = START_X;
     this.ty = START_Y;
     this.steering = false;
+    /** True from a key press until the pointer moves: a still pointer never takes the mote back. */
+    this.keyed = false;
+    this.lastPx = NaN;
+    this.lastPy = NaN;
     this.nextAim = 0;
 
     this._events = [];
@@ -320,6 +348,7 @@ class HeavenRite {
     this.passed = new Uint8Array(HAZARDS);
     this.ticked = new Uint8Array(HAZARDS);
     this.inCourse = new Uint8Array(HAZARDS);
+    this._live = new Int32Array(HAZARDS);
 
     this.#buildCourse(ctx);
     /** The view's cosmetic noise seed. The last draw, so presentation never shifts the course. */
@@ -411,16 +440,61 @@ class HeavenRite {
   }
 
   /**
-   * Clearance from everything the aimed strikes will still do after `at`:
-   * the picture the telegraphs paint. A competent player (and the reference
-   * bot) moves to wherever this is positive.
+   * Clearance from the telegraphs of every strike that has not passed the mote
+   * yet: the picture a player plans against (pink negative, blue positive).
+   * The reference bot moves to wherever this is positive.
    */
-  threatAt(x, y, at = this.t) {
+  threatAt(x, y) {
     const P = this.params;
     let best = Infinity;
     for (let i = 0; i < this.nextAim; i++) {
-      const c = KINDS[this.hazards[i].kind].threat(this.hazards[i], P, x, y, at);
+      if (this.passed[i]) continue;
+      const c = KINDS[this.hazards[i].kind].way(this.hazards[i], P, x, y);
       if (c < best) best = c;
+    }
+    return best;
+  }
+
+  /** Lay strike `i` out so its way out agrees with every strike still live. */
+  #aim(h, i) {
+    const P = this.params;
+    let live = 0;
+    for (let j = 0; j < i; j++) {
+      if (!this.passed[j]) this._live[live++] = j;
+    }
+    let bestV = 0;
+    let bestRoom = -Infinity;
+    for (let v = 0; v < AIM_VARIANTS; v++) {
+      this.#variant(h, P, v);
+      if (live === 0) return;
+      const room = this.#sharedRoom(h, P, live);
+      if (room >= AGREE_ROOM) return;
+      if (room > bestRoom) { bestRoom = room; bestV = v; }
+    }
+    this.#variant(h, P, bestV);
+  }
+
+  /** Variant 0 is the rolled layout; the others turn every roll by a different golden step. */
+  #variant(h, P, v) {
+    AIM[h.kind](h, P, frac(h.r1 + v * PHI), frac(h.r2 + v * PHI * PHI * PHI), frac(h.r3 + v * PHI * PHI));
+  }
+
+  /** The most clearance any reachable spot has from strike `h` and every live strike at once. */
+  #sharedRoom(h, P, live) {
+    const reach = P.warn[h.kind] * MOVE_SPEED * SPEED_BUDGET;
+    let best = -Infinity;
+    for (let r = 0; r < AGREE_RADII.length && AGREE_RADII[r] <= reach; r++) {
+      for (let k = 0; k < AGREE_ANGLES; k++) {
+        const a = (k / AGREE_ANGLES) * TAU;
+        const x = h.ax + Math.cos(a) * AGREE_RADII[r];
+        const y = h.ay + Math.sin(a) * AGREE_RADII[r];
+        let room = Math.min(inside(x, y), KINDS[h.kind].way(h, P, x, y));
+        for (let n = 0; n < live && room > best; n++) {
+          const o = this.hazards[this._live[n]];
+          room = Math.min(room, KINDS[o.kind].way(o, P, x, y));
+        }
+        if (room > best) best = room;
+      }
     }
     return best;
   }
@@ -441,17 +515,24 @@ class HeavenRite {
     }
     this.t += dt;
 
-    // ---- the actuator: keys win while held, else chase the pointer --------
+    // ---- the actuator: the last control that moved steers ----------------
+    // Keys win while held. After a key, a pointer resting on the stage is
+    // ignored until it moves, or a keyboard player would see the mote fly back
+    // to a cursor they cannot see (the cursor is hidden).
     this.pmx = this.mx;
     this.pmy = this.my;
     const ax = input.axis?.x || 0;
     const ay = input.axis?.y || 0;
+    const aiming = input.inside && Number.isFinite(input.x) && Number.isFinite(input.y);
+    if (aiming && (input.x !== this.lastPx || input.y !== this.lastPy)) this.keyed = false;
+    if (aiming) { this.lastPx = input.x; this.lastPy = input.y; }
     if (ax || ay) {
       const inv = 1 / Math.hypot(ax, ay);
       this.mx += ax * inv * MOVE_SPEED * dt;
       this.my += ay * inv * MOVE_SPEED * dt;
+      this.keyed = true;
       this.steering = false;
-    } else if (input.inside && Number.isFinite(input.x) && Number.isFinite(input.y)) {
+    } else if (aiming && !this.keyed) {
       this.tx = clamp(input.x, -PLAY_HW, PLAY_HW);
       this.ty = clamp(input.y, -PLAY_HH, PLAY_HH);
       this.steering = true;
@@ -473,7 +554,7 @@ class HeavenRite {
       h.ax = this.mx;
       h.ay = this.my;
       h.aimed = 1;
-      AIM[h.kind](h, P);
+      this.#aim(h, this.nextAim - 1);
     }
 
     // ---- strikes -----------------------------------------------------------
@@ -535,7 +616,7 @@ export const HEAVEN_RITE = {
   name: 'escape from gay heaven',
   hint: 'Dodge everything pink. Blue is the way out',
   rules: [
-    'Pink marks light up the clouds, then strike. Get off them in time.',
+    'Strikes show on the clouds first. Get clear before they land.',
     'Hearts fall, beams sweep, rings spread. Blue shows the way out.',
     'Every strike you dodge scores. One that touches you is lost.',
   ],

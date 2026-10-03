@@ -1249,8 +1249,10 @@ it is the name the map used.
 - **Controls.** The mote **chases** the cursor at a clamped `MOVE_SPEED` of
   7 u/s rather than *being* the cursor. `axis` (arrows / WASD / ZQSD) is
   normalised to the same top speed, so the keyboard is as good as the mouse.
-  Held keys win over the pointer. `cursor: 'none'`; the view draws a blue ring
-  where the mote is headed.
+  The last control that moved steers: held keys win, and after a key a pointer
+  resting on the stage is ignored until it moves (the cursor is hidden, so a
+  still mouse pulling the mote back reads as the mote flying off on its own).
+  `cursor: 'none'`; the view draws a blue ring where the mote is headed.
 - **Score.** `ratio = dodged / presented`, where `presented` is how many strikes
   finish inside the clock, fixed at `init`. A strike that touches the mote is
   lost and nothing else happens: no lives, no i-frames, the run always lasts
@@ -1260,16 +1262,27 @@ it is the name the map used.
   75% of the mote's top speed (`SPEED_BUDGET`); the beam derives its warning
   from that budget directly, because it can fire from the edge the mote stands
   on. `heaven-rite.test.js` holds it per wave.
-- **Curve.** Reference player 0.90 / 0.68 / 0.53 at waves 3 / 28 / 53, flawless
-  bot 0.86 at wave 53, idle 0.00. The calibration brain (`heavenBestXY` in
+- **Overlapping strikes agree.** The next strike is aimed while a beam may still
+  be sweeping. Two ways out pointing in different directions is a coin toss, so
+  a strike tries its rolled layout, then up to 11 golden-ratio rotations of the
+  same rolls, and keeps the first that leaves a spot within reach clear of its
+  own telegraph and every live one (`#aim`). Planning reads telegraphs only
+  (`KINDS[k].way`, through `threatAt`): a spot a wall has already swept is safe
+  but behind the wall. A zero-lag bot loses nothing at wave 12 (unit-tested,
+  >= 0.99 over 24 seeds); at wave 53 it scores about 0.96, on purpose.
+- **Curve.** Reference player 0.84 / 0.74 / 0.57 at waves 3 / 28 / 53 (5-seed
+  gate; 30 seeds give 0.89 / 0.73 / 0.56), flawless bot 0.94 at wave 53, idle
+  0.00. A wave-12 course presents 15 to 17 strikes. The calibration brain (`heavenBestXY` in
   `reference-player.js`) reads the telegraphs through `threatAt` on a polar grid
   around the mote, and the unit suite plays that same exported function.
-- **The view.** `FRAMES.ground`, camera high behind the near edge, drifting a
-  little toward the mote. Every footprint is drawn on the gameplay plane at its
+- **The view.** `FRAMES.ground`, camera high behind the near edge, and still:
+  the host re-picks a resting pointer every frame, so a drifting camera would
+  read as pointer motion. Every footprint is drawn on the gameplay plane at its
   exact hit size (heart discs, wall slabs, ring wedge); height is decoration,
   and the mote's shadow marks the point the rite tests. Fixed pools of three per
   kind, warmed for the host's compile draw. A scoreboard over the far edge shows
-  one pip per strike: blue dodged, pink touched.
+  one pip per strike on a dark plate: blue dodged, pink touched. The strike
+  light is warm, never pink: only what can hit is pink.
 
 ### `platforms` — Falling Platforms · 24 s · 41 draws · rivals
 

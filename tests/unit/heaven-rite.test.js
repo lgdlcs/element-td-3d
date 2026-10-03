@@ -69,6 +69,16 @@ const SKILLED_KEYS = (inst) => {
   });
 };
 
+/** The same brain, acting on what it decided `lag` steps ago. */
+const laggy = (lag) => {
+  const ring = [];
+  return (inst) => {
+    ring.push(heavenBestXY(inst));
+    const p = ring.length > lag ? ring.shift() : ring[0];
+    return makeInput({ inside: true, x: p.x, y: p.y });
+  };
+};
+
 function hsl(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
   const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
@@ -247,14 +257,6 @@ describe('heaven rite', () => {
   });
 
   it('the wave makes a lagging player score less', () => {
-    const laggy = (lag) => {
-      const ring = [];
-      return (inst) => {
-        ring.push(heavenBestXY(inst));
-        const p = ring.length > lag ? ring.shift() : ring[0];
-        return makeInput({ inside: true, x: p.x, y: p.y });
-      };
-    };
     const seeds = [1, 2, 3, 5, 7, 11];
     const mean = (wave) => seeds
       .map((seed) => play(laggy(15), { seed, wave }).score.ratio)
@@ -279,10 +281,12 @@ describe('heaven rite', () => {
   });
 
   it('emits its cues: the go signal, a pickup per dodge, a break per touch', () => {
+    // A lagging player, because a zero-lag one never grazes anything.
     const inst = spawn({ seed: 1, wave: 28 });
+    const player = laggy(18);
     const seen = [];
     for (let n = 0; n < 1201; n++) {
-      const end = inst.update(DT, SKILLED(inst));
+      const end = inst.update(DT, player(inst));
       for (const e of inst.drainEvents()) {
         seen.push(e.type);
         if (e.type === 'gold' || e.type === 'break') {
@@ -297,6 +301,15 @@ describe('heaven rite', () => {
     expect(seen.filter((t) => t === 'break')).toHaveLength(inst.burned);
     expect(seen.at(-1)).toBe(inst.burned === 0 ? 'perfect' : 'good');
     expect(seen.filter((t) => t === 'tick').length).toBeGreaterThan(0);
+    expect(seen.filter((t) => t === 'gold').length).toBeGreaterThan(0);
+    expect(seen.filter((t) => t === 'break').length).toBeGreaterThan(0);
+  });
+
+  it('strikes that overlap agree on a way out, so a zero-lag player loses nothing at wave 12', () => {
+    const seeds = Array.from({ length: 24 }, (_, i) => i + 1);
+    const runs = seeds.map((seed) => play(SKILLED, { seed, wave: 12 }));
+    const mean = runs.reduce((a, r) => a + r.score.ratio, 0) / runs.length;
+    expect(mean, runs.map((r, i) => `${seeds[i]}=${r.score.ratio.toFixed(2)}`).join(' ')).toBeGreaterThanOrEqual(0.99);
   });
 
   // ---- the controls -------------------------------------------------------
@@ -323,6 +336,22 @@ describe('heaven rite', () => {
     const c = spawn({ wave: 3 });
     for (let n = 0; n < 30; n++) c.update(DT, makeInput({ axis: { x: 1, y: 1 } }));
     expect(Math.hypot(c.mx - START_X, c.my - START_Y)).toBeCloseTo(30 * DT * MOVE_SPEED, 6);
+  });
+
+  it('a pointer resting on the stage never takes the mote back from the keys', () => {
+    const inst = spawn({ wave: 3 });
+    const rest = { inside: true, x: -6, y: -3 };
+    for (let n = 0; n < 10; n++) inst.update(DT, makeInput(rest));
+    for (let n = 0; n < 50; n++) inst.update(DT, makeInput({ ...rest, axis: { x: 1, y: 0 } }));
+    const x = inst.mx;
+    const y = inst.my;
+    for (let n = 0; n < 40; n++) inst.update(DT, makeInput(rest));
+    expect(inst.mx).toBe(x);
+    expect(inst.my).toBe(y);
+    expect(inst.steering).toBe(false);
+    inst.update(DT, makeInput({ ...rest, x: -5.9 }));
+    expect(inst.steering, 'the pointer steers again once it moves').toBe(true);
+    expect(inst.mx).toBeLessThan(x);
   });
 
   it('a pointer outside the field leaves the mote where it is', () => {
