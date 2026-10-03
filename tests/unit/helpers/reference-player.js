@@ -69,7 +69,7 @@ import { mulberry32, hashStr } from '../../../src/core/Rng.js';
 import { FIELD, makeInput, clickAt } from '../../../src/minigames/contract.js';
 import { riteRng } from '../../../src/minigames/schedule.js';
 
-import { HEAVEN_RITE } from '../../../src/minigames/rites/HeavenRite.js';
+import { HEAVEN_RITE, PLAY_HW, PLAY_HH } from '../../../src/minigames/rites/HeavenRite.js';
 import {
   PLATFORMS_RITE, cellX, cellY, cellAt, neighbours,
 } from '../../../src/minigames/rites/PlatformsRite.js';
@@ -407,34 +407,36 @@ const NO_INTENT = Object.freeze({ aim: null, axis: null, fire: false, alt: false
 
 /* ---- heaven ------------------------------------------------------------ */
 /**
- * Lifted verbatim from `tests/unit/heaven-rite.test.js` (`bestY` / `SKILLED`,
- * the author's v3). Find the earliest moment anything occupies the mote's
- * column, then take the height with the most room at that moment and just after
- * it. Two weaker versions are documented at the original site; do not reinvent
- * them here.
+ * The author's bot, exported so `tests/unit/heaven-rite.test.js` plays the same
+ * brain this gate measures (one copy, not two that drift). Reads the telegraphs through `threatAt` (pink is negative, blue and clear air
+ * positive) on a polar grid around the mote, and goes to the nearest point with
+ * enough room. With nothing telegraphed it drifts toward the middle, where the
+ * next aimed strike has the most floor around it.
  */
-const HORIZON = 2.6;
-const PROBE = 0.04;
-const PHASES = Object.freeze([[0, 2], [0.22, 1], [0.55, 0.5]]);
-const SAMPLES = 91;
+const HEAVEN_RADII = Object.freeze([0.5, 1.0, 1.5, 2.0, 2.6, 3.2, 3.9]);
+const HEAVEN_ANGLES = 16;
+const HEAVEN_ROOM = 0.8;
 
-function heavenBestY(inst) {
-  let dz = 0;
-  while (dz <= HORIZON && !Number.isFinite(inst.clearanceAt(inst.mx, 0, inst.t + dz))) dz += PROBE;
-  if (dz > HORIZON) return 0;
-  const hh = FIELD.hh - 0.2;
-  let best = inst.my;
+export function heavenBestXY(inst) {
+  const lim = (v, h) => (v < -h ? -h : v > h ? h : v);
+  const hw = PLAY_HW;
+  const hh = PLAY_HH;
+  let bx = inst.mx, by = inst.my;
   let bestV = -Infinity;
-  for (let i = 0; i < SAMPLES; i++) {
-    const y = -hh + (2 * hh * i) / (SAMPLES - 1);
-    let v = 0;
-    for (const [d, w] of PHASES) {
-      v += w * Math.max(-2.5, Math.min(0.9, inst.clearanceAt(inst.mx, y, inst.t + dz + d)));
+  for (let r = -1; r < HEAVEN_RADII.length; r++) {
+    const rad = r < 0 ? 0 : HEAVEN_RADII[r];
+    const n = r < 0 ? 1 : HEAVEN_ANGLES;
+    for (let k = 0; k < n; k++) {
+      const a = (k / HEAVEN_ANGLES) * Math.PI * 2 + r * 0.2;
+      const x = lim(inst.mx + Math.cos(a) * rad, hw);
+      const y = lim(inst.my + Math.sin(a) * rad, hh);
+      const v = Math.min(HEAVEN_ROOM, inst.threatAt(x, y))
+        - 0.06 * Math.hypot(x - inst.mx, y - inst.my)
+        - 0.02 * Math.hypot(x, y);
+      if (v > bestV) { bestV = v; bx = x; by = y; }
     }
-    v -= Math.abs(y - inst.my) * 0.03;
-    if (v > bestV) { bestV = v; best = y; }
   }
-  return best;
+  return { x: bx, y: by };
 }
 
 /* ---- platforms --------------------------------------------------------- */
@@ -593,7 +595,7 @@ function fishingIntent(inst) {
 
 /** riteId -> (inst, step) => Intent. The only per-rite knowledge in the file. */
 const INTENT = Object.freeze({
-  heaven: (inst) => ({ aim: { x: inst.mx, y: heavenBestY(inst) }, axis: null, fire: false, alt: false }),
+  heaven: (inst) => ({ aim: heavenBestXY(inst), axis: null, fire: false, alt: false }),
   platforms: platformsIntent,
   luckyshot: (inst, step) => ({
     aim: luckyAim(inst), axis: null, fire: step % SHOT_PERIOD === 0, alt: false,
