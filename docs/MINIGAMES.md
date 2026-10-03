@@ -13,7 +13,7 @@ outright, in one commit, and everything below describes what replaced them.
 
 | rite | id | clock | verb | scores on | `RAND_CALLS` | rivals |
 |---|---|---:|---|---|---:|:--:|
-| escape from gay heaven | `heaven` | 20 s | steer a mote, pointer or `axis` | seconds survived | 121 | — |
+| escape from gay heaven **(3D)** | `heaven` | 20 s | steer a mote, pointer or `axis` | strikes dodged out of a fixed count | 121 | — |
 | Falling Platforms | `platforms` | 24 s | steer a marker, `axis` only | survival + who you outlasted | 41 | yes |
 | Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
 | Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
@@ -43,6 +43,7 @@ Files:
 | `src/minigames/Painter.js` | LEGACY. The 2D world-unit drawing API, for rites not yet converted. |
 | `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, intro card, loop, clock, click queue, result, payout. |
 | `src/minigames/rites/HeavenRite.js` | `heaven` — dodge everything pink. |
+| `src/minigames/rites/HeavenView.js` | `heaven` — its cloud arena in 3D. |
 | `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 dalles, they all fall. |
 | `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery's logic. **The reference rite.** |
 | `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
@@ -311,8 +312,8 @@ world(x, y) = frame.origin + frame.ux * x + frame.uy * y
 
 | preset | field x → | field y (+up) → | gameplay plane | for |
 |---|---|---|---|---|
-| `FRAMES.upright` | world +X | world +Y | z = 0, facing +Z | galleries, side views (luckyshot, hunt, fishing, heaven) |
-| `FRAMES.ground` | world +X | world **−Z** | y = 0, facing +Y | top-down / tilted arenas (platforms, offroad) |
+| `FRAMES.upright` | world +X | world +Y | z = 0, facing +Z | galleries, side views (luckyshot, hunt, fishing) |
+| `FRAMES.ground` | world +X | world **−Z** | y = 0, facing +Y | top-down / tilted arenas (platforms, offroad, heaven) |
 
 1 field unit = 1 world unit in both presets. A custom frame is legal: `ux` and
 `uy` must be orthogonal and the same length.
@@ -390,9 +391,9 @@ The host builds this and hands it to you as `ctx.rand`. You never construct one.
 
 **`ctx.wave` may move the numbers and never the count.** That is the whole rule in
 one sentence, and each of the six shows a different way to honour it: `heaven`
-draws all 30 hazard bands on every wave and makes a late wave harder by
-*compressing the spawn schedule*, so a low wave simply runs out of clock around
-band 10; `luckyshot` scales row speeds only; `offroad` scales the track's
+draws all 30 strikes on every wave and makes a late wave harder by
+*compressing the schedule*, so a low wave simply runs out of clock around
+strike 13; `luckyshot` scales row speeds only; `offroad` scales the track's
 amplitude and the rival pressure; `SeededRivals` takes `wave` and spends exactly
 `count * PER_RIVAL` draws regardless.
 
@@ -837,7 +838,7 @@ renaming it rerolls every existing run — while a theme is only paint, and two
 rites are allowed to share one. `eyebrow` (default `'Interlude'`, the host
 appends ` · before wave N`), `abandonNote` (default `'You walked away'`) and
 `cursor` (default: the stylesheet's crosshair) are the other three. `heaven` sets
-`cursor: 'none'` because the mote *is* the pointer; `platforms` and `offroad` set
+`cursor: 'none'` because the mote is the avatar and its view draws a ring where it is headed; `platforms` and `offroad` set
 `'default'`, because a crosshair over a car is a promise the controls do not
 keep.
 
@@ -1159,10 +1160,11 @@ If you add a fourth, guard it the same way.
 **Colour is never the only channel.** Hazard and value identity must be carried
 redundantly — position, shape, size, outline, motion — or the rite is unplayable
 for a colour-blind player. `heaven` is the load-bearing case, because "avoid the
-pink" on one colour channel is otherwise a colour test with a timer: every pink
-mass gets a **hard black outline** and a **4 Hz pulse**, the safe route is drawn
-*positively* in the cool accent, chevrons point at the way through, and pink is
-the only saturated magenta anywhere on the stage. `luckyshot` encodes a row's
+pink" on one colour channel is otherwise a colour test with a timer: every strike
+is announced by its **shape on the floor** before it lands (discs for hearts, a
+standing wall for a beam, a crystal for a ring), the way out is drawn
+*positively* in the cool accent (a lane, a wedge, an arrow), and pink is the only
+saturated magenta anywhere on the stage. `luckyshot` encodes a row's
 value three ways at once — height, size and speed — so the back row reads as
 worth more before anyone has read a number. `platforms` gives its crack warning
 four channels: a fuse bar whose *length* is the time left, a colour flip, an
@@ -1221,30 +1223,53 @@ that ignores `occurrence` entirely is completely correct.
 Every one of these files opens with a substantial design docblock. What follows
 is the index, not the argument — go read the file before changing a number in it.
 
-### `heaven` — "escape from gay heaven" · 20 s · 121 draws · no rivals
+### `heaven` — "escape from gay heaven" · 20 s · 121 draws · no rivals · **3D**
 
-A bone-white cloud corridor scrolls right to left; you are a mote of soul-light
-threading through it. **Everything pink kills on contact, instantly.** The name
-is kept verbatim, because it is the name the map used.
+A little winged light floats over a cloud arena at golden hour. Pink strikes are
+aimed at it one after another; each is **telegraphed on the floor first** (pink
+where it will hit, blue where it will not) and then strikes. Every strike that
+passes without touching the mote is a point. The name is kept verbatim, because
+it is the name the map used.
 
+- **The rule, in one sentence.** Dodge everything pink; blue is the way out.
+  Three kinds, one verb:
+  - **Hearts.** Six land around the mote: one on it, five in a ring, and the
+    sixth ring slot is empty. A blue arrow points through the empty slot.
+  - **Beam.** A wall rises at one edge and sweeps across the arena with one gap.
+    The gap's lane glows blue across the floor.
+  - **Ring.** A crystal charges, then a wall expands from it in a circle with one
+    gap. The gap's wedge glows blue on the floor.
+- **Every strike is aimed.** A strike reads the mote's position when its
+  telegraph appears and lays itself out around it, from rolls drawn at `init`.
+  So standing still loses every strike on every wave (idle scores exactly 0),
+  and the move a strike asks for is bounded by its rolls. Two players on one
+  seed get the same sequence, timings and layouts *relative to themselves*. The
+  rand budget is untouched: 30 strikes x 4 rolls + 1 cosmetic seed, all in
+  `init`.
 - **Controls.** The mote **chases** the cursor at a clamped `MOVE_SPEED` of
-  7 u/s rather than *being* the cursor — without the clamp the pointer is a
-  teleport and no dodging game survives an instantaneous actuator. `axis`
-  (arrows / WASD / ZQSD) is normalised to the *same* top speed, so a diagonal is
-  not 1.41× faster and the keyboard path is exactly as good as the pointer — the
-  only honest way to offer two. Held keys win over the pointer. `cursor: 'none'`.
-- **Course.** 30 hazard bands (gates, sweeps, bobbing orb accordions), all drawn
-  on every wave; difficulty compresses the *schedule*, never the count (§3). The
-  **first band is always a sweep**, and a sweep covers the whole column — which
-  is both the idle guarantee (stand anywhere, die in ~2 s) and the tutorial: it
-  says FOLLOW THE GAP in one gesture and no words.
-- **Score.** `ratio = survived / 20`. Detail names the seconds and the bands
-  cleared. Near misses under 0.42 u fire a `tick`, once per band.
-- **Known, accepted edge**, named in the file rather than left for a reviewer:
-  hanging back at the far left buys ~0.7 s of extra lookahead. It makes the rite
-  calmer, not easier — you still have to be at the gap's y when the band arrives
-  — and fixing it needs a scrolling camera or a chasing wall, which is more
-  machinery than a 20-second rite should own.
+  7 u/s rather than *being* the cursor. `axis` (arrows / WASD / ZQSD) is
+  normalised to the same top speed, so the keyboard is as good as the mouse.
+  Held keys win over the pointer. `cursor: 'none'`; the view draws a blue ring
+  where the mote is headed.
+- **Score.** `ratio = dodged / presented`, where `presented` is how many strikes
+  finish inside the clock, fixed at `init`. A strike that touches the mote is
+  lost and nothing else happens: no lives, no i-frames, the run always lasts
+  20 s. Near misses under 0.4 u fire a `tick`, a dodge fires `gold`, a touch
+  fires `break` (each carries `x, y, i`).
+- **Fairness.** Each kind's warning is long enough for its worst move inside
+  75% of the mote's top speed (`SPEED_BUDGET`); the beam derives its warning
+  from that budget directly, because it can fire from the edge the mote stands
+  on. `heaven-rite.test.js` holds it per wave.
+- **Curve.** Reference player 0.90 / 0.68 / 0.53 at waves 3 / 28 / 53, flawless
+  bot 0.86 at wave 53, idle 0.00. The calibration brain (`heavenBestXY` in
+  `reference-player.js`) reads the telegraphs through `threatAt` on a polar grid
+  around the mote, and the unit suite plays that same exported function.
+- **The view.** `FRAMES.ground`, camera high behind the near edge, drifting a
+  little toward the mote. Every footprint is drawn on the gameplay plane at its
+  exact hit size (heart discs, wall slabs, ring wedge); height is decoration,
+  and the mote's shadow marks the point the rite tests. Fixed pools of three per
+  kind, warmed for the host's compile draw. A scoreboard over the far edge shows
+  one pip per strike: blue dodged, pink touched.
 
 ### `platforms` — Falling Platforms · 24 s · 41 draws · rivals
 
