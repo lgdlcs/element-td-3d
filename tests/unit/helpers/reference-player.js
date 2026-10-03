@@ -545,19 +545,30 @@ function offroadIntent(inst) {
 
 /* ---- hunt -------------------------------------------------------------- */
 /**
- * From `tests/unit/hunt-rite.test.js` (`SKILLED` + `aim`): shoot the instant the
- * animal is up and the trigger is free, at the animal's MASS rather than its
- * feet. The 0.30 body lift is duplicated from the rite on purpose at the
- * original site — same reasoning applies to this copy.
+ * From `tests/unit/hunt-rite.test.js` (`SKILLED`): shoot the running animal the
+ * instant the trigger is free, at where its body is on the step the shot
+ * resolves. A POLICY rather than a point, for the reason `aim` documents: the
+ * animal is moving, and a lagged hand TRACKS a runner rather than aiming at a
+ * copy of where it was a third of a second ago.
  */
 function huntIntent(inst) {
-  const a = inst.liveAnimal();
+  // Two animals can be running at once. Take the most urgent one that is not
+  // about to reach cover; a runner with under HUNT_LET_GO left is let go, the
+  // way a player stops chasing a hare that is already at the bush.
+  let a = null;
+  for (const b of inst.animals) {
+    if (b.state !== 'live' || b.claimAt - inst.t < HUNT_LET_GO) continue;
+    if (!a || b.claimAt < a.claimAt) a = b;
+  }
+  a = a ?? inst.liveAnimal();
   if (!a) return NO_INTENT;
-  const aim = { x: a.x, y: a.y + 0.30 * a.scale };
-  // The aim is published even during recoil so the hand is already there when
-  // the trigger frees; only the trigger respects the lock.
-  return { aim, axis: null, fire: inst.recoil <= 0, alt: false };
+  // The aim is published even during the reload so the hand is already on the
+  // runner when the trigger frees; only the trigger respects the lock.
+  return { aim: (now) => inst.posAt(a, now + DT), axis: null, fire: inst.recoil <= 0, alt: false };
 }
+
+/** Seconds before its deadline at which a hunt brain stops chasing a runner. */
+const HUNT_LET_GO = 0.35;
 
 /* ---- fishing ----------------------------------------------------------- */
 /**

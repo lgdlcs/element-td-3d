@@ -43,6 +43,7 @@ import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
 import { PLATFORMS_RITE } from '../../src/minigames/rites/PlatformsRite.js';
 import { OFFROAD_RITE } from '../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
+import { readPalette as readHuntPalette } from '../../src/minigames/rites/HuntView.js';
 import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
 
 /**
@@ -111,22 +112,12 @@ const CASES = [
     read: (i) => i._pal.c.accent,
   },
   {
+    // The 3D hunt reads its palette in the VIEW (the logic paints nothing), so
+    // the row reads what the view would paint the rivals' plates and pips with.
     def: HUNT_RITE,
     token: '--rite-hunt-accent',
     probe: '#456789',
-    read: (i) => i.forest.rim,
-  },
-  {
-    def: HUNT_RITE,
-    token: '--rite-hunt-canopy-far',
-    probe: '#0a0b0c',
-    read: (i) => i.forest.canopyFar,
-  },
-  {
-    def: HUNT_RITE,
-    token: '--rite-hunt-floor',
-    probe: '#0d0e0f',
-    read: (i) => i.forest.floor,
+    read: () => readHuntPalette().accent,
   },
   {
     def: FISHING_RITE,
@@ -172,7 +163,7 @@ describe('per-rite theme tokens resolve on :root', () => {
     expect(spawn(HEAVEN_RITE)._palette.accent).not.toBe('#ff00ff');
     expect(spawn(PLATFORMS_RITE).palette.accent).not.toBe('#ff00ff');
     expect(spawn(OFFROAD_RITE)._pal.c.accent).not.toBe('#ff00ff');
-    expect(spawn(HUNT_RITE).forest.rim).not.toBe('#ff00ff');
+    expect(readHuntPalette().accent).not.toBe('#ff00ff');
     expect(spawn(FISHING_RITE).pal.rAccent).not.toBe(chan('#ff00ff'));
   });
 });

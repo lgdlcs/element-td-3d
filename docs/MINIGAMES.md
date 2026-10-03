@@ -17,7 +17,7 @@ outright, in one commit, and everything below describes what replaced them.
 | Falling Platforms | `platforms` | 24 s | steer a marker, `axis` only | survival + who you outlasted | 41 | yes |
 | Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
 | Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
-| Game Hunt | `hunt` | 20 s | reaction shot | animals taken out of 8 | 69 | yes |
+| Game Hunt **(3D)** | `hunt` | 20 s | reaction shot at runners, reload | animals taken out of 10 | 69 | yes |
 | Fishing | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
 
 Full write-ups in §13.
@@ -47,7 +47,8 @@ Files:
 | `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery's logic. **The reference rite.** |
 | `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
 | `src/minigames/rites/OffroadRite.js` | `offroad` — top-down rally, boost and bomb. |
-| `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot. |
+| `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot's logic. |
+| `src/minigames/rites/HuntView.js` | `hunt` — its 3D clearing, stands and blind. |
 | `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot. |
 | `src/ui/minigames.css` | The overlay's styling. Tokens only, plus one `[data-rite]` block per rite. |
 | `tests/unit/minigames.test.js` | Contract, schedule, registry, reward curve. `node` env. |
@@ -858,8 +859,8 @@ Rites read their palette tokens the way `Lottery.js:722-734` does: one
 > there are six accents. So:
 >
 > - **every flat colour a rite's canvas paints with is declared on `:root`** in
->   `minigames.css` under a prefixed name (`--rite-hunt-canopy-far`,
->   `--rite-fishing-deep`, …);
+>   `minigames.css` under a prefixed name (`--rite-fishing-deep`,
+>   `--rite-fishing-shelf`, …);
 > - the `[data-rite]` block **aliases** what the chrome needs
 >   (`--rite-accent: var(--rite-hunt-accent);`) and declares no colour of its own;
 > - the rite reads the **prefixed** name, with the same value as its literal
@@ -1179,9 +1180,9 @@ host's CSS kick on the stage is the impact channel.
 **Every rite needs an anti-mash rule, and it should come from the fiction.**
 `luckyshot` has a hard ammo cap (24 rounds, spent on a miss too) — that one is
 *the rite*, not tuning, and softening it makes spraying the field optimal.
-`hunt` does it better for its own shape: a shot that hits nothing **spooks the
-animal**, which punishes exactly the behaviour the rite is about resisting and
-says "you scared it off" instead of "you have run out". `fishing` uses the reel
+`hunt` prices a miss in time: every shot costs a 0.32 s reload, out of a dash
+that is usually shorter than two of them, so spraying spends the trigger on
+nothing. `fishing` uses the reel
 (1.05 s per empty cycle against 0.65 s for a landed one). `offroad` makes boost
 in the scrub a net loss. `platforms` and `heaven` do not need one: their verb is
 position, and there is nothing to mash.
@@ -1329,32 +1330,52 @@ longest clock of the six, because a race under 20 s is not a race.
   card **itemises the blend** (`9/12 gates · 21 gold · 2nd of 4`) — a blended
   ratio with an unitemised card is an opaque score.
 
-### `hunt` — Game Hunt · 20 s · 69 draws · rivals
+### `hunt` — Game Hunt · 20 s · 69 draws · rivals · **3D**
 
-A forest clearing at dusk. An animal steps out, freezes for a beat, and bolts.
-Fourteen of them over the round.
+A forest clearing at dusk, **in 3D**, seen from a hunting blind: a log sill
+along the bottom with the tally on it, a scoped rifle in the corner that swings
+to the crosshair and cycles its bolt on the reload. Fourteen animals (deer, boar,
+hare) burst from one bush and dash for the next, on three lanes at three real
+depths. Three rival hunters sit in stands at the treeline, each with a lantern in
+their colour and a name plate with a running tally. On a second visit in a run it
+is night (moon, fireflies, colder light); no number changes.
 
-- **"First to click wins", stated plainly.** There is no network (§15). Every
-  animal instead carries a **pre-drawn deadline with a name on it**: land a valid
-  hit at `t < claimAt` and it is yours, otherwise Kavi's name flashes over it and
-  it is gone. Strictly `<`, so a tie is not a state this rite can be in. Both
-  players in a room face the same three rivals with the same names and the same
-  deadlines. It is not a duel; it is a duel's arithmetic, played by both people
-  separately.
-- **Controls.** Left, right and Space are one verb; it reads `input.clicks`.
-  Unlimited ammo, but **0.45 s of recoil** after every shot and **a shot that
-  hits nothing spooks the live animal** — it bolts immediately. That second brake
-  is the anti-mash rule and it is better than an ammo cap here, because it
-  punishes precisely the behaviour the rite is about resisting: panic-clicking at
-  an animal you have not acquired.
-- **The reaction window is derived, not typed.** It reads `claimTime(0)` once and
-  maps it through a gain of 0.55 onto a window clamped to [0.34, 1.25] s. The
-  compression is the point: `claimTime(0)` swings ~0.9 s across plausible rosters,
-  which is wider than the band a reaction game can live in, and an unlucky roster
-  at wave 53 would otherwise publish a deadline no human can reach.
-- **Score.** `ratio = taken / 8` (60 % of the field). A denominator of 14 would
-  put a good player at 0.7 and a great one at 0.95, compressing every human into
-  the top third of the curve.
+- **The verb.** Aim, click. Left, right and Space are one verb (§1.2); it reads
+  `input.clicks`. The shot is **hitscan**: it resolves where the animal is on the
+  step of the press, so you shoot at the runner, never ahead of it. That is the
+  split with `fishing`, whose hook sinks while the fish swims.
+- **The run is the clock.** An animal is live for exactly its dash, at constant
+  speed from one bush's edge to the next one's (always two neighbouring bushes,
+  so no cover ever stands inside a run). Land a hit at `t < claimAt` and it is
+  yours; when it reaches cover its rival fires (muzzle flash and tracer from that
+  stand, the rival's name over the animal) and it is theirs. Strict `<`, aged
+  before the step's shots, so a tie cannot happen. The bush it is about to leave
+  rustles for 0.28 s first: a fair tell, so you watch the cover, not the field.
+- **One brake, the reload.** Unlimited rounds, 0.32 s dead trigger after every
+  shot. A miss costs time out of a window that is usually shorter than two
+  reloads; nothing else. The old second brake (a miss spooked the animal, with a
+  graze band to soften it) is gone: it needed a paragraph, and the reload already
+  prices the miss. A random sprayer still scores under 0.2.
+- **Up to two runners at once.** Windows run up to 2.4 s against the rivals'
+  1.35 s spacing, so the next animal often breaks while the last is still in the
+  open: a real choice of target. A shot into two overlapping discs takes the
+  front lane's.
+- **Dealt, not rolled.** Species (6 deer, 4 boar, 4 hare), lanes and dash
+  windows are each dealt from a fixed ladder by ranking a draw, so every seed has
+  the same mix and the seed only decides which animal gets which. The window
+  ladder runs from sprinters to stragglers and the wave squeezes it (eased,
+  `1 - 0.75 * waveT^1.5`); a straggler floor (`0.3 + 2.1 * u^4` s) ignores the
+  wave so a clumsy hand still has something to catch at wave 53. Later waves also
+  push animals toward the far lanes. Consecutive animals break within 4 units of
+  the last, so a round is a reaction test, not a mouse journey.
+- **Depth without moving the hit test.** Each lane's depth is chosen in `layout`
+  so its field scale is one world size further away (`0.75 / scale`), and the
+  camera looks down steeply enough (tilt -24) that the three foot lines sit on one
+  gently rising ground, which the terrain is bent through.
+- **Score.** `ratio = taken / 10`. Fourteen animals, so a flawless round clamps
+  well before the last one and a good one still pays in full. Calibration (5
+  seeds, reference player): 0.86 / 0.74 / 0.56 at waves 3 / 28 / 53; a clumsy
+  player 0.44 / 0.18 / 0.22.
 
 ### `fishing` — Fishing · 20 s · 94 draws · rivals
 
