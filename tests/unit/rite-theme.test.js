@@ -41,6 +41,7 @@ import { FIELD } from '../../src/minigames/contract.js';
 import { riteRng } from '../../src/minigames/schedule.js';
 import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
+import { readPalette as readHuntPalette } from '../../src/minigames/rites/HuntPalette.js';
 import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
 
 /**
@@ -101,22 +102,12 @@ const CASES = [
     read: (i) => i._palette.accent,
   },
   {
+    // The 3D hunt's VIEW paints (the logic paints nothing). It reads its
+    // colours through HuntPalette.js, the three-free reader this row calls.
     def: HUNT_RITE,
     token: '--rite-hunt-accent',
     probe: '#456789',
-    read: (i) => i.forest.rim,
-  },
-  {
-    def: HUNT_RITE,
-    token: '--rite-hunt-canopy-far',
-    probe: '#0a0b0c',
-    read: (i) => i.forest.canopyFar,
-  },
-  {
-    def: HUNT_RITE,
-    token: '--rite-hunt-floor',
-    probe: '#0d0e0f',
-    read: (i) => i.forest.floor,
+    read: () => readHuntPalette().accent,
   },
   {
     def: FISHING_RITE,
@@ -160,7 +151,7 @@ describe('per-rite theme tokens resolve on :root', () => {
     // stage in it. Poisoning the name at the root must move nothing.
     document.documentElement.style.setProperty('--rite-accent', '#ff00ff');
     expect(spawn(HEAVEN_RITE)._palette.accent).not.toBe('#ff00ff');
-    expect(spawn(HUNT_RITE).forest.rim).not.toBe('#ff00ff');
+    expect(readHuntPalette().accent).not.toBe('#ff00ff');
     expect(spawn(FISHING_RITE).pal.rAccent).not.toBe(chan('#ff00ff'));
   });
 });

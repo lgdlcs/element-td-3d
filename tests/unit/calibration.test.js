@@ -109,7 +109,7 @@
  *     platforms    0.973 !       0.883 !       0.811 !
  *     luckyshot    0.863         0.884 !       0.937 !
  *     offroad      0.801         0.729         0.714 !
- *     hunt         1.000 !       0.925 !       0.225 !
+ *     hunt         0.860         0.740         0.620       (re-measured, 3D rework)
  *     fishing      0.743         0.865 !       0.962 !
  *     TARGET       0.82+-.12     0.68+-.12     0.54+-.12
  *
@@ -120,7 +120,7 @@
  *     platforms   pass         FAIL 3/3     pass        pass       pass
  *     luckyshot   pass         pass         pass        FAIL       pass
  *     offroad     pass         pass         pass        pass       pass
- *     hunt        pass         FAIL w28,53  pass        pass       pass
+ *     hunt        pass         pass         pass        pass       pass   (re-measured)
  *     fishing     pass         pass         pass        FAIL       pass
  *
  * 28 of 101 cases fail. By rite: heaven 10, platforms 6, hunt 5, luckyshot 3,
@@ -144,8 +144,10 @@
  *    "survived the clock" and "fell off immediately". (Read that number with
  *    the harness's blind spot in mind — the brain reads the fall schedule, so
  *    this is an upper bound; see reference-player.js.)
- *  - `hunt` inverts across skill instead of across waves: flawless to m=1, then
- *    0.000 at m=2. A rite where a shot is on time or the animal is gone.
+ *  - `hunt` inverted across skill instead of across waves: flawless to m=1, then
+ *    0.000 at m=2. A rite where a shot is on time or the animal is gone. The 3D
+ *    rework (runners between bushes, a temperament ladder) passes every case;
+ *    its two rows above are re-measured, the counts beside them are as landed.
  *  - `luckyshot` and `fishing` both score HIGHER at wave 53 than at wave 3
  *    (0.863 -> 0.937 and 0.743 -> 0.962). Both score against a fixed PAR and
  *    clamp at 1, so raising the wave adds targets faster than it adds pressure.

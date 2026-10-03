@@ -567,7 +567,7 @@ Two things make it worse than dead code:
 *Rule, and it is a naming rule before it is a scoping one:* **a generic name
 cannot live on `:root`.** `--rite-accent` is one name and there are six accents,
 so hoisting it as-is is not available. Every colour a canvas reads is declared
-on `:root` under a name prefixed by its owner (`--rite-hunt-canopy-far`), the
+on `:root` under a name prefixed by its owner (`--rite-fishing-deep`), the
 scoped block becomes a pure alias for the chrome
 (`--rite-accent: var(--rite-hunt-accent);`), and the module reads the prefixed
 name.

@@ -55,18 +55,10 @@
   /* Dust and low sun. */
   --rite-offroad-accent: #d98b4a;
 
-  /* Forest before dawn. The canopy darks are tokens too, because the rite
-     paints its own treeline and the stage gradient behind it has to agree — two
-     sets of greens tuned by hand in two files is the drift this section exists
-     to stop. Pelt and ember stay literals in HuntRite: they are the SUBJECT,
-     not the room, and they must not change when the room is retuned. */
+  /* Forest at dusk. The accent is the first rival's colour in the 3D scene
+     (lantern, name plate, tracer) and the chrome's accent; the forest itself
+     is material colour in HuntView.js, art rather than theme. */
   --rite-hunt-accent: #86c294;
-  --rite-hunt-canopy-far: #0e1d15;
-  --rite-hunt-canopy-mid: #0a160f;
-  --rite-hunt-canopy-near: #040a07;
-  --rite-hunt-trunk-far: #0b1610;
-  --rite-hunt-trunk-near: #030806;
-  --rite-hunt-floor: #0a1310;
 
   /* Under the waterline. `deep` is the bottom of the stage gradient below and
      the bottom of the water the canvas paints; they are one colour or the
