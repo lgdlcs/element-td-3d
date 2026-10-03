@@ -46,6 +46,11 @@ const SINK = 0.16;
 const BODY_SCALE = 1.3;
 /** How far the camera drifts toward the player at the floor's edge, world units. */
 const DRIFT = 0.9;
+/**
+ * Below this stage width (CSS px) the HUD and the name tags would be ~7 px text,
+ * so they are painted and drawn bigger. A phone in landscape is ~455 px.
+ */
+const NARROW_PX = 640;
 
 /** Body colours: you, then the three rivals. Art, not chrome. */
 const BODY = [0xf4c04e, 0x4fd1c5, 0xff7d93, 0x9fd356];
@@ -421,6 +426,10 @@ class PlatformsView extends RiteView {
     const dist = this._camBase.distanceTo(this._camLook);
     this.scene.fog.near = dist + 5;
     this.scene.fog.far = dist + 30;
+    const narrow = (this.stage.cssW || 1600) < NARROW_PX;
+    if (narrow !== this._narrow) { this._narrow = narrow; this._hud.left = -1; }
+    this._tagK = narrow ? 1.7 : 1;
+    for (const b of this.bodies) b.tag.scale.set(1.5 * this._tagK, 0.47 * this._tagK, 1);
     // HUD across the top of the screen, 2 units in front of the camera.
     const d = 2;
     const hh = d * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
@@ -711,7 +720,7 @@ class PlatformsView extends RiteView {
       // Beside your tag rather than above it: straight up lands on whoever
       // stands in the row behind you.
       this.alert.position.copy(me.tag.position);
-      this.alert.position.x += 1.0;
+      this.alert.position.x += 1.0 * this._tagK;
       this.alert.position.y += 0.1 + (1 - this.alarm) * 0.2;
       const s = 0.8 + 0.4 * Math.min(1, (1 - this.alarm) * 6);
       this.alert.scale.set(0.42 * s, 0.63 * s, 1);
@@ -745,31 +754,36 @@ class PlatformsView extends RiteView {
       g.fillStyle = 'rgba(12,8,24,0.62)';
       g.beginPath(); g.roundRect(x, 10, w, H - 20, 36); g.fill();
     };
-    pill(0, 470);
+    // On a narrow stage the plane is ~450 px wide: same canvas, bigger type.
+    const small = this._narrow ? 56 : 34;
+    const dot = this._narrow ? 22 : 15;
+    const label = `700 ${small}px system-ui, -apple-system, Segoe UI, sans-serif`;
     g.font = '800 72px system-ui, -apple-system, Segoe UI, sans-serif';
+    const nw = g.measureText(`${left}`).width;
+    g.font = label;
+    pill(0, 34 + Math.max(nw, 84) + 20 + g.measureText('TILES LEFT').width + 40);
     g.textAlign = 'left';
+    g.fillStyle = 'rgba(233,235,243,0.78)';
+    g.fillText('TILES LEFT', 34 + Math.max(nw, 84) + 20, H / 2 + 6);
+    g.font = '800 72px system-ui, -apple-system, Segoe UI, sans-serif';
     g.fillStyle = this.P.goldHi;
     g.fillText(`${left}`, 34, H / 2 + 4);
-    const nw = g.measureText(`${left}`).width;
-    g.font = '700 34px system-ui, -apple-system, Segoe UI, sans-serif';
-    g.fillStyle = 'rgba(233,235,243,0.78)';
-    g.fillText('TILES LEFT', 34 + nw + 20, H / 2 + 6);
 
     // Who is still up: four dots in the body colours, crossed when they fall.
     const names = ['YOU', ...R.rivals.roster().map((r) => r.name)];
-    g.font = '700 34px system-ui, -apple-system, Segoe UI, sans-serif';
+    g.font = label;
     let total = 0;
-    const widths = names.map((n) => { const w = g.measureText(n).width + 74; total += w; return w; });
+    const widths = names.map((n) => { const w = g.measureText(n).width + 44 + 2 * dot; total += w; return w; });
     let x = W - total - 30;
     pill(x - 16, total + 46);
     for (let k = 0; k < names.length; k++) {
       const up = (mask >> k) & 1;
       g.globalAlpha = up ? 1 : 0.38;
       g.fillStyle = BODY_HEX[k];
-      g.beginPath(); g.arc(x + 22, H / 2, 15, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(x + 7 + dot, H / 2, dot, 0, Math.PI * 2); g.fill();
       g.fillStyle = k === 0 ? '#fff4d6' : '#f2eefa';
       g.textAlign = 'left';
-      g.fillText(names[k], x + 46, H / 2 + 2);
+      g.fillText(names[k], x + 16 + 2 * dot, H / 2 + 2);
       if (!up) {
         g.strokeStyle = this.P.danger; g.lineWidth = 5;
         g.beginPath(); g.moveTo(x + 4, H / 2 + 2); g.lineTo(x + widths[k] - 18, H / 2 + 2); g.stroke();
