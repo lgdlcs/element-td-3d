@@ -1333,8 +1333,9 @@ longest clock of the six, because a race under 20 s is not a race.
 ### `hunt` — Game Hunt · 20 s · 69 draws · rivals · **3D**
 
 A forest clearing at dusk, **in 3D**, seen from a hunting blind: a log sill
-along the bottom with the tally on it, a scoped rifle in the corner that swings
-to the crosshair and cycles its bolt on the reload. Fourteen animals (deer, boar,
+along the bottom with the tally on it (ten slots that fill gold, then "+n"), a
+scoped rifle low in the corner that swings to the crosshair and cycles its bolt
+on the reload, kept short and below the lanes so it never covers a runner. Fourteen animals (deer, boar,
 hare) burst from one bush and dash for the next, on three lanes at three real
 depths. Three rival hunters sit in stands at the treeline, each with a lantern in
 their colour and a name plate with a running tally. On a second visit in a run it
@@ -1350,7 +1351,8 @@ is night (moon, fireflies, colder light); no number changes.
   yours; when it reaches cover its rival fires (muzzle flash and tracer from that
   stand, the rival's name over the animal) and it is theirs. Strict `<`, aged
   before the step's shots, so a tie cannot happen. The bush it is about to leave
-  rustles for 0.28 s first: a fair tell, so you watch the cover, not the field.
+  shakes and throws a puff of leaves 0.28 s first: a fair tell, so you watch
+  the cover, not the field. Bushes are green only, so anything brown is a target.
 - **One brake, the reload.** Unlimited rounds, 0.32 s dead trigger after every
   shot. A miss costs time out of a window that is usually shorter than two
   reloads; nothing else. The old second brake (a miss spooked the animal, with a
@@ -1358,8 +1360,14 @@ is night (moon, fireflies, colder light); no number changes.
   prices the miss. A random sprayer still scores under 0.2.
 - **Up to two runners at once.** Windows run up to 2.4 s against the rivals'
   1.35 s spacing, so the next animal often breaks while the last is still in the
-  open: a real choice of target. A shot into two overlapping discs takes the
+  open: a real choice of target. A shot into two overlapping animals takes the
   front lane's.
+- **You hit what you see.** The hit shape is three discs per species: the body,
+  the head (antlers, snout, long ears) and the striding forelegs, fitted to the
+  view's models and mirrored with the run (`SPECIES.parts`, `HuntRite#covers`).
+  `tools/scratch/hunt-silhouette.mjs` raycasts the real meshes through the real
+  pick: 97-99% of the visible animal takes it (the rest is thin leg and antler
+  tips), and it fails if the rifle ever enters a lane.
 - **Dealt, not rolled.** Species (6 deer, 4 boar, 4 hare), lanes and dash
   windows are each dealt from a fixed ladder by ranking a draw, so every seed has
   the same mix and the seed only decides which animal gets which. The window
@@ -1374,7 +1382,7 @@ is night (moon, fireflies, colder light); no number changes.
   gently rising ground, which the terrain is bent through.
 - **Score.** `ratio = taken / 10`. Fourteen animals, so a flawless round clamps
   well before the last one and a good one still pays in full. Calibration (5
-  seeds, reference player): 0.86 / 0.74 / 0.56 at waves 3 / 28 / 53; a clumsy
+  seeds, reference player): 0.86 / 0.74 / 0.62 at waves 3 / 28 / 53; a clumsy
   player 0.44 / 0.18 / 0.22.
 
 ### `fishing` — Fishing · 20 s · 94 draws · rivals

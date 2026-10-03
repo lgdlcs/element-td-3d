@@ -31,13 +31,14 @@ import { mulberry32 } from '../../core/Rng.js';
 import { clamp, FIELD } from '../contract.js';
 import { RiteView, FRAMES, placeOnRay, addStandardLights, Bursts } from '../Stage3D.js';
 import { ANIMALS, LANES, RECOIL, EXPECTED, BUSH_R, RIVAL_COUNT } from './HuntRite.js';
+import { readPalette } from './HuntPalette.js';
 
 /** The near lane's placeOnRay factor. The other lanes are `K_NEAR / scale`: one world size, further away. */
 const K_NEAR = 0.75;
 /**
  * The models are drawn in field units at scale 1 and then enlarged by MODEL, so
- * the BODY fills the rite's hit disc (head and antlers stick out of it, which is
- * where a player does not aim anyway).
+ * the body fills the rite's body disc, and the head and forelegs its `parts`
+ * discs (HuntRite SPECIES). Change a model and re-run tools/scratch/hunt-silhouette.mjs.
  */
 const MODEL = 1.32;
 /** Field units from an animal's hit centre down to its hooves, at scale 1. The lane's ground line. */
@@ -57,8 +58,14 @@ const STAND_Y = 2.75;
 /** How far behind the far lane the stands sit, in world units. */
 const STAND_BACK = 4.5;
 
+/** Canvas height (css px) at and above which the name plates keep their drawn size. */
+const PLATE_PX = 440;
+
 /** Camera drift toward the aim at the field's edge, world units. */
 const SWAY = 0.9;
+
+/** The puff of leaves a bush throws as its animal is about to break. Built once: render() emits it. */
+const LEAF_PUFF = Object.freeze({ color: 0x8fcf5a, speed: 1.6, life: 0.5, up: 1.4 });
 
 const POPS = 6;
 const TICKS = 24;
@@ -82,19 +89,6 @@ const MOODS = Object.freeze({
     mote: 0xc8ff9a, lit: 0xd6e4ff, dim: 0x56637a,
   }),
 });
-
-function readPalette() {
-  const cs = typeof getComputedStyle === 'function' && typeof document !== 'undefined'
-    ? getComputedStyle(document.documentElement) : null;
-  const tok = (n, f) => (cs?.getPropertyValue(n) || '').trim() || f;
-  return {
-    accent: tok('--rite-hunt-accent', '#86c294'),
-    ink: tok('--ink', '#e9ebf3'),
-    gold: tok('--gold', '#e5bd79'),
-    goldHi: tok('--gold-hi', '#f7dfae'),
-    danger: tok('--danger', '#ff5f57'),
-  };
-}
 
 function canvasTexture(w, h, paint) {
   const c = document.createElement('canvas');
@@ -129,6 +123,9 @@ function part(geo, mat, x, y, z, sx = 1, sy = 1, sz = 1, rz = 0) {
   return m;
 }
 
+/** Names the head, so a browser test can click exactly where the player sees it. */
+function markHead(m) { m.name = 'head'; return m; }
+
 /**
  * Three species built from a handful of primitives each, flat shaded. Every
  * call makes a fresh group (the meshes are per animal) but the geometries and
@@ -145,7 +142,7 @@ function buildAnimal(species, G, M) {
     body.add(part(G.sphere, M.deer, 0, 0.02, 0, 0.56, 0.27, 0.22));
     body.add(part(G.sphere, M.belly, 0.02, -0.1, 0, 0.42, 0.13, 0.18));
     body.add(part(G.cyl, M.deer, 0.42, 0.3, 0, 0.11, 0.42, 0.11, -0.55));
-    body.add(part(G.sphere, M.deer, 0.62, 0.5, 0, 0.17, 0.1, 0.1, -0.3));
+    body.add(markHead(part(G.sphere, M.deer, 0.62, 0.5, 0, 0.17, 0.1, 0.1, -0.3)));
     body.add(part(G.cone, M.dark, 0.78, 0.44, 0, 0.05, 0.08, 0.05, -1.9));
     body.add(part(G.cone, M.deer, 0.52, 0.64, 0.07, 0.05, 0.12, 0.03, 0.4));
     body.add(part(G.cone, M.deer, 0.52, 0.64, -0.07, 0.05, 0.12, 0.03, 0.4));
@@ -162,7 +159,7 @@ function buildAnimal(species, G, M) {
     // BOAR: a heavy dark wedge, a ridge of bristle, a pale tusk.
     body.add(part(G.sphere, M.boar, 0, 0.04, 0, 0.6, 0.33, 0.29));
     body.add(part(G.sphere, M.bristle, -0.05, 0.27, 0, 0.5, 0.12, 0.12));
-    body.add(part(G.cone, M.boar, 0.68, 0.0, 0, 0.21, 0.36, 0.21, -Math.PI / 2));
+    body.add(markHead(part(G.cone, M.boar, 0.68, 0.0, 0, 0.21, 0.36, 0.21, -Math.PI / 2)));
     body.add(part(G.cyl, M.snout, 0.86, -0.04, 0, 0.08, 0.06, 0.08, Math.PI / 2));
     body.add(part(G.cone, M.boar, 0.5, 0.24, 0.12, 0.06, 0.12, 0.03, -0.3));
     body.add(part(G.cone, M.boar, 0.5, 0.24, -0.12, 0.06, 0.12, 0.03, -0.3));
@@ -175,7 +172,7 @@ function buildAnimal(species, G, M) {
     // HARE: small, a big haunch, long ears, a white scut.
     body.add(part(G.sphere, M.hare, -0.04, -0.06, 0, 0.36, 0.24, 0.2));
     body.add(part(G.sphere, M.hare, -0.2, -0.12, 0, 0.2, 0.2, 0.2));
-    body.add(part(G.sphere, M.hare, 0.3, 0.1, 0, 0.16, 0.14, 0.13));
+    body.add(markHead(part(G.sphere, M.hare, 0.3, 0.1, 0, 0.16, 0.14, 0.13)));
     body.add(part(G.sphere, M.hare, 0.24, 0.42, 0.05, 0.05, 0.22, 0.035, 0.25));
     body.add(part(G.sphere, M.hare, 0.2, 0.42, -0.05, 0.05, 0.22, 0.035, 0.35));
     body.add(part(G.sphere, M.dark, 0.17, 0.6, 0.05, 0.03, 0.06, 0.025, 0.25));
@@ -221,9 +218,11 @@ class HuntView extends RiteView {
     this.laneDepth = [0, 0, 0];
     this.laneFoot = [0, 0, 0];
     this.laneZ = [0, 0, 0];
-    this._hud = { taken: -1, claimed: -1, live: -1 };
+    this._hudTaken = -1;
     this._plates = new Int32Array(RIVAL_COUNT).fill(-1);
     this.rivalFire = new Float32Array(RIVAL_COUNT);
+    /** Which animals' bushes already threw their leaves. View state, never the rite's. */
+    this.rustled = new Uint8Array(ANIMALS);
 
     this.#buildLights();
     this.#buildTextures();
@@ -434,10 +433,11 @@ class HuntView extends RiteView {
       geo.scale(1 / (b.max.x - b.min.x), 1 / (b.max.y - b.min.y), 1 / (b.max.z - b.min.z));
       lumps.push(geo);
     }
+    // Greens only: anything brown in the clearing is a target, never cover.
     this.bushMat = [
       new THREE.MeshStandardMaterial({ color: 0x3f6a2c, flatShading: true, roughness: 0.9 }),
       new THREE.MeshStandardMaterial({ color: 0x55712e, flatShading: true, roughness: 0.9 }),
-      new THREE.MeshStandardMaterial({ color: 0x7a6a2a, flatShading: true, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: 0x2f5a34, flatShading: true, roughness: 0.9 }),
     ];
     if (this.rite.night) for (const m of this.bushMat) m.color.multiplyScalar(0.6);
     this.bushes = LANES.map((L, lane) => L.cover.map((x, j) => {
@@ -551,7 +551,8 @@ class HuntView extends RiteView {
     const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.8, ...o });
     const M = {
       deer: std(0xb3743f), belly: std(0xeadcc4), antler: std(0xdccaa4), dark: std(0x2a1d14),
-      boar: std(0x5b4636), bristle: std(0x3a2b22), snout: std(0x8a5e4c), tusk: std(0xf1e6cc),
+      // The boar is the dark one: a little self-light keeps it off the shade and the night grass.
+      boar: std(0x6a5240, { emissive: 0x2a1a10 }), bristle: std(0x463428, { emissive: 0x1c120a }), snout: std(0x8a5e4c), tusk: std(0xf1e6cc),
       hare: std(0xa48766), eye: new THREE.MeshBasicMaterial({ color: 0x0c0806 }),
     };
     this.items = [];
@@ -596,8 +597,8 @@ class HuntView extends RiteView {
     const stock = new THREE.MeshStandardMaterial({ color: 0x7a4220, roughness: 0.55 });
     this.rifle = new THREE.Group();
     this.rifleBody = new THREE.Group();
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.065, 2.6, 12).rotateX(Math.PI / 2), metal);
-    barrel.position.z = 1.4;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.065, 1.9, 12).rotateX(Math.PI / 2), metal);
+    barrel.position.z = 1.05;
     const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.26, 0.9), metal);
     const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.0, 12).rotateX(Math.PI / 2), metal);
     scope.position.set(0, 0.24, 0.2);
@@ -606,13 +607,13 @@ class HuntView extends RiteView {
     const butt = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.42, 1.2), stock);
     butt.position.set(0, -0.12, -0.95);
     butt.rotation.x = 0.12;
-    const fore = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 1.2), stock);
-    fore.position.set(0, -0.14, 0.85);
+    const fore = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 1.0), stock);
+    fore.position.set(0, -0.14, 0.75);
     this.rifleBody.add(barrel, receiver, scope, bolt, butt, fore);
     this.bolt = bolt;
     this.rifle.add(this.rifleBody);
     this.muzzle = new THREE.Object3D();
-    this.muzzle.position.set(0, 0, 2.78);
+    this.muzzle.position.set(0, 0, 2.08);
     this.rifleBody.add(this.muzzle);
     this.flashSprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: this.glowTex, color: 0xffd58a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0,
@@ -771,12 +772,18 @@ class HuntView extends RiteView {
 
     // The stands, behind the far lane, legs down to the ground.
     const standDepth = this.laneDepth[2] + STAND_BACK;
+    // On a small canvas (a phone on its side) the name plates would be 6 px
+    // text: grow them, within the room between the stands.
+    const plateGrow = clamp(PLATE_PX / Math.max(1, this.stage.cssH || PLATE_PX), 1, 1.7);
     for (let k = 0; k < RIVAL_COUNT; k++) {
       const S = this.stands[k];
       const kk = placeOnRay(cam, f, STAND_X[k], STAND_Y, standDepth, v);
       S.g.position.copy(v);
       S.g.scale.setScalar(kk * 1.05);
       S.g.rotation.y = -0.15 * Math.sign(STAND_X[k]);
+      S.plate.scale.set(1.9 * plateGrow, 0.71 * plateGrow, 1);
+      // Top edge pinned (it already sits near the frame's top): it grows down over the roof.
+      S.plate.position.y = 2.05 - 0.355 * (plateGrow - 1);
       const drop = (v.y - this.groundY(v.x, v.z)) / (kk * 1.05);
       for (const post of S.posts) post.scale.y = Math.max(0.1, drop);
     }
@@ -805,9 +812,10 @@ class HuntView extends RiteView {
     this.hud.scale.set(10 * kk, 10 * kk * (128 / 1400), 1);
     this.hud.quaternion.copy(cam.quaternion);
 
-    // Low in the right corner and well off to the side, so it crosses the
-    // corner on a diagonal and shows its length instead of its butt plate.
-    this.rifleK = placeOnRay(cam, f, 9.2, -5.3, -7.0, v);
+    // Low in the right corner, mostly under the sill and with a short barrel:
+    // wherever it points, it never covers a near or mid lane run
+    // (tools/scratch/hunt-silhouette.mjs sweeps the aim and checks).
+    this.rifleK = placeOnRay(cam, f, 9.9, -6.3, -7.0, v);
     this.rifleBase = v.clone();
     this.rifle.scale.setScalar(this.rifleK * 1.45);
 
@@ -925,8 +933,14 @@ class HuntView extends RiteView {
         const B = this.#bushAt(a);
         if (B) {
           const r = 1 - (a.appearAt - t) / RUSTLE;
-          B.g.rotation.z = Math.sin(this.clock * 38 + i) * 0.09 * r;
-          B.g.scale.y *= 1 + 0.06 * r * Math.sin(this.clock * 31);
+          B.g.rotation.z = Math.sin(this.clock * 38 + i) * 0.2 * r;
+          B.g.scale.y *= 1 + 0.14 * r * Math.abs(Math.sin(this.clock * 31));
+          if (!this.rustled[i]) {
+            this.rustled[i] = 1;
+            v.copy(B.g.position);
+            v.y += B.g.scale.y * 0.8;
+            this.dust.emit(v, 14, LEAF_PUFF);
+          }
         }
       }
 
@@ -1110,17 +1124,19 @@ class HuntView extends RiteView {
     this.plateTex[k].needsUpdate = true;
   }
 
-  /** Redrawn only when the round's state changed. */
+  /**
+   * The tally on the blind's rail: the count, then EXPECTED slots that fill
+   * gold as animals are taken (the full prize is a full row), and a "+n" for
+   * takes past it. Redrawn only when the count changes.
+   */
   #paintHud() {
     const R = this.rite;
-    let live = 0;
-    for (let i = 0; i < ANIMALS; i++) if (R.animals[i].state === 'live') live |= 1 << i;
-    const h = this._hud;
-    if (h.taken === R.taken && h.claimed === R.claimed && h.live === live) return;
-    h.taken = R.taken; h.claimed = R.claimed; h.live = live;
+    if (this._hudTaken === R.taken) return;
+    this._hudTaken = R.taken;
     const g = this.hudCanvas.getContext('2d');
     const W = this.hudCanvas.width, H = this.hudCanvas.height;
     const P = this.P;
+    const full = R.taken >= EXPECTED;
     g.clearRect(0, 0, W, H);
     g.fillStyle = 'rgba(14,10,7,0.66)';
     g.beginPath();
@@ -1129,28 +1145,23 @@ class HuntView extends RiteView {
     g.textBaseline = 'middle';
     g.textAlign = 'left';
     g.font = '700 96px Georgia, serif';
-    g.fillStyle = R.taken >= EXPECTED ? P.goldHi : P.gold;
+    g.fillStyle = full ? P.goldHi : P.gold;
     g.fillText(`${R.taken}`, 44, H / 2 + 6);
     const w = g.measureText(`${R.taken}`).width;
     g.font = '600 60px Georgia, serif';
     g.fillStyle = 'rgba(236,220,184,0.75)';
     g.fillText(`/ ${EXPECTED}`, 44 + w + 14, H / 2 + 10);
-    // One pip per animal: gold taken, a ring in the rival's colour if theirs.
-    const x0 = 330, gap = (W - x0 - 50) / (ANIMALS - 1);
-    for (let i = 0; i < ANIMALS; i++) {
-      const a = R.animals[i];
-      const x = x0 + i * gap, y = H / 2;
+    const x0 = 330, x1 = W - 190, gap = (x1 - x0) / (EXPECTED - 1);
+    for (let k = 0; k < EXPECTED; k++) {
       g.beginPath();
-      if (a.state === 'taken') {
-        g.fillStyle = P.goldHi; g.arc(x, y, 22, 0, Math.PI * 2); g.fill();
-      } else if (a.state === 'claimed') {
-        g.strokeStyle = `#${this.tints[Math.max(0, a.rival)].getHexString()}`;
-        g.lineWidth = 8; g.arc(x, y, 17, 0, Math.PI * 2); g.stroke();
-      } else if (a.state === 'live') {
-        g.strokeStyle = P.ink; g.lineWidth = 8; g.arc(x, y, 24, 0, Math.PI * 2); g.stroke();
-      } else {
-        g.fillStyle = 'rgba(236,220,184,0.32)'; g.arc(x, y, 9, 0, Math.PI * 2); g.fill();
-      }
+      g.arc(x0 + k * gap, H / 2, 24, 0, Math.PI * 2);
+      if (k < R.taken) { g.fillStyle = full ? P.goldHi : P.gold; g.fill(); }
+      else { g.strokeStyle = 'rgba(236,220,184,0.45)'; g.lineWidth = 6; g.stroke(); }
+    }
+    if (R.taken > EXPECTED) {
+      g.font = '700 72px Georgia, serif';
+      g.fillStyle = P.goldHi;
+      g.fillText(`+${R.taken - EXPECTED}`, x1 + 50, H / 2 + 6);
     }
     this.hudTex.needsUpdate = true;
   }
@@ -1160,4 +1171,3 @@ export function createView(stage, rite) {
   return new HuntView(stage, rite);
 }
 
-export { readPalette };

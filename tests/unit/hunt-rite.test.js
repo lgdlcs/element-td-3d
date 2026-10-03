@@ -286,6 +286,33 @@ describe('HuntRite — the run', () => {
     expect(far.state).toBe('live');
   });
 
+  it('takes a deer by its head as well as its body, on the side it runs toward', () => {
+    // The player clicks the animal they see, antlers included, not the middle
+    // of its body. A deer at the origin of the near lane, running right, then left.
+    const place = (dir) => {
+      const inst = spawn({ seed: 8 });
+      for (const a of inst.animals) a.state = 'taken';
+      const deer = inst.animals[0];
+      Object.assign(deer, { species: 0, lane: 0, scale: 1, hitR: SPECIES[0].hitR, dir, x0: 0, x1: 0.001 * dir, y: 0, appearAt: 0, claimAt: 5, state: 'wait' });
+      inst.update(DT, makeInput());
+      return [inst, deer];
+    };
+    const [right, r] = place(1);
+    shoot(right, 0.9, 0.85);
+    expect(r.state).toBe('taken');
+
+    const [left, l] = place(-1);
+    shoot(left, 0.9, 0.85);
+    expect(l.state).toBe('live');
+    left.recoil = 0;
+    shoot(left, -0.9, 0.85);
+    expect(l.state).toBe('taken');
+
+    const [above, u] = place(1);
+    shoot(above, 0, 1.4);
+    expect(u.state).toBe('live');
+  });
+
   it('resolves every animal on screen, before the clock runs out', () => {
     for (const seed of [3, 19, 404]) {
       for (const wave of [3, 28, 53]) {

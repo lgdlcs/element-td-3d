@@ -1,8 +1,8 @@
 /**
  * RITE INPUT, IN A REAL BROWSER.
  *
- * Two facts about MinigameHost's pointer handling that no other environment can
- * establish, and that the unit suites therefore cannot own:
+ * Three facts about rite input that no other environment can establish, and
+ * that the unit suites therefore cannot own:
  *
  *  1. THE CLICK QUEUE. Two `pointerdown` events at two different points of the
  *     canvas, dispatched inside ONE animation frame, resolve as two distinct
@@ -20,6 +20,11 @@
  *     menu, so the claim is asserted through a page-side listener installed
  *     before the click: the menu that never opens is the one whose event was
  *     `defaultPrevented`.
+ *
+ *  3. HUNT HITS WHAT IT DRAWS. A press on a runner's head, as the 3D view draws
+ *     it, outside the body disc, takes the animal. Only a real view can say
+ *     where the head is drawn; tools/scratch/hunt-silhouette.mjs measures the
+ *     whole silhouette, this test keeps the one claim in CI.
  *
  * TWO RULES THIS FILE OBEYS, BOTH LEARNED THE HARD WAY
  *
@@ -236,6 +241,65 @@ test.describe('rite input', () => {
     expect(got.hits).toBe(2);
     expect(got.down).toEqual([plan.a.i, plan.b.i].sort((p, q) => p - q));
 
+    expect(errors).toEqual([]);
+  });
+
+  test('hunt: a press on a runner\'s head, outside its body disc, takes it', async ({ page }) => {
+    const { errors } = await startRun(page, { freeze: false });
+    await page.evaluate(() => window.__game.startMinigame('hunt', 20, 0));
+    await page.waitForSelector('#rite.open', { timeout: 10000 });
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.__game.minigames.mode === 'play' && window.__game.minigames.ownsFrame,
+      null, { timeout: 15000 });
+
+    /**
+     * One evaluate: wait for a runner alone on its patch of field, read where
+     * the VIEW draws its head (projected, then picked back onto the field), and
+     * press there, moved on by exactly what the animal runs before the step
+     * that resolves the press. Same timing argument as the queue test above.
+     */
+    const plan = await page.evaluate(async () => {
+      const { MINIGAMES } = await import('/src/core/Config.js');
+      const h = window.__game.minigames, R = h.instance, v = h._view, st = h._stage;
+      const rect = h.$gl.getBoundingClientRect();
+      for (let n = 0; n < 600 && h.isOpen; n++) {
+        await new Promise((r) => requestAnimationFrame(r));
+        if (R.recoil > 0) continue;
+        const t = R.t + MINIGAMES.dt;
+        for (const a of R.animals) {
+          if (a.state !== 'live' || t >= a.claimAt - 0.05) continue;
+          const now = R.posAt(a, R.t), then = R.posAt(a, t);
+          if (Math.abs(then.x) > 6.5) continue;
+          const head = v.items[a.i].root.getObjectByName('head');
+          head.updateMatrixWorld(true);
+          const s = head.getWorldPosition(v.camera.position.clone()).project(v.camera);
+          const f = st.pick(v, rect.left + (s.x + 1) / 2 * rect.width, rect.top + (1 - s.y) / 2 * rect.height, rect);
+          const aim = { x: f.x + then.x - now.x, y: f.y + then.y - now.y };
+          const off = Math.hypot(aim.x - then.x, aim.y - then.y) / a.hitR;
+          if (off <= 1.05) continue;
+          if (R.animals.some((b) => b !== a && b.state === 'live' && R.covers(b, aim.x, aim.y, t))) continue;
+          const c = h.fieldToClient(aim.x, aim.y);
+          h.$gl.dispatchEvent(new PointerEvent('pointerdown', {
+            bubbles: true, clientX: c.x, clientY: c.y,
+            button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+          }));
+          return { ok: true, i: a.i, species: a.species, off };
+        }
+      }
+      return { ok: false };
+    });
+    expect(plan.ok, 'no lone runner came on screen').toBe(true);
+
+    const state = await page.evaluate(async (i) => {
+      const h = window.__game.minigames;
+      for (let n = 0; n < 600 && h.isOpen && h.instance.shots < 1; n++) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return { state: h.instance.animals[i].state, shots: h.instance.shots };
+    }, plan.i);
+    // Farther from the body centre than the body disc reaches, and still a take.
+    expect(plan.off).toBeGreaterThan(1.05);
+    expect(state).toEqual({ state: 'taken', shots: 1 });
     expect(errors).toEqual([]);
   });
 

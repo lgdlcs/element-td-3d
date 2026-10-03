@@ -119,11 +119,17 @@ const EXIT_HOLD = 0.7;
  * player can see it: a hare is a small target and looks like one. `bob` is how
  * far the body rises on each stride, `stride` how many strides per second —
  * part of the hit test, because the disc follows the body the player sees.
+ *
+ * The hit shape is three discs at lane scale 1: the body (`hitR`, centred on
+ * `posAt`), then the head and the striding forelegs in `parts`, each
+ * [forward, up, r] and mirrored with the run. They are fitted to HuntView's
+ * models (tools/scratch/hunt-silhouette.mjs measures it), so a click on
+ * antlers, a snout, long ears or a flying hoof takes the animal.
  */
 const SPECIES = Object.freeze([
-  Object.freeze({ id: 'deer', hitR: 0.78, bob: 0.16, stride: 2.4 }),
-  Object.freeze({ id: 'boar', hitR: 0.84, bob: 0.04, stride: 4.2 }),
-  Object.freeze({ id: 'hare', hitR: 0.60, bob: 0.20, stride: 3.4 }),
+  Object.freeze({ id: 'deer', hitR: 0.78, parts: Object.freeze([[0.85, 0.76, 0.62], [0.75, -0.65, 0.4]]), bob: 0.16, stride: 2.4 }),
+  Object.freeze({ id: 'boar', hitR: 0.84, parts: Object.freeze([[0.95, -0.15, 0.5], [0.75, -0.8, 0.35]]), bob: 0.04, stride: 4.2 }),
+  Object.freeze({ id: 'hare', hitR: 0.60, parts: Object.freeze([[0.36, 0.46, 0.5], [0.4, -0.6, 0.45]]), bob: 0.20, stride: 3.4 }),
 ]);
 
 /**
@@ -274,6 +280,7 @@ class HuntRite {
     this._started = false;
     this._events = [];
     this._pos = { x: 0, y: 0 };
+    this._hitPos = { x: 0, y: 0 };
   }
 
   /**
@@ -291,6 +298,23 @@ class HuntRite {
     out.x = lerp(a.x0, a.x1, run);
     out.y = a.y + S.bob * a.scale * Math.abs(Math.sin(Math.PI * S.stride * since));
     return out;
+  }
+
+  /**
+   * Does field point (x, y) land on animal `a` at time `t`? PURE.
+   *
+   * The body disc centred on `posAt`, plus the species' `parts` placed ahead
+   * in the direction of the run. The parts are what make a click on a deer's
+   * antlers or a boar's snout a hit: the player aims at the animal they see,
+   * not at the middle of its body.
+   */
+  covers(a, x, y, t) {
+    const p = this.posAt(a, t, this._hitPos);
+    if (Math.hypot(x - p.x, y - p.y) <= a.hitR) return true;
+    for (const [f, u, r] of SPECIES[a.species].parts) {
+      if (Math.hypot(x - (p.x + a.dir * f * a.scale), y - (p.y + u * a.scale)) <= r * a.scale) return true;
+    }
+    return false;
   }
 
   /**
@@ -353,8 +377,7 @@ class HuntRite {
     let hit = null;
     for (const a of this.animals) {
       if (a.state !== LIVE || (hit && hit.lane <= a.lane)) continue;
-      const p = this.posAt(a, this.t, this._pos);
-      if (Math.hypot(x - p.x, y - p.y) <= a.hitR) hit = a;
+      if (this.covers(a, x, y, this.t)) hit = a;
     }
     if (!hit) {
       this._events.push({ type: 'miss', x, y, i: -1 });
@@ -406,7 +429,7 @@ export const HUNT_RITE = {
   rules: [
     'Animals dash between bushes, near and far. Shoot them mid-run.',
     'If one reaches cover, a rival hunter gets it instead.',
-    'Each shot needs a reload, so make it count. 10 pays in full.',
+    'Every shot needs a reload. Take 10 animals for the full prize.',
   ],
   keys: [
     { keys: ['Mouse'], action: 'Aim' },

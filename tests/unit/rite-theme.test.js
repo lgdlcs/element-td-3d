@@ -43,7 +43,7 @@ import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
 import { PLATFORMS_RITE } from '../../src/minigames/rites/PlatformsRite.js';
 import { OFFROAD_RITE } from '../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
-import { readPalette as readHuntPalette } from '../../src/minigames/rites/HuntView.js';
+import { readPalette as readHuntPalette } from '../../src/minigames/rites/HuntPalette.js';
 import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
 
 /**
@@ -112,8 +112,8 @@ const CASES = [
     read: (i) => i._pal.c.accent,
   },
   {
-    // The 3D hunt reads its palette in the VIEW (the logic paints nothing), so
-    // the row reads what the view would paint the rivals' plates and pips with.
+    // The 3D hunt's VIEW paints (the logic paints nothing). It reads its
+    // colours through HuntPalette.js, the three-free reader this row calls.
     def: HUNT_RITE,
     token: '--rite-hunt-accent',
     probe: '#456789',
