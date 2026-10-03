@@ -15,12 +15,23 @@ outright, in one commit, and everything below describes what replaced them.
 |---|---|---:|---|---|---:|:--:|
 | escape from gay heaven | `heaven` | 20 s | steer a mote, pointer or `axis` | seconds survived | 121 | — |
 | Falling Platforms | `platforms` | 24 s | steer a marker, `axis` only | survival + who you outlasted | 41 | yes |
-| Lucky Shot | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
+| Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
 | Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
 | Game Hunt | `hunt` | 20 s | reaction shot | animals taken out of 8 | 69 | yes |
 | Fishing | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
 
-Full write-ups in §13. Files:
+Full write-ups in §13.
+
+> **THE MIGRATION TO 3D.** Every rite is being rebuilt as a three.js scene
+> drawn through one shared `Stage3D`. `luckyshot` is done and is the reference
+> (logic `LuckyShotRite.js`, view `LuckyShotView.js`). Until the other five are
+> converted the host runs **two render paths**: a def with a `view` is drawn in
+> 3D, a def without one is drawn by the legacy 2D `Painter`. When the last rite
+> has a view, `Painter.js`, `tests/unit/painter.test.js`, the `#rite-canvas`
+> element, `MinigameHost.#render2D` and the `draw` member of the instance
+> contract are **deleted in one commit** — not kept "just in case".
+
+Files:
 
 | Path | What it is |
 |---|---|
@@ -28,11 +39,13 @@ Full write-ups in §13. Files:
 | `src/minigames/schedule.js` | Which rite, which wave, which seed. **Pure.** |
 | `src/minigames/registry.js` | The one place a rite is announced. **Pure.** |
 | `src/minigames/rivals.js` | Deterministic opponents. **Pure.** |
-| `src/minigames/Painter.js` | The world-unit drawing API. Takes a 2D context. |
-| `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, loop, clock, click queue, result, payout. |
+| `src/minigames/Stage3D.js` | The one WebGL renderer, the field frame, the raycast pick, `RiteView`, lights, `Bursts`. Imports three. |
+| `src/minigames/Painter.js` | LEGACY. The 2D world-unit drawing API, for rites not yet converted. |
+| `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, intro card, loop, clock, click queue, result, payout. |
 | `src/minigames/rites/HeavenRite.js` | `heaven` — dodge everything pink. |
 | `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 dalles, they all fall. |
-| `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery. **The reference rite.** |
+| `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery's logic. **The reference rite.** |
+| `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
 | `src/minigames/rites/OffroadRite.js` | `offroad` — top-down rally, boost and bomb. |
 | `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot. |
 | `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot. |
@@ -42,7 +55,9 @@ Full write-ups in §13. Files:
 | `tests/unit/rite-theme.test.js` | Theme tokens reach the canvas. **`jsdom` env.** |
 | `tests/unit/helpers/rite-contract.js` | `assertRiteContract(def)` — the checklist every rite passes. |
 | `tests/unit/<id>-rite.test.js` | One per rite: the shared checklist plus what is specific to it. |
-| `tests/unit/minigame-host.test.js` | Host: leaks, credit, clock, click queue, shield. `jsdom` env. |
+| `tests/unit/minigame-host.test.js` | Host: leaks, credit, clock, intro card, click queue, shield, no-WebGL. `jsdom` env. |
+| `tools/rite-shots.mjs` | Screenshots of a rite (`--quick`, `--port`). §9. |
+| `tools/scratch/rite-frametime.mjs` | Board vs rite frame time, paired, plus "did the board render". §9. |
 
 ---
 
@@ -56,16 +71,32 @@ fresh **instance**. Nothing else is exported to the rest of the game.
 export const LUCKY_SHOT_RITE = {
   id: 'luckyshot',             // stable; feeds the RNG label
   name: 'Lucky Shot',          // display title
-  hint: 'Shoot the rows — left, right or Space, and count your rounds',
+  hint: 'Knock down the tin targets — every shot costs a round',
+  rules: [                     // REQUIRED: 2-4 lines on the intro card (§5)
+    'Shoot the targets sliding past: ducks are worth 1, rabbits 2, plates 3.',
+    'The golden one pays 4x, once. The figure with its hands up costs you 1.',
+    '24 rounds, and a miss spends one too. 38 points pays in full.',
+  ],
+  keys: [                      // REQUIRED: the intro card's key list (§5)
+    { keys: ['Mouse'], action: 'Aim' },
+    { keys: ['Click', 'Space'], action: 'Shoot' },
+  ],
   duration: 20,                // seconds on the clock
   create: () => new LuckyShotRite(),
+  view: () => import('./LuckyShotView.js'),   // the 3D view; a DYNAMIC import (§8)
   // All optional. See §8's "Dressing" and the MinigameDef typedef in contract.js.
   theme: 'luckyshot',          // selects the [data-rite] block in minigames.css
   eyebrow: 'Gallery',          // overline; the host appends ' · before wave N'
   abandonNote: 'You left the gallery',               // result card, on a skip
-  // cursor: 'none',           // omit to keep the stylesheet's crosshair
+  cursor: 'none',              // the view draws its own 3D crosshair
 };
 ```
+
+`view` is a function returning a **dynamic** `import()`. That is the whole
+trick that keeps `registry.js` and every `*Rite.js` importable in node: the
+`import()` expression is not evaluated until the host calls it, so three.js is
+never loaded by a unit test. Never write `import { createView } from
+'./XView.js'` at the top of a rite module.
 
 ```js
 interface MinigameInstance {
@@ -74,18 +105,46 @@ interface MinigameInstance {
   /** Called at a FIXED dt. Return true to end the rite early. */
   update(dt: number, input: MinigameInput): boolean | void;
 
-  /** Variable rate. MUST NOT mutate state. `alpha` is the step interpolation fraction. */
-  draw(g: Painter, alpha: number): void;
+  /** LEGACY 2D PATH ONLY — absent when the def has a `view`. Variable rate. MUST NOT mutate state. */
+  draw?(g: Painter, alpha: number): void;
 
   /** Pure. Safe to call at any time, any number of times. */
   score(): { ratio: number, headline: string, detail: string };
 
   teardown?(): void;
 
-  /** Optional. Returns AND CLEARS presentation cues; the host turns them into sound and shake. */
-  drainEvents?(): Array<{ type: string, x?: number, y?: number }>;
+  /** Optional. Returns AND CLEARS presentation cues; the host turns them into sound and
+   *  shake, then forwards each one to the view's cue(). Extra fields are allowed. */
+  drainEvents?(): Array<{ type: string, x?: number, y?: number, [k: string]: any }>;
 }
 ```
+
+```js
+// The module `def.view()` resolves to:
+export function createView(stage: Stage3D, rite: MinigameInstance): RiteView;
+
+class RiteView {                 // extend the base in src/minigames/Stage3D.js
+  scene: THREE.Scene;            // yours; disposed by dispose()
+  camera: THREE.PerspectiveCamera; // the STEADY camera — the pick raycasts through it
+  frame: FieldFrame;             // where the 16x9 field sits in your world (§2)
+  kick: { x, y, z, pitch, yaw }; // transient camera offset, applied for the draw only
+  layout(aspect: number): void;  // canvas resized: reframe (base does frameField)
+  render(alpha: number, dt: number): void; // READ the rite, move your meshes. Never write the rite.
+  cue(ev): void;                 // one drained event, after the host played its sound
+  dispose(): void;               // free every GPU resource you made (base: scene + own()ed)
+}
+```
+
+**Lifecycle, as the host runs it.** `open()` → `def.create()` → `init(ctx)` →
+intro card up → the host imports `Stage3D.js` (once per session) and
+`def.view()` in parallel → `createView(stage, instance)` → `stage.compile(view)`
+(shaders compile behind the card, not on the first played frame) → every frame:
+`layout()` if the canvas size changed, `render(alpha, dt)`, `stage.render(view)`
+→ drained events: sound, CSS kick, `view.cue(ev)` → `close()` → `view.dispose()`.
+`render` runs during the intro card and the result card too (with `rite.t`
+frozen), so the scene is visible behind both. All view calls run inside the
+host's `#guard`: a throw in view code abandons the rite exactly like a throw in
+`update`.
 
 ```js
 type MinigameCtx = {
@@ -239,6 +298,55 @@ Consequences, all of them load-bearing:
   pixel-sized tracking there renders one word across the whole field with the
   rest of the sentence clipped off — that happened, on the first screenshot.
 
+### 2.1 In 3D: the field frame, the pick, and depth
+
+A 3D rite's **logic is unchanged**: still 16 × 9 field units, centre origin, +y
+up, and every hit test is still written in field units. The view says where
+that rectangle lives in its world with a **field frame**
+(`Stage3D.js`):
+
+```
+world(x, y) = frame.origin + frame.ux * x + frame.uy * y
+```
+
+| preset | field x → | field y (+up) → | gameplay plane | for |
+|---|---|---|---|---|
+| `FRAMES.upright` | world +X | world +Y | z = 0, facing +Z | galleries, side views (luckyshot, hunt, fishing, heaven) |
+| `FRAMES.ground` | world +X | world **−Z** | y = 0, facing +Y | top-down / tilted arenas (platforms, offroad) |
+
+1 field unit = 1 world unit in both presets. A custom frame is legal: `ux` and
+`uy` must be orthogonal and the same length.
+
+**The pick.** The host converts every pointer event with
+`stage.pick(view, clientX, clientY, rect)`: a ray from the view's **steady**
+camera through the pixel, intersected with the gameplay plane, converted back
+to field units. So `input.x/y` and every `PointerClick` are field units exactly
+as before, a 2-pixel error on a big screen is the same field distance as on a
+small one, and `fieldToClient` is its exact inverse (tests and tools aim with
+`host.fieldToClient(x, y)`, never with a copy of the projection).
+
+**The framing.** `frameField(camera, frame, aspect, { fov, tilt, margin })`
+(called by `RiteView.layout`) bisects the camera distance until **all four
+field corners** are inside the view, at any aspect, for any tilt. Positive
+`tilt` moves the camera toward field −y (behind the near edge of a ground
+frame); negative tilt looks down at an upright frame from above. Things you
+put outside the field (an awning, a counter, the sky) may be cropped; the field
+never is.
+
+**Depth without moving the hit test.** Something drawn *behind* (or in front
+of) the gameplay plane would no longer cover the pixels the hit test uses —
+unless it sits on the camera ray through its field position.
+`placeOnRay(camera, frame, x, y, depth, out)` puts it there and returns the
+scale `k` to apply to its size; a disc of field radius `r` drawn with world
+radius `r * k` covers exactly the screen disc the logic tests. Because `k`
+depends only on `depth`, the mapping is affine per depth: placing the foot of a
+target with `placeOnRay` and offsetting by `r * k` along `uy` lands exactly on
+its centre. `luckyshot` puts its three rows at three real depths this way.
+
+**Never shake `view.camera`.** Recoil and impact go in `view.kick`; the stage
+adds it for the draw and removes it afterwards, so the pick never moves. The
+CSS stage kick (§8, presentation cues) still applies on top.
+
 ---
 
 ## 3. Randomness — the determinism contract
@@ -309,18 +417,44 @@ Corollaries:
 
 ## 5. What the host guarantees
 
-- **Five seconds before anything happens.** The host opens in `mode:
-  'countdown'` and announces the rite by name over its own opening position —
-  five, four, three, two, one, *Go* — and only then starts the clock and the
-  first fixed step. Your `init()` has already run, so what is announced over is
-  the field the player is about to be handed; your `update()` has not, so the
-  hunt's animals are not already crossing while the hint is still being read.
-  Nothing about it reaches you: the pre-roll spends no `dt`, no `duration`, and
-  no `rand()`. It is **skippable** by the same commit that plays the rite
-  (Space / Enter / a press on the stage), and that press is **not delivered as
-  a commit** — it starts the game, it does not fire the first shot. A blur
-  during the count suspends it exactly as it suspends play, and Escape (twice)
-  abandons a rite that never began, for nothing.
+- **An intro card before anything happens.** The host opens in `mode:
+  'countdown'` and shows a card over the field: *How to play*, the rite's
+  name, its `rules` (2–4 lines) and its `keys` (keycaps from `ui/uikit.js
+  key()`, the same caps as the rest of the game), and "Space or click to
+  start · starts in 10". It starts on its own after **10 s** (the last three
+  seconds beep), then flashes *Go*. Your `init()` has already run and your view
+  is already drawing, so the card sits over the scene the player is about to be
+  handed; your `update()` has not run, so nothing is moving yet. Nothing about
+  it reaches you: no `dt`, no `duration`, no `rand()`. It is **skippable** by
+  the same commit that plays the rite (Space / Enter / a press on the stage),
+  and that press is **not delivered as a commit** — it starts the game, it does
+  not fire the first shot. A blur suspends it exactly as it suspends play, and
+  Escape (twice) abandons a rite that never began, for nothing.
+- **`rules` and `keys` are required, and tested.** `tests/unit/minigames.test.js`
+  holds every registered def to 2–4 non-empty rules of at most 90 characters,
+  and to key labels the host really binds: `↑ ↓ ← →`, `W/Z`, `A/Q`, `S`, `D`
+  (letters are bound by `e.code`, so one physical key is written as its QWERTY
+  and AZERTY glyphs), `Space`, `Enter`, `1`–`6`, `Click`, `Right-click`,
+  `Mouse`. UI text is English, like the rest of the game. Keep a rule to one
+  sentence: if it needs a paragraph, the mechanic is too complicated for a
+  20-second party game.
+- **One 3D stage, and the board stops rendering behind it.** A def with a
+  `view` is drawn through one host-owned `Stage3D`: one WebGL2 context, created
+  lazily on the first 3D rite and reused for every rite after it (never a
+  context per rite), DPR capped at 1.5 (1.25 on `low`, 1 and no MSAA on
+  `potato`), no post chain, one optional shadow map (`stage.shadows`, off on
+  `low`/`potato`), a shared PMREM room environment (`stage.environment()`).
+  While it is up, `host.ownsFrame` is true and **the board is not rendered**:
+  `Game.frame` skips its scene updates and `pipeline.render` (the canvas keeps
+  its last frame behind the veil), and main.js stops feeding the resolution
+  controllers, so a rite never reads as "the board got slow". Rendering resumes
+  the frame after close. Measured on this repo's Linux box (GTX 970, 1600×900,
+  `tools/scratch/rite-frametime.mjs`): luckyshot 5.1 ms median against the bare
+  board's 6.4 ms, with 0 board renders during the rite; a legacy 2D rite still
+  pays for both.
+- **No WebGL, no throw.** In jsdom, node, or a browser without WebGL2 the host
+  never imports the stage or the view; the rite's logic, clock and payout run
+  blind. `tests/unit/minigame-host.test.js` holds that.
 - **A veil and a keyboard shield.** Every game key is swallowed at capture on
   `document` while a rite is up. Without it, Space — this overlay's primary verb
   — sends the next wave from behind the veil. That is a real, measured incident
@@ -339,11 +473,14 @@ Corollaries:
 - **A blur costs nothing.** `blur` / `visibilitychange` / `pagehide` suspend the
   clock and the logic; coming back costs a visible 1.2 s grace and no score. The
   keypress that wakes it is discarded, not counted as a commit.
-- **Resize safety.** The canvas resizes (observed, not polled) and the letterbox
-  is recomputed. Your logic never notices.
+- **Resize safety.** The stage resizes (observed, not polled): the 2D letterbox
+  is recomputed, or the 3D view's `layout(aspect)` reframes the camera. Your
+  logic never notices.
 - **1× speed.** The rite runs from the variable-rate half of `Game.frame`, so
   `state.speed` (1×/2×/3×) does not reach it.
-- **A crash is contained.** An exception from your `update` or `draw` is caught,
+- **A crash is contained.** An exception from your `update`, `draw`, or any view
+  call (`createView`, `layout`, `render`, `cue`), or a view module that fails to
+  load, is caught,
   reported through `console.error`, and the rite is abandoned with zero reward —
   the run continues. Without that wall, a throw propagates into main.js's rAF
   loop and *kills the whole game*. It is caught, not swallowed: the e2e suite
@@ -358,9 +495,9 @@ Corollaries:
 - **No `alpha` interpolation for free.** `draw(g, alpha)` gives you the fraction
   into the next step; interpolating with it is your job, and most rites do not
   need to (16.6 ms of positional lag is invisible at these speeds).
-- **No guarantee `draw` is called at all.** A 0×0 canvas (an overlay still
-  transitioning in, a `display:none` ancestor) skips rendering entirely. Never
-  put logic in `draw`.
+- **No guarantee `draw` / `render` is called at all.** A 0×0 stage (an overlay
+  still transitioning in, a `display:none` ancestor), a view still loading, or
+  no WebGL skips rendering entirely. Never put logic in a view.
 - **No cleanup of your own timers.** Do not create any. Accumulate `dt`.
 
 ---
@@ -465,6 +602,11 @@ one rite and is now true of none.
 
 ## 8. Writing a rite
 
+A rite is **two files**: `XRite.js`, the pure logic (no three, no DOM, node-
+testable, everything below), and `XView.js`, its 3D view (§8.1). The logic
+never imports the view; the def points at it with `view: () =>
+import('./XView.js')`.
+
 **Read `src/minigames/rites/LuckyShotRite.js` first.** It is the reference on
 purpose, and the reasons are the reasons to copy it: it exercises the click queue
 (the one part of the input contract with a sharp edge), it does **not** use
@@ -504,14 +646,6 @@ class VigilRite {
     if (this.t >= DURATION) return true;      // end early rather than wait for the clock
   }
 
-  draw(g) {
-    g.circle(this.cx, this.cy, R, { stroke: '#e5bd79', width: 0.05 });
-    g.save().add();
-    g.halo(this.cx, this.cy, R * 1.8, '229,189,121', 0.06 + 0.14 * this.score().ratio);
-    g.restore();
-    g.text(`${Math.round(this.score().ratio * 100)}%`, 0, -3.6, { size: 0.5, fill: '#a3a9bb' });
-  }
-
   score() {
     const ratio = clamp(this.held / DURATION, 0, 1);
     return {
@@ -529,8 +663,11 @@ export const VIGIL_RITE = {
   id: 'vigil',
   name: 'The Vigil',
   hint: 'Keep the cursor inside the sigil',
+  rules: ['Keep the cursor inside the glowing ring.', 'Every second inside it pays.'],
+  keys: [{ keys: ['Mouse'], action: 'Move the cursor' }],
   duration: DURATION,
   create: () => new VigilRite(),
+  view: () => import('./VigilView.js'),   // §8.1
 };
 
 export { VigilRite, RAND_CALLS, DURATION };
@@ -576,6 +713,77 @@ export const MINIGAME_IDS = Object.freeze([
 game's *art* vocabulary (`src/world/env/*`, `TowerDefs.js`, `ProceduralTextures.js`,
 `Inspector.js`). None of those hits are minigames. A blind `sed` breaks the
 rendering.
+
+### 8.1 Writing a 3D view
+
+**Read `src/minigames/rites/LuckyShotView.js` second.** It is the reference
+view, and its docblock lists the four things to copy. The shape:
+
+```js
+// src/minigames/rites/VigilView.js
+import * as THREE from 'three';
+import { RiteView, FRAMES, addStandardLights, Bursts } from '../Stage3D.js';
+
+class VigilView extends RiteView {
+  constructor(stage, rite) {
+    // frame + framing: the field on the XY plane, camera looking slightly down.
+    super(stage, rite, { frame: FRAMES.upright, fov: 40, tilt: -8, background: 0x07090d });
+    this.scene.environment = stage.environment();          // shared; never dispose it
+    addStandardLights(this.scene, { shadow: stage.shadows });
+    // Build EVERYTHING here, once: meshes, materials, textures, pools.
+    this.ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.06, 12, 64),
+      new THREE.MeshStandardMaterial({ color: 0xe5bd79, emissive: 0x3a2a10 }));
+    this.ring.position.copy(this.world(rite.cx, rite.cy));  // field -> world
+    this.sparks = new Bursts({ count: 120 });
+    this.scene.add(this.ring, this.sparks.points);
+  }
+
+  cue(ev) {                                                 // after the host played the sound
+    if (ev.type === 'good') this.sparks.emit(this.world(this.rite.cx, this.rite.cy), 20);
+  }
+
+  render(alpha, dt) {                                       // READ the rite; move your meshes
+    this.ring.material.emissiveIntensity = 0.4 + this.rite.score().ratio;
+    this.ring.rotation.z += dt * 0.5;                       // view-owned state is fine
+    this.sparks.update(dt);
+  }
+}
+
+export function createView(stage, rite) { return new VigilView(stage, rite); }
+```
+
+The rules, each of which the reference view follows and says why:
+
+1. **Read, never write, the rite.** `render` samples the rite's state and pure
+   functions at `t = rite.t + alpha * MINIGAMES.dt`. The view may keep and
+   mutate its OWN presentation state (particles, flash timers, a "hit at"
+   table filled from cues); it may never assign to the instance. Presentation
+   that used to live in a 2D rite's `update` (sparks, pops, flash, recoil)
+   moves to the view and is driven by cues — `luckyshot` emits one cue per
+   round carrying `{ type, x, y, i, value }`.
+2. **Hit tests stay in field units.** Anything the player aims at is placed
+   with `world(x, y)` on the gameplay plane or `placeOnRay` at a depth (§2.1),
+   sized from the same radius the logic tests. A decoration may never cover a
+   target's hit disc (the boards under `luckyshot`'s rails stop at the rail).
+3. **Build once, never allocate per frame, never add a material mid-rite.** A
+   new material is a shader compile on the frame it first appears; the host
+   compiles what is in the scene at creation, behind the intro card. Swap
+   between pre-built materials instead, toggle `visible`, animate intensity.
+4. **A fixed light count.** `addStandardLights` gives a hemisphere fill and a
+   key; add point lights if you need them but keep them in the scene at
+   intensity 0 when idle — toggling `visible` changes the count and recompiles
+   every lit material (docs/PERF_BUDGET.md, Round 11). At most one shadow
+   caster, and only when `stage.shadows`.
+5. **Dispose what you made.** `RiteView.dispose()` frees everything reachable
+   from the scene; register anything else (a material you swap out, a texture
+   cache) with `this.own(x)`. Never dispose `stage.environment()`.
+6. **Never shake `this.camera`.** Use `this.kick`.
+7. **No new DOM.** HUD text a rite needs goes into the scene (a `CanvasTexture`
+   repainted only when its content changes — see `#paintHud`); the clock, the
+   intro and the result card are the host's.
+8. **Colours.** Read CSS tokens once in the constructor (`getComputedStyle(
+   document.documentElement)`, with literal fallbacks) for anything the chrome
+   also shows; material colours are art and may be literals.
 
 ### Dressing: `data-rite` and the optional def fields
 
@@ -623,14 +831,13 @@ Rites read their palette tokens the way `Lottery.js:722-734` does: one
 > the root moves what the canvas paints, and the value the canvas paints is the
 > value written in the shipped stylesheet.
 >
-> **Two values deliberately stay literal, and both are arguments about kind
+> **Some values deliberately stay literal, and each is an argument about kind
 > rather than convenience.** `HeavenRite`'s two pinks are the KILL RULE, not
 > paint — "pink is the only saturated magenta on the stage" is an accessibility
 > claim, and a value another theme block can redefine is a claim nothing
-> enforces. `LuckyShotRite.BOOTH_INK` tracks the dark end of `--rite-stage-bg`,
-> which is a multi-stop gradient no canvas can resolve. Same for `HuntRite`'s
-> pelt and ember: they are the SUBJECT, and retuning the room must not move the
-> thing you are aiming at.
+> enforces. Same for `HuntRite`'s pelt and ember: they are the SUBJECT, and
+> retuning the room must not move the thing you are aiming at. (A 3D view's
+> material colours are art and are literals; see §8.1 rule 8.)
 
 ### Presentation cues
 
@@ -784,6 +991,31 @@ Every message names the rite, the wave, the measurement and the requirement. Do
 not tune by scaling `score()` — that moves the problem onto the result card,
 where the headline says "Flawless" over a 0.54. Tune the game.
 
+### What a 3D rite adds to its tests
+
+- `assertRiteContract` accepts an instance without `draw` when the def has a
+  `view` (and requires `view` to be a function). Everything else is unchanged:
+  the logic is what the checklist tests, in node.
+- **The view is not unit-tested.** It imports three and needs WebGL. What the
+  logic owes it is tested instead: `luckyshot` pins "one cue per round, with
+  `x, y, i, value`", because the view starts every effect from it.
+- **Look at it.** `node tools/rite-shots.mjs --rite <id> --port <port> --quick
+  --out <dir>` writes the intro card, a frame on a shot, a mid-play frame, a
+  stage-only close-up and the result card in ~15 s, and prints console errors.
+  Read the PNGs. Run your own dev server on your own port
+  (`npx vite --port 5281 --strictPort`) so parallel agents do not share one.
+- **Measure it.** `node tools/scratch/rite-frametime.mjs --rite <id> --port
+  <port> --q high` prints board vs rite median/p95 frame time on the same page
+  and how many times the board rendered during the rite (must be 0 for a 3D
+  rite).
+- **e2e on your port:** `E2E_PORT=5281 npx playwright test tests/e2e/rites.spec.js`.
+  The config picks ANGLE per platform (Metal on macOS, desktop GL elsewhere;
+  override with `E2E_ANGLE`) — on Linux without it Chromium silently falls
+  back to SwiftShader and a rite renders at a few frames a second.
+  `rites.spec.js` counts `host.renderedFrames` (both paths) and waits for
+  `host.ownsFrame` before measuring a 3D rite; aim through
+  `host.fieldToClient(x, y)`.
+
 The host's own guarantees are covered by `tests/unit/minigame-host.test.js` and
 do not need repeating per rite: the click queue reaching sub-step 1 only, a
 right-click producing `button: 2` without touching `action`, `contextmenu` being
@@ -841,11 +1073,11 @@ clicks this step, then…" fires spuriously on a slow frame.
 **Do not put gameplay in `draw`.** It is skipped on a zero-sized canvas and
 called a variable number of times per step. Keep particle simulation in
 `update` for exactly this reason, even though particles are purely cosmetic. If
-you need per-frame scratch space, put the buffer at **module** scope, not on
-`this` — `draw` must not mutate the instance, and a test proves it. That is legal
-only because the host draws exactly one rite at a time, on one thread; both
-`luckyshot` and `offroad` say so at the buffer's declaration rather than leaving
-it to be discovered.
+you need per-frame scratch space in a legacy `draw`, put the buffer at
+**module** scope, not on `this` — `draw` must not mutate the instance, and a test
+proves it. That is legal only because the host draws exactly one rite at a time,
+on one thread; `offroad` says so at the buffer's declaration. A 3D view has no
+such problem: its scratch lives on the view, which is not the rite.
 
 **Do not read `input.x/y` when `input.inside` is false.** The host leaves the
 last known position there rather than resetting it, deliberately — a reset to the
@@ -986,11 +1218,18 @@ You and three rivals stand on them and **the only verb is where you stand**.
 
 ### `luckyshot` — Lucky Shot · 20 s · 24 draws · no rivals · **the reference**
 
-A carnival booth. You do not move. Three rows of creep cut-outs track across at
-different speeds and depths; the back rows are smaller, faster and worth more
-(1 / 2 / 3). One of the eighteen is **golden** (×3, and it stays down nearly
-three times as long, or the optimal line would be to camp its respawn) and one is
-a **bystander** (−1, the only way to lose points).
+A carnival booth, **in 3D**: a striped awning with a string of bulbs, a back
+wall of painted planks, a counter with the rounds standing on it in brass, and
+a rifle that swings to the crosshair and kicks. You do not move. Three rows of
+tin targets ride brass rails at three real depths: **tin ducks** in front (1),
+**rabbits** behind them (2), **clay plates** at the back (3) — smaller, faster
+and worth more as they recede, and the value is also painted on each one. One
+of the eighteen is **golden** (×4 its row, **once**: the prize is spent on the
+first knockdown and it comes back up as an ordinary target) and one is a
+**bystander** — a cardboard figure with its hands up (−1, the only way to lose
+points). A hit target falls back on its rail (a plate shatters) and flips back
+up; a miss leaves a bullet hole in the back wall. The gameplay numbers are the
+2D version's, unchanged, so the calibration curve did not move.
 
 - **Controls.** Aim with the pointer, fire with **left, right or Space** — one
   verb, three inputs (§1.2). It reads `input.clicks` and nothing else, never
