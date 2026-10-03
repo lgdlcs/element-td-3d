@@ -14,6 +14,16 @@ import { defineConfig, devices } from '@playwright/test';
  * webServer reuses the dev server if one is already up (there usually is one on
  * 5273 during development) and only spawns its own when the port is cold.
  */
+/**
+ * PORT AND GPU ARE PER MACHINE. `E2E_PORT` lets several checkouts (or agents)
+ * each run their own dev server; it defaults to the 5273 everyone else assumes.
+ * ANGLE's backend is per platform: Metal on macOS, desktop GL elsewhere — on
+ * Linux, Metal does not exist and Chromium silently drops to SwiftShader, which
+ * renders the board a couple of orders of magnitude slower.
+ */
+const PORT = Number(process.env.E2E_PORT ?? 5273);
+const ANGLE = process.env.E2E_ANGLE ?? (process.platform === 'darwin' ? 'metal' : 'gl');
+
 export default defineConfig({
   testDir: 'tests/e2e',
   testMatch: '**/*.spec.js',
@@ -41,7 +51,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
 
   use: {
-    baseURL: 'http://localhost:5273',
+    baseURL: `http://localhost:${PORT}`,
     viewport: { width: 1600, height: 900 },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -55,7 +65,7 @@ export default defineConfig({
         viewport: { width: 1600, height: 900 },
         launchOptions: {
           args: [
-            '--use-angle=metal',
+            `--use-angle=${ANGLE}`,
             '--enable-unsafe-swiftshader',
             '--ignore-gpu-blocklist',
             '--mute-audio',
@@ -67,8 +77,8 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5273',
+    command: `npx vite --port ${PORT} --strictPort`,
+    url: `http://localhost:${PORT}`,
     reuseExistingServer: true,
     timeout: 120000,
   },
