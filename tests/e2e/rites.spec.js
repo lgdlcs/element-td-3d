@@ -96,7 +96,7 @@ async function openRite(page, id) {
     [id, WAVE, OCCURRENCE],
   );
   await page.waitForSelector('#rite.open', { timeout: 15000 });
-  // The five-second pre-roll (MinigameHost COUNTDOWN) runs before the rite is
+  // The intro card (MinigameHost COUNTDOWN) runs before the rite is
   // stepped at all, so everything below — draws, the rite's own clock, the
   // payout — is measured from the moment the field actually goes live. Skipped
   // rather than waited out: the host hands over on a commit, which is what a
@@ -108,6 +108,12 @@ async function openRite(page, id) {
     }));
   });
   await page.waitForFunction(() => window.__game.minigames.mode === 'play', null, { timeout: 15000 });
+  // A 3D rite's view arrives through a dynamic import; until it has, nothing is
+  // drawn. Waited for here so "it runs" below measures the rite, not the load.
+  await page.waitForFunction(() => {
+    const h = window.__game.minigames;
+    return !h.def?.view || h.ownsFrame || !h.isOpen;
+  }, null, { timeout: 15000 });
   return opened;
 }
 
@@ -132,14 +138,15 @@ async function instrument(page) {
     const g = window.__game;
     const inst = g.minigames.instance;
     window.__rite = {
-      draws: 0,
+      // Frames the host actually drew, through whichever path the rite uses
+      // (a 3D view or the legacy Painter). A throw in either is caught by
+      // #guard and would stop this counter; the console assertion catches it.
+      frames0: g.minigames.renderedFrames,
       credits: [],
       t0: inst.t,
       ledger0: g.state.goldEarned.minigame ?? 0,
       purse0: g.state.gold,
     };
-    const draw = inst.draw.bind(inst);
-    inst.draw = (painter, alpha) => { window.__rite.draws++; return draw(painter, alpha); };
     const addGold = g.addGold.bind(g);
     g.addGold = (amount, reason) => {
       window.__rite.credits.push({ amount, reason });
@@ -270,7 +277,7 @@ test.describe('rites — every minigame opens, runs, scores, pays once and close
         .toBeLessThan(MAX_RUN_FRAMES);
       const midway = await page.evaluate(() => ({
         t: window.__game.minigames.instance?.t ?? null,
-        draws: window.__rite.draws,
+        draws: window.__game.minigames.renderedFrames - window.__rite.frames0,
         remaining: window.__game.minigames._remaining,
         t0: window.__rite.t0,
       }));
@@ -279,7 +286,7 @@ test.describe('rites — every minigame opens, runs, scores, pays once and close
       // draw() runs inside #guard, so a throw would be swallowed into
       // console.error and the counter would stop climbing. Both halves are
       // asserted: it was reached, and (below) nothing was logged.
-      expect(midway.draws, `${id}: draw() was never reached`).toBeGreaterThan(0);
+      expect(midway.draws, `${id}: no frame of the rite was ever drawn`).toBeGreaterThan(0);
       // The host's clock moved too, which is what makes the cut below a cut
       // rather than the only thing that ever touched _remaining.
       expect(midway.remaining).toBeLessThan(opened.remaining);

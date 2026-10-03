@@ -237,13 +237,4 @@ describe('the values that deliberately stay literal', () => {
     expect(spawn(HEAVEN_RITE)._palette.accent).toBe('#ff4fd8');
   });
 
-  it("luckyshot's booth ink has no token because a gradient stop is not one", () => {
-    // The stage backdrop is `--rite-stage-bg`, a multi-stop gradient on `#rite`.
-    // A canvas cannot resolve a gradient, so the dark end of it is tracked by
-    // hand in the rite. Named rather than scattered, which is what keeps it one
-    // exception instead of four literals.
-    const js = src('src/minigames/rites/LuckyShotRite.js');
-    expect(js).toContain("const BOOTH_INK = '#0b0806';");
-    expect(CSS).toContain('#0a0806');   // the gradient stop it tracks, still there
-  });
 });

@@ -40,10 +40,10 @@
  * `waitForTimeout` in this file. `RESUME_GRACE` is 1.2 s of RITE time, which is
  * where the previous version of this spec was flaky.
  *
- * NO SECOND LETTERBOX. World coordinates become client pixels through the host's
- * own `painter.toClient` plus the canvas's `getBoundingClientRect`, never through
- * a copy of the transform written here — a copy is free to drift from the
- * original and to agree with itself while both are wrong.
+ * NO SECOND TRANSFORM. World coordinates become client pixels through the host's
+ * own `fieldToClient` (a projection through the 3D view's camera, the inverse of
+ * the raycast pick), never through a copy written here — a copy is free to
+ * drift from the original and to agree with itself while both are wrong.
  *
  * WHY THE AIM IS EXACT AND NOT APPROXIMATE. `LuckyShotRite.t` only ever advances
  * inside a fixed sub-step, and a queued click is handed to the FIRST sub-step
@@ -66,6 +66,17 @@ async function openRite(page, wave = 20) {
   await page.waitForFunction(
     () => window.__game.minigames.instance?.targets?.length > 0,
     null, { timeout: 10000 });
+  // Past the intro card: a press on the stage starts the rite and is not
+  // delivered as a shot (MinigameHost #beginPlay), so no round is spent here.
+  await page.evaluate(() => {
+    window.__game.minigames.$stage.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, clientX: 0, clientY: 0, button: 0, buttons: 1,
+      pointerId: 1, pointerType: 'mouse', isPrimary: true,
+    }));
+  });
+  await page.waitForFunction(() => window.__game.minigames.mode === 'play', null, { timeout: 10000 });
+  // The 3D view, and with it the raycast pick, is a dynamic import.
+  await page.waitForFunction(() => window.__game.minigames.ownsFrame, null, { timeout: 15000 });
 }
 
 const host = (page, fn) => page.evaluate(fn);
@@ -123,7 +134,7 @@ async function spinFrames(page, n = 60) {
  * Each round: wait a frame, ask the instance where a target WILL be at the exact
  * time the click will resolve, verify with `hitIndex` that the shot resolves
  * against THAT target and not against a nearer rank overlapping it, convert
- * through the host's own painter, and dispatch a real `pointerdown` on the
+ * through the host's own `fieldToClient`, and dispatch a real `pointerdown` on the
  * canvas. Then wait — in frames — for `shots` to tick, so the next aim is
  * computed with the previous hit already registered and two rounds can never
  * pile into one sub-step and fight over the same target.
@@ -168,13 +179,15 @@ async function playRite(page, maxShots) {
 
       const x = inst.xAt(pick, t);
       const y = inst.yAt(pick);
-      // THE HOST'S OWN TRANSFORM. Never a second copy of the letterbox maths.
-      const rect = h.$canvas.getBoundingClientRect();
-      const c = h.painter.toClient(x, y);
-      h.$canvas.dispatchEvent(new PointerEvent('pointerdown', {
+      // Read BEFORE the shot: the golden's prize is spent by the hit and its
+      // value drops back to its row's, so reading it afterwards under-counts.
+      const value = inst.targets[pick].value;
+      // THE HOST'S OWN TRANSFORM. Never a second copy of the projection.
+      const c = h.fieldToClient(x, y);
+      h.$gl.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true,
-        clientX: rect.left + c.x,
-        clientY: rect.top + c.y,
+        clientX: c.x,
+        clientY: c.y,
         button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
       }));
 
@@ -185,7 +198,7 @@ async function playRite(page, maxShots) {
       }
       out.push({
         i: pick,
-        value: inst.targets[pick].value,
+        value,
         shots: inst.shots,
         hits: inst.hits,
         points: inst.points,
@@ -210,13 +223,20 @@ test.describe('the rite host', () => {
     await openRite(page);
     expect(await host(page, () => window.__game.state.phase)).toBe('minigame');
 
-    // The 3D board is still being rendered behind the veil — the overlay is a
-    // surface over a live scene, not a replacement for it. `Game.elapsed` is
-    // advanced by `frame()` above every phase check, so it moves iff the loop
-    // that draws the board is running.
+    // The loop keeps turning behind the veil (`Game.elapsed` is advanced by
+    // `frame()` above every phase check), but the BOARD IS NOT RENDERED while
+    // the rite's 3D stage owns the frame: two full 3D scenes at once is what a
+    // modest machine cannot afford. Counted at the pipeline, the only door.
+    await page.evaluate(() => {
+      const p = window.__game.pipeline;
+      window.__boardRenders = 0;
+      const render = p.render.bind(p);
+      p.render = (...a) => { window.__boardRenders++; return render(...a); };
+    });
     const elapsed0 = await host(page, () => window.__game.elapsed);
     await spinFrames(page, 20);
     expect(await host(page, () => window.__game.elapsed)).toBeGreaterThan(elapsed0);
+    expect(await host(page, () => window.__boardRenders), 'the board rendered behind a 3D rite').toBe(0);
 
     // A cell that is free, buildable, and — the point — underneath the overlay.
     const pt = await cellToScreen(page, 14, 8);
@@ -246,6 +266,9 @@ test.describe('the rite host', () => {
     // would be proving nothing but a bad coordinate.
     await host(page, () => window.__game.minigames.close());
     await spinUntil(page, "g.state.phase === 'prep'");
+    // ...and it resumes the frame the overlay is gone.
+    await spinFrames(page, 3);
+    expect(await host(page, () => window.__boardRenders), 'the board never resumed rendering').toBeGreaterThan(0);
     await page.evaluate(() => window.__game.setBuildSelection('fire'));
     await clickCell(page, 14, 8);
     await expect.poll(() => page.evaluate(() => window.__game.towers.towers.length)).toBe(1);
@@ -417,8 +440,13 @@ test.describe('the rite host', () => {
 
     // ---- blur --------------------------------------------------------------
     await spinUntil(page, 'h._remaining < h.def.duration');
-    const at = await host(page, () => window.__game.minigames._remaining);
-    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    // Read and blurred in ONE evaluate: across two round trips a frame (a fixed
+    // step) can land in between, and on a GPU-backed run it does.
+    const at = await page.evaluate(() => {
+      const r = window.__game.minigames._remaining;
+      window.dispatchEvent(new Event('blur'));
+      return r;
+    });
     expect(await host(page, () => window.__game.minigames._suspended)).toBe(true);
     await expect(page.locator('#rite-suspend')).toBeVisible();
 
@@ -457,12 +485,13 @@ test.describe('the rite host', () => {
     expect(await host(page, () => window.__game.minigames.instance.shots)).toBe(shotsBefore);
 
     // ---- a hidden tab, which need not fire blur at all ---------------------
-    const at2 = await host(page, () => window.__game.minigames._remaining);
-    await page.evaluate(() => {
+    const at2 = await page.evaluate(() => {
+      const r = window.__game.minigames._remaining;
       // `document.hidden` is a getter on Document.prototype; an own property
       // shadows it for exactly as long as this test needs and is deleted below.
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
       document.dispatchEvent(new Event('visibilitychange'));
+      return r;
     });
     expect(await host(page, () => window.__game.minigames._suspended)).toBe(true);
     await spinFrames(page, 60);
@@ -473,8 +502,8 @@ test.describe('the rite host', () => {
     // not a strike either.
     const woke2 = await page.evaluate(() => {
       const h = window.__game.minigames;
-      const r = h.$canvas.getBoundingClientRect();
-      h.$canvas.dispatchEvent(new PointerEvent('pointerdown', {
+      const r = h.$gl.getBoundingClientRect();
+      h.$gl.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
         button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
       }));
@@ -493,44 +522,54 @@ test.describe('the rite host', () => {
     expect(errors, errors.join('\n')).toEqual([]);
   });
 
-  test('resizing moves the letterbox and nothing else', async ({ page }) => {
+  test('resizing reframes the camera and nothing else', async ({ page }) => {
     const { errors } = await startRun(page, { freeze: false });
     await openRite(page);
-    await spinUntil(page, 'h.painter.ppu > 0');
+    await spinUntil(page, 'h._stage.cssW > 0');
 
     const before = await host(page, () => {
-      const p = window.__game.minigames.painter;
-      const i = window.__game.minigames.instance;
-      return { ppu: p.ppu, x: i.xAt(0, 5), y: i.yAt(0), hit: i.hitIndex(i.xAt(0, 5), i.yAt(0), 5) };
+      const h = window.__game.minigames;
+      const i = h.instance;
+      return { w: h._stage.cssW, x: i.xAt(0, 5), y: i.yAt(0), hit: i.hitIndex(i.xAt(0, 5), i.yAt(0), 5) };
     });
 
     await page.setViewportSize({ width: 900, height: 1200 });
-    await spinUntil(page, `h.painter.cssW === h.$canvas.clientWidth && h.painter.ppu !== ${before.ppu}`);
+    await spinUntil(page, `h._stage.cssW === h.$stage.clientWidth && h._stage.cssW !== ${before.w}`);
 
+    /**
+     * THE INVARIANT IS THE FIELD, NOT THE PIXELS. On any viewport: the field's
+     * centre projects to the canvas centre, all four corners of the 16x9 field
+     * land inside the canvas (so every target the rite can place is on
+     * screen), and the raycast pick is the exact inverse of the projection —
+     * a press at the pixel where field point P is drawn reaches the rite as P.
+     */
     const geom = await host(page, () => {
-      const p = window.__game.minigames.painter;
+      const h = window.__game.minigames;
+      const r = h.$gl.getBoundingClientRect();
+      const pts = [[0, 0], [-8, -4.5], [8, -4.5], [8, 4.5], [-8, 4.5], [3.2, -1.7]];
       return {
-        w: p.cssW, h: p.cssH, ppu: p.ppu,
-        centre: p.toField(p.cssW / 2, p.cssH / 2),
-        corner: p.toField(p.cssW, 0),
+        rect: { l: r.left, t: r.top, r: r.right, b: r.bottom, cx: r.left + r.width / 2, cy: r.top + r.height / 2 },
+        proj: pts.map(([x, y]) => {
+          const c = h.fieldToClient(x, y);
+          const back = h._stage.pick(h._view, c.x, c.y, r);
+          return { x, y, c, back };
+        }),
       };
     });
-    // THE INVARIANT IS THE LETTERBOX, not which axis wins it — the stage has its
-    // own aspect-ratio and max-height, so either can bind and the first version
-    // of this assertion guessed wrong. What must hold on every viewport: a
-    // UNIFORM scale (so circles stay circles and the pointer travels the same
-    // distance per world unit on both axes), the origin at the centre, and the
-    // whole 16x9 field inside the canvas.
-    expect(geom.ppu).toBeCloseTo(Math.min(geom.w / 16, geom.h / 9), 6);
-    expect(geom.centre.x).toBeCloseTo(0, 6);
-    expect(geom.centre.y).toBeCloseTo(0, 6);
-    expect(Math.abs(geom.corner.x)).toBeGreaterThanOrEqual(8 - 1e-6);
-    expect(Math.abs(geom.corner.y)).toBeGreaterThanOrEqual(4.5 - 1e-6);
+    expect(geom.proj[0].c.x).toBeCloseTo(geom.rect.cx, 0);
+    expect(geom.proj[0].c.y).toBeCloseTo(geom.rect.cy, -1);
+    for (const p of geom.proj) {
+      expect(p.c.x, `field (${p.x}, ${p.y}) left of the canvas`).toBeGreaterThanOrEqual(geom.rect.l - 0.5);
+      expect(p.c.x, `field (${p.x}, ${p.y}) right of the canvas`).toBeLessThanOrEqual(geom.rect.r + 0.5);
+      expect(p.c.y, `field (${p.x}, ${p.y}) above the canvas`).toBeGreaterThanOrEqual(geom.rect.t - 0.5);
+      expect(p.c.y, `field (${p.x}, ${p.y}) below the canvas`).toBeLessThanOrEqual(geom.rect.b + 0.5);
+      expect(p.back.x).toBeCloseTo(p.x, 3);
+      expect(p.back.y).toBeCloseTo(p.y, 3);
+    }
 
     // NO PIXEL GAMEPLAY (MinigameHost guarantee 3). The rite is handed field
     // coordinates and a fixed dt, so a target's world position at a given world
-    // time is the same number on a phone-shaped window as on a wide one — even
-    // though every pixel it is drawn at has moved.
+    // time is the same number on a phone-shaped window as on a wide one.
     const after = await host(page, () => {
       const i = window.__game.minigames.instance;
       return { x: i.xAt(0, 5), y: i.yAt(0), hit: i.hitIndex(i.xAt(0, 5), i.yAt(0), 5) };
@@ -559,7 +598,8 @@ test.describe('the rite host', () => {
      * happening twice.
      */
     await page.evaluate(() => {
-      window.__game.minigames.instance.draw = () => { throw new Error('spec: draw exploded'); };
+      // The VIEW, not the logic: view code runs inside the same #guard.
+      window.__game.minigames._view.render = () => { throw new Error('spec: draw exploded'); };
     });
     await spinUntil(page, '!h.isOpen');
 

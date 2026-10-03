@@ -164,27 +164,6 @@ function findClean(inst, i) {
 }
 
 /**
- * A Painter that records nothing and answers everything.
- *
- * A Proxy rather than a hand-written double: the rite may reach for any of
- * eighteen chainable primitives and a stub that lists them by hand goes stale
- * the day someone adds a `capsule` call. Two methods are special — `clipRect`
- * has to run its callback (or half the drawing is never exercised) and
- * `linearFill` has to return something usable as a fill.
- */
-function fakePainter() {
-  const g = new Proxy({}, {
-    get(_target, key) {
-      if (key === 'clipRect') return (_cx, _cy, _w, _h, fn) => { fn(g); return g; };
-      if (key === 'linearFill') return () => 'gradient';
-      if (typeof key === 'symbol') return undefined;
-      return () => g;
-    },
-  });
-  return g;
-}
-
-/**
  * A deliberate play strategy, for the harness's "mashing loses to playing"
  * comparison: five aimed shots a second at the most valuable standing target
  * that is on screen, and never at the bystander.
@@ -635,40 +614,37 @@ describe('LuckyShotRite — what the wave actually moves', () => {
   });
 });
 
-describe('LuckyShotRite — draw', () => {
-  it('does not mutate state', () => {
+describe('LuckyShotRite — what the view is handed', () => {
+  /**
+   * The 3D view (LuckyShotView.js) starts every effect — muzzle flash, recoil,
+   * the target falling, the plate shattering, the bullet hole — from the ONE
+   * cue each round emits. A round that emitted nothing would fire silently and
+   * invisibly; one that emitted two would flash twice. So the count is pinned,
+   * and so is what the cue carries.
+   */
+  it('emits exactly one positioned cue per round, naming what it hit', () => {
     const inst = spawn({ seed: 21 });
-    // Mid-run, with everything alive at once: sparks in flight, a floating
-    // number, a knocked-down target rising, a low ammo count. A draw-purity
-    // test on a freshly spawned instance proves almost nothing.
     const f = findClean(inst, inst.golden);
     runTo(inst, f.n);
+    inst.drainEvents();
     inst.update(DT, shotAt(f.x, f.y));
-    for (let k = 0; k < 40; k++) inst.update(DT, makeInput({ inside: true, x: 1.2, y: -0.4 }));
-    for (let k = 0; k < AMMO && inst.ammo > 3; k++) inst.update(DT, shotAt(0, -4.3));
-    expect(inst.ammo).toBe(3);
-
-    const g = fakePainter();
-    const before = JSON.stringify(inst);
-    for (let k = 0; k < 5; k++) inst.draw(g, k / 5);
-    expect(JSON.stringify(inst), 'draw() wrote to the instance').toBe(before);
+    inst.update(DT, shotAt(0, 4.2));
+    const ev = inst.drainEvents();
+    expect(ev).toHaveLength(2);
+    expect(ev[0]).toMatchObject({ type: 'perfect', i: inst.golden, value: ROW_TABLE[inst.targets[inst.golden].row].value * GOLDEN_MULT });
+    expect(ev[0].x).toBeCloseTo(f.x, 6);
+    expect(ev[1]).toEqual({ type: 'miss', x: 0, y: 4.2, i: -1, value: 0 });
   });
 
-  it('survives an empty gun, an untouched pointer and a finished clock', () => {
-    // The three states with no gameplay in them are the three nobody plays
-    // through by hand, and a throw in draw costs the player the whole rite
-    // (MinigameHost.#guard abandons it with zero reward).
-    const g = fakePainter();
-    const fresh = spawn();
-    expect(() => fresh.draw(g, 0)).not.toThrow();
+  it('is drawn by a 3D view, never by a Painter', () => {
+    expect(typeof LUCKY_SHOT_RITE.view).toBe('function');
+    expect(LUCKY_SHOT_RITE.create().draw).toBeUndefined();
+  });
 
-    const dry = spawn();
-    for (let k = 0; k < AMMO; k++) dry.update(DT, shotAt(0, -4.3));
-    expect(dry.ammo).toBe(0);
-    expect(() => dry.draw(g, 0.5)).not.toThrow();
-
-    const done = spawn();
-    stepUntil(done, (_i, ended) => ended, 'the clock running out');
-    expect(() => done.draw(g, 0.99)).not.toThrow();
+  it('hands the view a cosmetic seed without spending a gameplay draw on it', () => {
+    const a = spawn({ seed: 5 });
+    const b = spawn({ seed: 6 });
+    expect(Number.isInteger(a.fxSeed)).toBe(true);
+    expect(a.fxSeed).not.toBe(b.fxSeed);
   });
 });

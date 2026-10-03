@@ -29,10 +29,11 @@
  * condition; there is not a `performance.now()` or a `waitForTimeout` in the
  * file. tests/e2e/minigame.spec.js:81 names the same trap.
  *
- * NO SECOND LETTERBOX. World coordinates are converted to client pixels with
- * the host's own `painter.toClient` plus the canvas's `getBoundingClientRect`.
- * Re-deriving the transform in the spec would be a second implementation, free
- * to drift from the first and to agree with itself while both are wrong.
+ * NO SECOND TRANSFORM. World coordinates are converted to client pixels with
+ * the host's own `fieldToClient` — for this 3D rite, a projection through the
+ * view's camera, the exact inverse of the raycast the host picks with.
+ * Re-deriving it in the spec would be a second implementation, free to drift
+ * from the first and to agree with itself while both are wrong.
  *
  * WHY THE AIM IS EXACT AND NOT APPROXIMATE. `this.t` only ever advances inside
  * a fixed sub-step, and the queue is handed to the FIRST sub-step that runs
@@ -68,6 +69,8 @@ async function openLuckyShot(page, wave = 20, occurrence = 0) {
   await page.waitForFunction(() => window.__game.minigames.mode === 'play', null, { timeout: 10000 });
   await page.waitForFunction(() => window.__game.minigames.instance?.targets?.length > 0,
     null, { timeout: 10000 });
+  // The 3D view (and with it the raycast pick) is a dynamic import.
+  await page.waitForFunction(() => window.__game.minigames.ownsFrame, null, { timeout: 15000 });
 }
 
 /**
@@ -159,12 +162,9 @@ test.describe('rite input', () => {
         return { ok: false, candidates };
       }
 
-      // THE HOST'S OWN TRANSFORM. Never a second copy of the letterbox maths.
-      const rect = h.$canvas.getBoundingClientRect();
-      const toClient = (p) => {
-        const c = h.painter.toClient(p.x, p.y);
-        return { x: rect.left + c.x, y: rect.top + c.y };
-      };
+      // THE HOST'S OWN TRANSFORM. Never a second copy of the projection.
+      const toClient = (p) => h.fieldToClient(p.x, p.y);
+      const canvas = h.$gl;
 
       /**
        * Empty air, above every rank: the back row tops out at 0.95 + 0.48.
@@ -177,7 +177,7 @@ test.describe('rite input', () => {
       const pb = toClient(b);
       const pAway = toClient(away);
 
-      const press = (p) => h.$canvas.dispatchEvent(new PointerEvent('pointerdown', {
+      const press = (p) => canvas.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true, clientX: p.x, clientY: p.y,
         button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
       }));
@@ -256,7 +256,7 @@ test.describe('rite input', () => {
     });
 
     const at = await page.evaluate(() => {
-      const r = window.__game.minigames.$canvas.getBoundingClientRect();
+      const r = window.__game.minigames.$stage.getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     });
     await page.mouse.click(at.x, at.y, { button: 'right' });
