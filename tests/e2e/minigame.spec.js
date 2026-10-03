@@ -20,7 +20,7 @@
  *     this rite's primary verb AND the game's "send the next wave", so this is
  *     load-bearing rather than hygiene: without the shield the first thing a
  *     player does inside a minigame is start a wave they cannot see;
- *   - a rite whose draw() throws taking the rAF loop down with it, which is what
+ *   - a view whose render() throws taking the rAF loop down with it, which is what
  *     `#guard` exists to prevent and what killed a real build once;
  *   - twenty seconds of running rite putting nothing on the console.
  *
@@ -592,7 +592,7 @@ test.describe('the rite host', () => {
     /**
      * THE CONTAINMENT WALL. `MinigameHost.update` is called from `Game.frame`,
      * which is called from main.js's rAF loop — and that loop has no try/catch.
-     * Without `#guard` an exception in a rite's draw() does not make the
+     * Without `#guard` an exception in a view's render() does not make the
      * minigame look wrong, it freezes the entire game on frame one with no way
      * out. That happened for real once; this is the test that keeps it from
      * happening twice.

@@ -22,7 +22,7 @@
  *     host reports `isOpen`, and the phase is 'minigame'.
  *  2. IT RUNS. `instance.t` — the rite's own clock, advanced only from inside its
  *     `update` — is strictly greater after a bounded run of frames than it was
- *     before, and `draw()` was reached (counted through a wrapper) without the
+ *     before, and frames were drawn (the host's `renderedFrames`) without the
  *     host's `#guard` catching anything.
  *  3. IT SCORES. `score()` returns a `ratio` inside [0, 1] with a non-empty
  *     `headline`, the host settled on that same ratio, and both the headline and
@@ -118,7 +118,7 @@ async function openRite(page, id) {
 }
 
 /**
- * Count `draw` calls, count credits, and take the gold baseline.
+ * Count drawn frames, count credits, and take the gold baseline.
  *
  * WHY `addGold` AND NOT `score`. The obvious instrument for "settled once" is a
  * counter on `score()`, and it is wrong: `score()` is documented PURE and rites
@@ -283,7 +283,7 @@ test.describe('rites — every minigame opens, runs, scores, pays once and close
       }));
       expect(midway.t, `${id}: instance.t did not advance`)
         .toBeGreaterThan(midway.t0);
-      // draw() runs inside #guard, so a throw would be swallowed into
+      // The view's render() runs inside #guard, so a throw would be swallowed into
       // console.error and the counter would stop climbing. Both halves are
       // asserted: it was reached, and (below) nothing was logged.
       expect(midway.draws, `${id}: no frame of the rite was ever drawn`).toBeGreaterThan(0);

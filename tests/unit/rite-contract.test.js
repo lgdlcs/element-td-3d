@@ -72,8 +72,6 @@ class Synthetic {
     return this.t >= TARGETS * SPACING;
   }
 
-  draw() {}
-
   score() {
     const ratio = this.hits / TARGETS;
     return { ratio, headline: ratio > 0.8 ? 'Clean' : 'Ragged', detail: `${this.hits}/${TARGETS}` };
@@ -86,6 +84,8 @@ const SYNTH = {
   id: 'synthetic', name: 'Synthetic', hint: 'Shoot the mark.',
   duration: TARGETS * SPACING + 1,
   create: () => new Synthetic(),
+  // Never called: the contract only checks that a view module is declared.
+  view: () => Promise.reject(new Error('no view in node')),
 };
 
 /** A player who shoots the live target, once each, on the frame it appears. */
@@ -106,6 +106,11 @@ function variant(patch) {
 describe('assertRiteContract', () => {
   it('passes a rite that honours the whole contract', () => {
     assertRiteContract(SYNTH, { randCalls: TARGETS + 1, skilled: SKILLED });
+  });
+
+  it('rejects a rite with no 3D view', () => {
+    expect(() => assertRiteContract({ ...SYNTH, view: undefined }, { randCalls: TARGETS + 1 }))
+      .toThrow(/def\.view must be a function/);
   });
 
   it('rejects a rand budget that depends on the wave', () => {

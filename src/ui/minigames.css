@@ -18,13 +18,13 @@
    ========================================================================= */
 
 /* ---- the per-rite palette, on :root and NOWHERE ELSE --------------------
-   Every flat colour a rite's CANVAS paints with lives here, under a name
+   Every flat colour a rite's 3D VIEW paints with lives here, under a name
    prefixed by the rite it belongs to. The `#rite[data-rite=…]` blocks further
    down map these onto the generic `--rite-accent` / `--rite-stage-bg` /
    `--rite-veil` that the CHROME uses; they define no colour of their own.
 
-   WHY THE PREFIX, AND WHY :root. A rite has no DOM — it is handed a Painter and
-   nothing else, by design — so the only element it can read a variable off is
+   WHY THE PREFIX, AND WHY :root. A rite and its view have no DOM, by design,
+   so the only element they can read a variable off is
    `document.documentElement`, via the `Lottery.js:722` pattern. A custom
    property declared inside `#rite[data-rite="hunt"]` is scoped to the OVERLAY
    element, which a rite never sees, so that lookup silently missed and the
@@ -253,11 +253,11 @@
 
 /* THE STAGE IS THE FIELD, AT 16:9, WITH NOTHING LEFT OVER.
    ------------------------------------------------------------------------
-   `Painter.layout` letterboxes contract.js's 16x9 FIELD into whatever box this
-   rule produces (`ppu = min(cssW/16, cssH/9)`). So any box that is not 16:9 is
-   not "a stage with a margin", it is a stage the rite CANNOT PAINT INTO: the
-   slack becomes dead bars that no rite can reach and that read, to the player,
-   as the world ending early. `fishing`'s waterline stopped in mid-air in them.
+   Every view frames contract.js's 16x9 FIELD into whatever box this rule
+   produces (Stage3D `frameField`). So any box that is not 16:9 is not "a stage
+   with a margin", it is slack the field does not fill. When the rites were 2D
+   that slack was dead black bars; `fishing`'s waterline stopped in mid-air in
+   them.
 
    THE BUG THIS RULE IS WRITTEN AGAINST. `aspect-ratio: 16/9` with BOTH
    `width: 100%` and `max-height: 56vh` is over-constrained, and CSS resolves it
@@ -314,9 +314,8 @@
   pointer-events: auto;
   cursor: crosshair;
 }
-/* Two canvases share the stage during the migration (2D Painter, 3D Stage3D);
-   the host hides whichever is not drawing. Needed because `.rite-stage canvas`
-   out-ranks the UA's `[hidden]` rule. */
+/* The host hides the 3D canvas until its first frame. Needed because
+   `.rite-stage canvas` out-ranks the UA's `[hidden]` rule. */
 .rite-stage canvas[hidden] { display: none; }
 
 /* ---- the six themes -----------------------------------------------------

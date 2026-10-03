@@ -4,7 +4,7 @@
  *
  * Wave 0 put each rite's palette in `src/ui/minigames.css` as
  * `#rite[data-rite="x"] { --rite-accent: … }`. A rite has NO DOM by design — it
- * is handed a Painter and nothing else — so every rite read its colours with the
+ * was then handed a 2D Painter and nothing else — so every rite read its colours with the
  * `Lottery.js#readPalette` pattern, off `document.documentElement`. Those
  * properties are scoped to the `#rite` element, so every one of those lookups
  * missed and the literal fallback in the JS is what actually painted. Four of

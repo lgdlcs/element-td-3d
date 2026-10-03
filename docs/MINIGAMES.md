@@ -22,14 +22,13 @@ outright, in one commit, and everything below describes what replaced them.
 
 Full write-ups in §13.
 
-> **THE MIGRATION TO 3D.** Every rite is being rebuilt as a three.js scene
-> drawn through one shared `Stage3D`. `luckyshot` is done and is the reference
-> (logic `LuckyShotRite.js`, view `LuckyShotView.js`). Until the other five are
-> converted the host runs **two render paths**: a def with a `view` is drawn in
-> 3D, a def without one is drawn by the legacy 2D `Painter`. When the last rite
-> has a view, `Painter.js`, `tests/unit/painter.test.js`, the `#rite-canvas`
-> element, `MinigameHost.#render2D` and the `draw` member of the instance
-> contract are **deleted in one commit** — not kept "just in case".
+> **EVERY RITE IS 3D.** Each rite is a pure logic module plus a three.js view
+> drawn through one shared `Stage3D`; `view` is a required member of the def.
+> `luckyshot` is the reference (logic `LuckyShotRite.js`, view
+> `LuckyShotView.js`). The 2D rite path (`#rite-canvas`, `MinigameHost.#render2D`
+> and the instance's `draw`) was deleted once the sixth view landed.
+> `Painter.js` stays, because the lottery (§10) still draws with it; no rite
+> may import it.
 
 Files:
 
@@ -40,7 +39,7 @@ Files:
 | `src/minigames/registry.js` | The one place a rite is announced. **Pure.** |
 | `src/minigames/rivals.js` | Deterministic opponents. **Pure.** |
 | `src/minigames/Stage3D.js` | The one WebGL renderer, the field frame, the raycast pick, `RiteView`, lights, `Bursts`. Imports three. |
-| `src/minigames/Painter.js` | LEGACY. The 2D world-unit drawing API, for rites not yet converted. |
+| `src/minigames/Painter.js` | The 2D world-unit drawing API. Used by the lottery (`src/ui/Lottery.js`) only; no rite draws with it. |
 | `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, intro card, loop, clock, click queue, result, payout. |
 | `src/minigames/rites/HeavenRite.js` | `heaven` — dodge everything pink. |
 | `src/minigames/rites/HeavenView.js` | `heaven` — its cloud arena in 3D. |
@@ -108,9 +107,6 @@ interface MinigameInstance {
 
   /** Called at a FIXED dt. Return true to end the rite early. */
   update(dt: number, input: MinigameInput): boolean | void;
-
-  /** LEGACY 2D PATH ONLY — absent when the def has a `view`. Variable rate. MUST NOT mutate state. */
-  draw?(g: Painter, alpha: number): void;
 
   /** Pure. Safe to call at any time, any number of times. */
   score(): { ratio: number, headline: string, detail: string };
@@ -205,8 +201,8 @@ next `pointerdown`; the array handed to the rite is the same array identity ever
 step. That is what keeps a reaction game at zero allocation per frame, and it
 means a rite that stores a `PointerClick` and reads it two steps later is reading
 a shot the player took **afterwards**. **Copy what you keep** — `{ x: c.x, y: c.y }`,
-never the record. This is the `Painter.ppu` of the input side: no runtime check,
-and a failure mode that looks like a physics bug.
+never the record. There is no runtime check, and the failure mode looks like a
+physics bug.
 
 Beyond the cap the host **drops** clicks silently rather than growing the queue.
 Twelve primary commits inside one frame is a macro or a stuck button, not a
@@ -274,29 +270,16 @@ it.
 ## 2. The coordinate space — read this one twice
 
 **A rite never sees a pixel.** It works in a fixed **16 × 9 rectangle**, origin at
-the **centre**: `x ∈ [-8, 8]`, `y ∈ [-4.5, 4.5]`, **+y is up**. The host
-letterboxes that rectangle onto whatever canvas the player has, at their DPR.
+the **centre**: `x ∈ [-8, 8]`, `y ∈ [-4.5, 4.5]`, **+y is up**. Each view
+frames that rectangle with its camera (`frameField`, §8.1) on whatever stage the
+player has, and the host picks the pointer back through the same camera.
 
 Consequences, all of them load-bearing:
 
-- Resizing the window changes the letterbox and **nothing else**. Difficulty,
+- Resizing the window changes the camera framing and **nothing else**. Difficulty,
   hit windows and travel distances are identical on every screen.
 - A test at 1600×900 therefore proves something about every other screen. A rite
   written in pixels makes every measurement local to one monitor.
-- `Painter` deliberately has **no accessor for the raw `CanvasRenderingContext2D`**.
-  If a primitive is missing, add it to `Painter` in world units, for everyone.
-  `blob`, `ellipse`, `capsule`, `clipRect` and `linearFill` were all added that
-  way for the six rites; `blob` is the one that matters, because a canopy, a
-  deer, a boar, a fish and a car body are all "a smooth closed silhouette" and
-  `poly` only does straight segments.
-- **`linearFill` is the one hole in "no raw context".** It returns a
-  `CanvasGradient`, an opaque handle that escapes the class. The rule is written
-  rather than enforced: call it from `draw` only, and pass the result straight
-  back into a `fill`. The alternative — twenty stacked translucent rectangles —
-  is worse and slower.
-- `Painter.text`'s `size` and `tracking` are in world units too. Passing a
-  pixel-sized tracking there renders one word across the whole field with the
-  rest of the sentence clipped off — that happened, on the first screenshot.
 
 ### 2.1 In 3D: the field frame, the pick, and depth
 
@@ -412,8 +395,8 @@ rule as `MINIGAME_IDS` (§8) and `rivals.js`'s `NAMES`.
 ## 4. Fixed timestep
 
 `update(dt, input)` is always called with `dt === MINIGAMES.dt` (1/60), from an
-accumulator, exactly like `Game.frame`. `draw` is called once per rendered frame
-at a variable rate. A rite stepped at the display's refresh rate is a *different
+accumulator, exactly like `Game.frame`. The view's `render` is called once per
+rendered frame at a variable rate. A rite stepped at the display's refresh rate is a *different
 game* on a 60 Hz panel and on a 144 Hz one, and that is not negotiable.
 
 Corollaries:
@@ -476,8 +459,7 @@ Corollaries:
   controllers, so a rite never reads as "the board got slow". Rendering resumes
   the frame after close. Measured on this repo's Linux box (GTX 970, 1600×900,
   `tools/scratch/rite-frametime.mjs`): luckyshot 5.1 ms median against the bare
-  board's 6.4 ms, with 0 board renders during the rite; a legacy 2D rite still
-  pays for both.
+  board's 6.4 ms, with 0 board renders during the rite.
 - **No WebGL, no throw.** In jsdom, node, or a browser without WebGL2 the host
   never imports the stage or the view; the rite's logic, clock and payout run
   blind. `tests/unit/minigame-host.test.js` holds that.
@@ -499,12 +481,12 @@ Corollaries:
 - **A blur costs nothing.** `blur` / `visibilitychange` / `pagehide` suspend the
   clock and the logic; coming back costs a visible 1.2 s grace and no score. The
   keypress that wakes it is discarded, not counted as a commit.
-- **Resize safety.** The stage resizes (observed, not polled): the 2D letterbox
-  is recomputed, or the 3D view's `layout(aspect)` reframes the camera. Your
-  logic never notices.
+- **Resize safety.** The stage size is checked every frame and a change calls
+  the view's `layout(aspect)`, which reframes the camera. Your logic never
+  notices.
 - **1× speed.** The rite runs from the variable-rate half of `Game.frame`, so
   `state.speed` (1×/2×/3×) does not reach it.
-- **A crash is contained.** An exception from your `update`, `draw`, or any view
+- **A crash is contained.** An exception from your `update`, or any view
   call (`createView`, `layout`, `render`, `cue`, the pick through its camera),
   a compile that throws (the view is still disposed), or a view module that
   fails to load, is caught,
@@ -519,10 +501,10 @@ Corollaries:
 - **No spectating, no networking.** No message crosses the wire for a rite. Each
   player plays their own instance and banks their own gold; fairness is the seed.
   §14 and §15 say what that costs and why it is still the trade.
-- **No `alpha` interpolation for free.** `draw(g, alpha)` gives you the fraction
+- **No `alpha` interpolation for free.** `render(alpha, dt)` gives you the fraction
   into the next step; interpolating with it is your job, and most rites do not
   need to (16.6 ms of positional lag is invisible at these speeds).
-- **No guarantee `draw` / `render` is called at all.** A 0×0 stage (an overlay
+- **No guarantee `render` is called at all.** A 0×0 stage (an overlay
   still transitioning in, a `display:none` ancestor), a view still loading, or
   no WebGL skips rendering entirely. Never put logic in a view.
 - **No cleanup of your own timers.** Do not create any. Accumulate `dt`.
@@ -785,7 +767,7 @@ The rules, each of which the reference view follows and says why:
    functions at `t = rite.t + alpha * MINIGAMES.dt`. The view may keep and
    mutate its OWN presentation state (particles, flash timers, a "hit at"
    table filled from cues); it may never assign to the instance. Presentation
-   that used to live in a 2D rite's `update` (sparks, pops, flash, recoil)
+   that used to live in the 2D rites' `update` (sparks, pops, flash, recoil)
    moves to the view and is driven by cues — `luckyshot` emits one cue per
    round carrying `{ type, x, y, i, value }`.
 2. **Hit tests stay in field units.** Anything the player aims at is placed
@@ -847,8 +829,8 @@ Rites read their palette tokens the way `Lottery.js:722-734` does: one
 
 #### The token a rite reads is `--rite-<id>-<thing>`, on `:root`. Never the generic one.
 
-> **A rite has no DOM.** It is handed a `Painter` and nothing else, so the only
-> element it can call `getComputedStyle` on is `document.documentElement`. The
+> **A rite has no DOM**, and neither does its view, so the only element either
+> can call `getComputedStyle` on is `document.documentElement`. The
 > three generic names above are declared **inside `#rite[data-rite="x"]`**, which
 > a rite never sees — so reading `--rite-accent` from a rite silently misses and
 > the literal fallback is what actually paints. Six rites shipped that way and
@@ -948,7 +930,7 @@ it('passes assertRiteContract', () => {
 What it guarantees, in order:
 
 0. **The published shape.** `create` is a function, `duration` is positive,
-   `init`/`update`/`draw`/`score` all exist, and `create()` returns a *fresh*
+   `view` is a function, `init`/`update`/`score` all exist, and `create()` returns a *fresh*
    instance each time.
 1. **A fixed rand budget**, checked at waves **3, 28 and 53** against the exact
    number you passed. `randCalls` is required and required to be a literal the
@@ -1039,9 +1021,8 @@ where the headline says "Flawless" over a 0.54. Tune the game.
 
 ### What a 3D rite adds to its tests
 
-- `assertRiteContract` accepts an instance without `draw` when the def has a
-  `view` (and requires `view` to be a function). Everything else is unchanged:
-  the logic is what the checklist tests, in node.
+- `assertRiteContract` requires `view` to be a function and never calls it.
+  The logic is what the checklist tests, in node.
 - **The view is not unit-tested.** It imports three and needs WebGL. What the
   logic owes it is tested instead: `luckyshot` pins "one cue per round, with
   `x, y, i, value`", because the view starts every effect from it.
@@ -1106,13 +1087,11 @@ outside `DevPanel.js`.
 
 ## 11. Pitfalls
 
-**Never give a Painter field the name of a Painter method.** `this.scale` (the
-letterbox factor) shadowed a newly added `scale(x, y)` method, `g.scale(1, 0.3)`
-became "call the number 1.0", every `draw()` threw, and — because the rAF loop in
-`main.js` has no try/catch — the whole game froze on the rite's first frame. The
-error message points at the method, not the field, which is why it cost twenty
-minutes. The field is now `ppu`, and the host now contains a throwing rite.
-(`docs/PITFALLS.md` §15.)
+**A throw in a frame kills the game unless the host catches it.** In the 2D
+days `Painter`'s `this.scale` field shadowed a newly added `scale(x, y)`
+method, every frame threw, and — because the rAF loop in `main.js` has no
+try/catch — the whole game froze on the rite's first frame. The host now
+contains a throwing rite or view (§5). (`docs/PITFALLS.md` §15.)
 
 **Never keep a `PointerClick`.** §1.1, restated here because this is where people
 look after the fact: the records are pooled and refilled, so a stored one starts
@@ -1124,14 +1103,10 @@ later, which reads as a physics bug in your own code.
 of a frame and sub-steps 2..n get an empty array, so any logic of the form "if no
 clicks this step, then…" fires spuriously on a slow frame.
 
-**Do not put gameplay in `draw`.** It is skipped on a zero-sized canvas and
-called a variable number of times per step. Keep particle simulation in
-`update` for exactly this reason, even though particles are purely cosmetic. If
-you need per-frame scratch space in a legacy `draw`, put the buffer at
-**module** scope, not on `this` — `draw` must not mutate the instance, and a test
-proves it. That is legal only because the host draws exactly one rite at a time,
-on one thread. A 3D view has no
-such problem: its scratch lives on the view, which is not the rite.
+**Do not put gameplay in a view.** `render` is skipped on a zero-sized stage
+and called a variable number of times per step. The view's scratch lives on
+the view, which is not the rite; it must never write to the rite, and an e2e
+test proves it.
 
 **Do not read `input.x/y` when `input.inside` is false.** The host leaves the
 last known position there rather than resetting it, deliberately — a reset to the

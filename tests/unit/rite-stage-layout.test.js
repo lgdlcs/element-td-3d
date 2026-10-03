@@ -2,9 +2,14 @@
  * THE STAGE IS THE FIELD — A LAYOUT INVARIANT, TESTED.
  * ===========================================================================
  *
+ * The rites are drawn in 3D now and the 2D Painter named below is gone, but
+ * the invariant still matters: every view frames the 16x9 FIELD with
+ * `frameField`, so a stage that is not 16:9 spends its slack on scenery beyond
+ * the field instead of on a bigger field. The history is kept as written.
+ *
  * WHAT WENT WRONG, AND WHY NOTHING CAUGHT IT.
  *
- * `Painter.layout` letterboxes contract.js's fixed 16x9 FIELD into the canvas:
+ * `Painter.layout` letterboxed contract.js's fixed 16x9 FIELD into the canvas:
  * `ppu = min(cssW / 16, cssH / 9)`. That is correct code and it was doing its
  * job perfectly. The defect was one rule above it: `.rite-stage` declared
  * `aspect-ratio: 16 / 9` AND `width: 100%` AND `max-height: 56vh`. Those three
@@ -378,7 +383,7 @@ function stageBox(vw, vh) {
   return { w, h, shellW, inner, budget: evalLength(budgetVars['--rite-stage-h'], { vw, vh }) };
 }
 
-/** What Painter.layout would do with that box. */
+/** The largest FIELD-shaped rectangle that fits in that box. */
 function letterbox(box) {
   const ppu = Math.min(box.w / FIELD.w, box.h / FIELD.h);
   return { ppu, fieldW: ppu * FIELD.w, fieldH: ppu * FIELD.h };
@@ -429,9 +434,9 @@ describe('the rite stage is the field', () => {
         failures.push(report(vp, box, lb));
       }
     }
-    expect(failures, `Painter.layout letterboxes contract.js FIELD (${FIELD.w}x${FIELD.h}) `
-      + `into the stage, so any stage that is not ${FIELD.w}:${FIELD.h} is surface no rite `
-      + `can paint into. Dead bars found:\n  ` + failures.join('\n  ')).toEqual([]);
+    expect(failures, `Every view frames contract.js FIELD (${FIELD.w}x${FIELD.h}) into the `
+      + `stage, so any stage that is not ${FIELD.w}:${FIELD.h} is surface the field does not `
+      + `fill. Dead bars found:\n  ` + failures.join('\n  ')).toEqual([]);
   });
 
   it('the stage box is 16:9 to within a rounding error, everywhere', () => {

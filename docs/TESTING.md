@@ -190,9 +190,9 @@ tests hardest:
   must be on **observable state** (`#rite.open`, the instance's own counters) and
   any loop must be bounded in **frames**, never in milliseconds.
   `tests/e2e/minigame.spec.js` marks the frame-bounded loops that exist because
-  of this. Converting world units to client pixels has the same shape: use
-  `Painter.toClient` plus `getBoundingClientRect`, never a second copy of the
-  letterbox maths inside the spec.
+  of this. Converting field units to client pixels has the same shape: use the
+  host's `fieldToClient` (a projection through the view's camera), never a
+  second copy of the camera maths inside the spec.
 - **Nothing is still, even when the game is paused.** `state.paused` stops the
   simulation and nothing else: every shader's `uTime` keeps advancing, the camera
   idles, the environment breathes and the grade pass lays down per-frame film

@@ -636,11 +636,6 @@ describe('LuckyShotRite — what the view is handed', () => {
     expect(ev[1]).toEqual({ type: 'miss', x: 0, y: 4.2, i: -1, value: 0 });
   });
 
-  it('is drawn by a 3D view, never by a Painter', () => {
-    expect(typeof LUCKY_SHOT_RITE.view).toBe('function');
-    expect(LUCKY_SHOT_RITE.create().draw).toBeUndefined();
-  });
-
   it('hands the view a cosmetic seed without spending a gameplay draw on it', () => {
     const a = spawn({ seed: 5 });
     const b = spawn({ seed: 6 });

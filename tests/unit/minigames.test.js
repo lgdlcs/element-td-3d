@@ -15,6 +15,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { MINIGAMES, ECONOMY } from '../../src/core/Config.js';
 import { TOTAL_WAVES, waveDef } from '../../src/game/Waves.js';
 import {
@@ -330,12 +332,18 @@ describe('registry', () => {
       expect(def.duration).toBeGreaterThan(4);
       expect(def.duration).toBeLessThanOrEqual(30);
       const inst = def.create();
-      // `draw` is the legacy 2D path; a rite with a 3D `view` has none.
-      const methods = def.view ? ['init', 'update', 'score'] : ['init', 'update', 'draw', 'score'];
-      for (const m of methods) {
+      for (const m of ['init', 'update', 'score']) {
         expect(typeof inst[m], `${id}.${m}`).toBe('function');
       }
+      expect(typeof def.view, `${id}.view`).toBe('function');
     }
+  });
+
+  it('no rite or view draws with the 2D Painter, which only the lottery keeps', () => {
+    const dir = resolve(process.cwd(), 'src/minigames/rites');
+    const offenders = readdirSync(dir)
+      .filter((f) => f.endsWith('.js') && /\bPainter\.js\b/.test(readFileSync(resolve(dir, f), 'utf8')));
+    expect(offenders).toEqual([]);
   });
 
   /**
