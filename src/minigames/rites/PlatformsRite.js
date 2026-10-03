@@ -131,6 +131,16 @@ const RIVAL_STARTS = Object.freeze([COLS + 0, COLS + 6, 3]);    // (0,1) (6,1) (
 /** Hard cap on a ghost's knot list: two knots per hop, a hop every HOP s at most. */
 const MAX_HOPS = 96;
 
+/**
+ * Seconds after takeoff in which a second arrow still bends the hop diagonal.
+ * People press two keys 20-60 ms apart; without this, "hold two arrows" gave a
+ * straight hop plus an unasked-for diagonal one.
+ */
+const TAKEOFF_GRACE = 0.08;
+
+/** Seconds before its cap that a doomed ghost starts walking toward a hole. */
+const LURE = 2.2;
+
 /** Emit `good` for a takeoff from a tile with less than this left; `perfect` under half. */
 const CLUTCH = 0.36;
 
@@ -329,6 +339,11 @@ class PlatformsRite {
     const lag = 0.34 + (1 - skill) * 0.62;
     const capped = this.rivals.outAt(id);
     const slipAt = capped - HOP;
+    // From LURE before the cap, a doomed ghost stops reacting and wanders
+    // toward the nearest hole, so the misjudged hop at the cap is into a hole
+    // it is standing next to. Holes are the only way off this floor.
+    const lureAt = slipAt - LURE;
+    const holeBy = slipAt + HOP;
 
     let cell = RIVAL_STARTS[id];
     const t = [0];
@@ -345,25 +360,33 @@ class PlatformsRite {
 
     for (let k = 0; k < MAX_HOPS; k++) {
       const g = this.gone[cell];
-      const depart = Math.max(now, g - lag);
+      let depart = Math.max(now, g - lag);
+      const luring = Math.max(now, lureAt) < depart && this.#holeDist(cell, holeBy) > 1;
+      if (luring) depart = Math.max(now, lureAt);
       if (depart + HOP > slipAt) {
         // The cap comes before the next hop would finish. Ride the tile down if
         // it goes first, else misjudge one hop into the void at the cap.
         const s = Math.max(now, slipAt);
-        if (g <= s) { out = g; break; }
+        if (g <= capped) { out = g; break; }
         this.#voidHop(cell, s, nb);
         hop(s, this._vx, this._vy);
         t[t.length - 1] = Math.max(s, capped);
         out = t[t.length - 1];
         break;
       }
-      if (g > this.runLength) break;                              // outlasts the run
+      if (g > this.runLength && !luring) break;                  // outlasts the run
       if (depart >= g) { out = g; break; }
 
-      let best = -1, bestGone = -Infinity;
+      let best = -1, bestGone = -Infinity, bestDist = Infinity;
       const n = neighbours(cell, nb);
       for (let j = 0; j < n; j++) {
-        if (this.gone[nb[j]] > bestGone) { bestGone = this.gone[nb[j]]; best = nb[j]; }
+        const gj = this.gone[nb[j]];
+        // A lured ghost only steps on tiles that outlast its cap, so the lure
+        // never kills it early.
+        const dist = luring ? (gj > holeBy ? this.#holeDist(nb[j], holeBy) : Infinity) : 0;
+        if (dist < bestDist || (dist === bestDist && gj > bestGone)) {
+          bestDist = dist; bestGone = gj; best = nb[j];
+        }
       }
       hop(depart, cellX(best), cellY(best));
       const land = depart + HOP;
@@ -376,11 +399,22 @@ class PlatformsRite {
     return { t: Float64Array.from(t), x: Float64Array.from(xs), y: Float64Array.from(ys) };
   }
 
+  /** Chebyshev distance from `cell` to the nearest tile gone by `time`; Infinity if none. */
+  #holeDist(cell, time) {
+    let d = Infinity;
+    for (let i = 0; i < TILES; i++) {
+      if (this.gone[i] > time) continue;
+      d = Math.min(d, Math.max(Math.abs(colOf(i) - colOf(cell)), Math.abs(rowOf(i) - rowOf(cell))));
+    }
+    return d;
+  }
+
   /**
    * Where a ghost's fatal misjudged hop from `cell` at time `s` lands, into
-   * `_vx/_vy`: a neighbouring hole if there is one by then, else just past the
-   * nearest edge of the floor. Never a live tile, which would read as a ghost
-   * falling through solid stone.
+   * `_vx/_vy`: a neighbouring hole. The lure in #walkGhost puts one in reach
+   * (no miss in 6 000 seeded runs); the last resort is just past the nearest
+   * edge of the floor, never a live tile, which would read as a ghost falling
+   * through solid stone.
    */
   #voidHop(cell, s, nb) {
     const n = neighbours(cell, nb);
@@ -468,13 +502,32 @@ class PlatformsRite {
     const ax = input.axis?.x ?? 0;
     const ay = input.axis?.y ?? 0;
 
-    // A press that STARTS mid-air is queued for the landing; a key merely held
-    // through the hop is not, or one long press would be two hops.
-    const pressed = (ax || ay) && (ax !== this.lastX || ay !== this.lastY);
+    // A change of keys mid-air is queued for the landing; a key merely held
+    // through the hop is not, or one long press would be two hops. Letting go
+    // of one of two keys never overwrites a press already queued, so a tap
+    // released before the landing still counts.
+    const changed = (ax || ay) && (ax !== this.lastX || ay !== this.lastY);
+    const gained = (ax && ax !== this.lastX) || (ay && ay !== this.lastY);
     this.lastX = ax; this.lastY = ay;
 
     if (this.state === HOPPING) {
-      if (pressed) { this.queueX = ax; this.queueY = ay; }
+      if (gained) {
+        // Two arrows are never pressed in the same instant. A second arrow just
+        // after takeoff that keeps the hop's direction bends this hop diagonal
+        // instead of queueing a second one.
+        const to = t - this.hopAt < TAKEOFF_GRACE
+          && (!this.fx || ax === this.fx) && (!this.fy || ay === this.fy)
+          ? hopTarget(this.cell, ax, ay) : -1;
+        if (to >= 0 && to !== this.to) {
+          this.to = to;
+          this.fx = Math.sign(cellX(to) - cellX(this.cell));
+          this.fy = Math.sign(cellY(to) - cellY(this.cell));
+        } else {
+          this.queueX = ax; this.queueY = ay;
+        }
+      } else if (changed && !this.queueX && !this.queueY) {
+        this.queueX = ax; this.queueY = ay;
+      }
       if (t - this.hopAt < HOP - 1e-9) {
         const u = (t - this.hopAt) / HOP;
         this.px = lerp(cellX(this.cell), cellX(this.to), u);
@@ -493,10 +546,11 @@ class PlatformsRite {
     // Standing. A tile that has gone takes you with it.
     if (this.gone[this.cell] <= t) { this.#fall(t); return; }
 
-    const hx = ax || ay ? ax : this.queueX;
-    const hy = ax || ay ? ay : this.queueY;
+    // A press made mid-air wins over a key held through the hop: it is the
+    // newer intent. Against the wall it falls back to the held key.
+    let to = this.queueX || this.queueY ? hopTarget(this.cell, this.queueX, this.queueY) : -1;
+    if (to < 0 && (ax || ay)) to = hopTarget(this.cell, ax, ay);
     this.queueX = 0; this.queueY = 0;
-    const to = hx || hy ? hopTarget(this.cell, hx, hy) : -1;
     if (to >= 0) {
       const left = this.gone[this.cell] - t;
       if (left < CLUTCH) {

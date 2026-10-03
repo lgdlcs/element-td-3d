@@ -1254,10 +1254,14 @@ glow along their cracks and tumble into the fog. You and three rivals hop
 between them, and **the only verb is where you hop**.
 
 - **Controls.** `axis` only. One arrow is one hop to the next tile, in
-  `HOP` = 0.42 s; holding keeps hopping; two arrows hop diagonally. A press
-  that starts mid-air is queued for the landing, so a quick tap is never lost;
-  a key merely held through a hop is not queued, or one long press would be
-  two hops. **The edge of the floor is a wall**: a hop that would leave the
+  `HOP` = 0.42 s; holding keeps hopping; two arrows hop diagonally. Nobody
+  presses two keys in the same frame, so a second arrow within
+  `TAKEOFF_GRACE` = 80 ms of takeoff that keeps the hop's direction bends that
+  hop diagonal; without it, "hold two arrows" gave a straight hop plus an extra
+  diagonal one. A press that starts mid-air is queued for the landing and wins
+  over a key held through the hop, so a quick tap is never lost; letting go of
+  one of two keys never overwrites a queued press; a key merely held through a
+  hop is not queued, or one long press would be two hops. **The edge of the floor is a wall**: a hop that would leave the
   grid drops the off-grid component, and does nothing if none is left. The
   void you fall into is the holes, which you can see.
 - **Why hops, not the old sliding marker.** The 2D rite steered a free marker
@@ -1279,9 +1283,15 @@ between them, and **the only verb is where you hop**.
   spread turns it into a slope, the same lesson the 2D temper taught.
 - **Rivals.** Ghost hop lists built in `init` from the same schedule: each
   hops to its longest-lived neighbour `lag` seconds before its tile goes. The
-  published `SeededRivals.outAt` is a cap: a ghost still up then misjudges one
-  hop into a hole or past the edge and lands at exactly that time. A ghost is
-  never drawn standing on a tile that has gone (unit-tested).
+  published `SeededRivals.outAt` is a cap: from `LURE` = 2.2 s before it, a
+  doomed ghost stops reacting and wanders over tiles that outlast the cap
+  toward the nearest hole, then misjudges one hop into it and lands at exactly
+  the cap (or rides its own tile down if that goes first). Before the lure,
+  ~7% of rival deaths were leaps off the floor edge, which the rules call a
+  wall; over 6 000 runs there are now none. 2.5% of deaths now come up to one
+  `HOP` early, riding a tile that drops just before the cap (mean −3 ms). A
+  ghost is never drawn standing on a tile that has gone, and never ends off
+  the floor or on live stone (both unit-tested).
 - **Score.** `0.75 × (alive / runLength) + 0.25 × (rivals outlasted / 3)`,
   unchanged. Idle dies with the first tile: 0.06–0.12 (40 seeds × 5 waves).
 - **Calibration.** The harness brain no longer reads `gone`: it sees what the

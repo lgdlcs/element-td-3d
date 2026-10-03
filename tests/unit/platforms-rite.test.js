@@ -236,11 +236,34 @@ describe('platforms — hopping', () => {
     const inst = spawn({ seed: 3, wave: 3 });
     const from = inst.cell;
     inst.update(DT, axis(0, 1));
-    for (let n = 0; n < 4; n++) inst.update(DT, idle());
+    for (let n = 0; n < 10; n++) inst.update(DT, idle());
     inst.update(DT, axis(1, 0));                          // a one-frame tap mid-air
     stepUntil(inst, idle(), (i) => i.state === STAND && i.to < 0 && i.cell !== from - COLS);
     stepUntil(inst, idle(), (i) => i.state === STAND);
     expect(inst.cell).toBe(from - COLS + 1);
+  });
+
+  it('bends the hop diagonal when the second arrow lands a few frames late, with no extra hop', () => {
+    for (const lag of [1, 2, 3, 4]) {
+      const inst = spawn({ seed: 3, wave: 3 });
+      const from = inst.cell;
+      for (let n = 0; n < lag; n++) inst.update(DT, axis(0, 1));
+      for (let n = lag; n < HOP_STEPS - 1; n++) inst.update(DT, axis(1, 1));
+      stepUntil(inst, idle(), (i) => i.state === STAND);
+      expect(inst.cell, `second arrow ${lag} steps late`).toBe(from - COLS + 1);
+      for (let n = 0; n < 60; n++) inst.update(DT, idle());
+      expect(inst.cell).toBe(from - COLS + 1);
+    }
+  });
+
+  it('keeps a mid-air tap made while holding another arrow, even released before the landing', () => {
+    const inst = spawn({ seed: 3, wave: 3 });
+    const from = inst.cell;
+    for (let n = 0; n < 10; n++) inst.update(DT, axis(0, 1));
+    for (let n = 0; n < 3; n++) inst.update(DT, axis(1, 1));
+    stepUntil(inst, axis(0, 1), (i) => i.state === STAND || i.cell !== from);
+    expect(inst.cell).toBe(from - COLS);
+    expect(inst.to).toBe(from - 2 * COLS + 1);
   });
 
   it('hops diagonally on two keys, and the edge of the floor is a wall', () => {
@@ -349,6 +372,22 @@ describe('platforms — the rivals', () => {
             expect(inst.gone[c], `seed ${seed} w${wave} ghost ${id} on a gone tile at ${t.toFixed(2)}`)
               .toBeGreaterThan(t);
           }
+        }
+      }
+    }
+  });
+
+  it('drops every ghost into a hole or with its tile, never over the edge of the floor', () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      for (const wave of [3, 28, 53]) {
+        const inst = spawn({ seed, wave });
+        for (let id = 0; id < RIVAL_COUNT; id++) {
+          const out = inst.rivalOut[id];
+          if (!Number.isFinite(out)) continue;
+          const p = inst.paths[id];
+          const c = cellAt(p.x[p.x.length - 1], p.y[p.y.length - 1]);
+          expect(c, `seed ${seed} w${wave} ghost ${id} ends off the floor`).toBeGreaterThanOrEqual(0);
+          expect(inst.gone[c], `seed ${seed} w${wave} ghost ${id} ends on live stone`).toBeLessThanOrEqual(out + 1e-9);
         }
       }
     }
