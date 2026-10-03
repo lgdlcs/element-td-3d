@@ -40,7 +40,6 @@ import { resolve } from 'node:path';
 import { FIELD } from '../../src/minigames/contract.js';
 import { riteRng } from '../../src/minigames/schedule.js';
 import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
-import { OFFROAD_RITE } from '../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
 import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
 
@@ -90,9 +89,9 @@ function declared(name) {
  * that all six rites obey ONE rule, and a table makes a rite that quietly opts
  * out show up as a missing row rather than as a test nobody wrote.
  *
- * A rite with a 3D view (`luckyshot`, `platforms`) has no row: its logic paints
- * nothing, and the view that reads `--rite-<id>-accent` imports three, which
- * this node-side suite cannot load (docs/MINIGAMES.md §8.1 rule 8).
+ * A rite drawn by a 3D view has no row: its logic paints nothing, and the view
+ * that reads the token imports three.js, which this file cannot load
+ * (docs/MINIGAMES.md §8.1 rule 8). `luckyshot` never had one.
  */
 const CASES = [
   {
@@ -100,12 +99,6 @@ const CASES = [
     token: '--rite-heaven-accent',
     probe: '#123456',
     read: (i) => i._palette.accent,
-  },
-  {
-    def: OFFROAD_RITE,
-    token: '--rite-offroad-accent',
-    probe: '#345678',
-    read: (i) => i._pal.c.accent,
   },
   {
     def: HUNT_RITE,
@@ -167,7 +160,6 @@ describe('per-rite theme tokens resolve on :root', () => {
     // stage in it. Poisoning the name at the root must move nothing.
     document.documentElement.style.setProperty('--rite-accent', '#ff00ff');
     expect(spawn(HEAVEN_RITE)._palette.accent).not.toBe('#ff00ff');
-    expect(spawn(OFFROAD_RITE)._pal.c.accent).not.toBe('#ff00ff');
     expect(spawn(HUNT_RITE).forest.rim).not.toBe('#ff00ff');
     expect(spawn(FISHING_RITE).pal.rAccent).not.toBe(chan('#ff00ff'));
   });
