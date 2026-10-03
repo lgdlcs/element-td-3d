@@ -381,6 +381,41 @@ class PlatformsView extends RiteView {
     this.scene.add(this.alert);
   }
 
+  /**
+   * Tags draw over everything, so a tag hovering over someone a row behind
+   * hides that body. Fade it while it sits on another body's silhouette.
+   */
+  #dimTagsOverBodies() {
+    const cam = this.camera;
+    const tp = this._tp ??= new THREE.Vector3();
+    const bp = this._bp ??= new THREE.Vector3();
+    for (const a of this.bodies) {
+      if (!a.tag.visible) continue;
+      tp.copy(a.tag.position).project(cam);
+      const near = cam.position.distanceToSquared(a.root.position);
+      let hit = false;
+      for (const b of this.bodies) {
+        if (b === a || !b.root.visible) continue;
+        if (cam.position.distanceToSquared(b.root.position) <= near) continue;
+        // NDC per world unit at b, from a one-unit vertical step.
+        bp.copy(b.root.position);
+        bp.y += 1 + 0.5 * BODY_SCALE;
+        bp.project(cam);
+        const top = bp.y;
+        bp.copy(b.root.position);
+        bp.y += 0.5 * BODY_SCALE;
+        bp.project(cam);
+        const u = top - bp.y;
+        const r = 0.4 * BODY_SCALE;
+        const k = this._tagK;
+        // x in NDC is stretched by the inverse aspect relative to y.
+        if (Math.abs(tp.x - bp.x) < u * (r + 0.6 * k) / cam.aspect
+          && Math.abs(tp.y - bp.y) < u * (r + 0.2 * k)) { hit = true; break; }
+      }
+      if (hit) a.tag.material.opacity *= 0.4;
+    }
+  }
+
   #tagTexture(label, hex, you) {
     return canvasTexture(256, 80, (g, w, h) => {
       g.font = `800 ${you ? 46 : 40}px system-ui, -apple-system, Segoe UI, sans-serif`;
@@ -712,6 +747,7 @@ class PlatformsView extends RiteView {
       tag.position.y += 1.62 * BODY_SCALE;
       tag.material.opacity = fallen ? Math.max(0, 1 - f * 1.5) : 1;
     }
+    this.#dimTagsOverBodies();
 
     // The "!" over your head when your own tile starts shaking.
     const me = this.bodies[0];
