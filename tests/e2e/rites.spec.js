@@ -122,8 +122,8 @@ async function openRite(page, id) {
  *
  * WHY `addGold` AND NOT `score`. The obvious instrument for "settled once" is a
  * counter on `score()`, and it is wrong: `score()` is documented PURE and rites
- * are free to call it themselves — FishingRite.#drawHud calls it on every frame
- * to draw the creel bar, and measured, that is 16 calls in a one-second session.
+ * are free to call it themselves — the 2D fishing rite's HUD once called it on
+ * every frame to draw its creel bar, 16 calls in a one-second session.
  * A counter there would be asserting a private drawing habit rather than the
  * host's lifecycle. `Game.addGold` is the other end of the same claim and is
  * unambiguous: `#settle` is the only caller with reason 'minigame', and it is

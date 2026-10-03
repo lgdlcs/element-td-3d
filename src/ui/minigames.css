@@ -68,12 +68,10 @@
   --rite-hunt-trunk-near: #030806;
   --rite-hunt-floor: #0a1310;
 
-  /* Under the waterline. `deep` is the bottom of the stage gradient below and
-     the bottom of the water the canvas paints; they are one colour or the
-     illusion of a continuous body of water breaks at the canvas edge. */
+  /* `accent` is the chrome and the fill of the creel bar the 3D view paints
+     (FishingView reads it once); `deep` is the bottom of the stage gradient. */
   --rite-fishing-accent: #6cc3dd;
   --rite-fishing-deep: #03070c;
-  --rite-fishing-shelf: #0b2233;
 }
 
 #rite {
@@ -394,8 +392,7 @@
 }
 
 #rite[data-rite="fishing"] {
-  /* Under the waterline. Light comes from above and dies quickly, which is
-     also the depth cue the rite plays on. */
+  /* Seen behind the 3D lake only while it loads and at the letterbox edges. */
   --rite-stage-bg:
     radial-gradient(110% 130% at 50% -10%, rgba(74, 156, 186, 0.28), transparent 64%),
     linear-gradient(180deg, #061018, var(--rite-fishing-deep));

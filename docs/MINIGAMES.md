@@ -18,7 +18,7 @@ outright, in one commit, and everything below describes what replaced them.
 | Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
 | Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
 | Game Hunt | `hunt` | 20 s | reaction shot | animals taken out of 8 | 69 | yes |
-| Fishing | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
+| Fishing **(3D)** | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
 
 Full write-ups in §13.
 
@@ -48,7 +48,8 @@ Files:
 | `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
 | `src/minigames/rites/OffroadRite.js` | `offroad` — top-down rally, boost and bomb. |
 | `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot. |
-| `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot. |
+| `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot's logic. |
+| `src/minigames/rites/FishingView.js` | `fishing` — its 3D lake, seen from the pier. |
 | `src/ui/minigames.css` | The overlay's styling. Tokens only, plus one `[data-rite]` block per rite. |
 | `tests/unit/minigames.test.js` | Contract, schedule, registry, reward curve. `node` env. |
 | `tests/unit/rivals.test.js` | The rival model on its own. `node` env. |
@@ -311,8 +312,8 @@ world(x, y) = frame.origin + frame.ux * x + frame.uy * y
 
 | preset | field x → | field y (+up) → | gameplay plane | for |
 |---|---|---|---|---|
-| `FRAMES.upright` | world +X | world +Y | z = 0, facing +Z | galleries, side views (luckyshot, hunt, fishing, heaven) |
-| `FRAMES.ground` | world +X | world **−Z** | y = 0, facing +Y | top-down / tilted arenas (platforms, offroad) |
+| `FRAMES.upright` | world +X | world +Y | z = 0, facing +Z | galleries, side views (luckyshot, hunt, heaven) |
+| `FRAMES.ground` | world +X | world **−Z** | y = 0, facing +Y | top-down / tilted arenas, a water surface (platforms, offroad, fishing) |
 
 1 field unit = 1 world unit in both presets. A custom frame is legal: `ux` and
 `uy` must be orthogonal and the same length.
@@ -997,7 +998,7 @@ Add, per rite:
   searches for a real overlap between its front two rows, because "the frontmost
   target wins" is a rule with teeth only if the ranks actually touch. `fishing`
   asserts that the slowest, longest fish still out-swims its own catch ellipse
-  during one sink — if it did not, aiming *at* a fish would work and the rite
+  during one flight of the lure — if it did not, aiming *at* a fish would work and the rite
   would silently collapse back into `hunt`.
 - **The `skilled` strategy**, which is what turns rule 4 into a real claim.
 
@@ -1182,7 +1183,7 @@ host's CSS kick on the stage is the impact channel.
 `hunt` does it better for its own shape: a shot that hits nothing **spooks the
 animal**, which punishes exactly the behaviour the rite is about resisting and
 says "you scared it off" instead of "you have run out". `fishing` uses the reel
-(1.05 s per empty cycle against 0.65 s for a landed one). `offroad` makes boost
+(1.05 s per empty cycle against 0.75 s for a landed one, at wave 3). `offroad` makes boost
 in the scrub a net loss. `platforms` and `heaven` do not need one: their verb is
 position, and there is nothing to mash.
 
@@ -1356,35 +1357,51 @@ Fourteen of them over the round.
   put a good player at 0.7 and a great one at 0.95, compressing every human into
   the top third of the curve.
 
-### `fishing` — Fishing · 20 s · 94 draws · rivals
+### `fishing` — Fishing · 20 s · 94 draws · rivals · **3D**
 
-A lake at dawn, seen side-on, four anglers on one water, sixteen fish. Same
-competitive rule as `hunt`, same clock, **deliberately not the same game**.
+A lake at dawn, **in 3D**, seen from the end of a pier: pines on the shore,
+reeds along the sides, three rival anglers in rowboats at the far end, sixteen
+fish swimming under translucent water at different depths. Your rod rests in
+the bottom-right corner. Same competitive rule as `hunt`, same clock,
+**deliberately not the same game**.
 
 - **The verb is the whole design.** `hunt` is a *reaction* shot; `fishing` is a
-  *leading* shot. A click drops a hook at the pointer, it sinks for **0.35 s**,
-  and it catches whatever it overlaps **at the moment it lands** — not on the way
-  down. The fish never stop moving, so the question is not "where is it" but
-  "where will it be". Without this split, two of the eleven rites in a run are one
-  game with different sprites, which was the single largest design risk in the
-  batch. **Nothing in that file may drift toward reaction, and nothing in `hunt`
+  *leading* shot. A click casts: the lure flies in an arc from the rod tip and
+  splashes down **0.45 s** later (`FLIGHT`) exactly where you clicked, and it
+  catches whatever it overlaps **at the splash**, never what it flew over. The
+  fish never stop, so the question is "where will it be when the lure lands".
+  **Nothing in that file may drift toward reaction, and nothing in `hunt`
   toward prediction.**
-- The lead is made **visible**, because a lead you cannot see is a coin flip with
-  extra steps: every fish trails a wake exactly as long as the distance it covers
-  in one sink ("cast one wake ahead of the nose"), and the fish nearest the
-  pointer shows a dashed ghost where it will be when the hook arrives.
-- **The sink is a constant, not a function of depth.** Physically wrong, and
-  right: a per-lane lead could never be *learned*, and the rite would reward
-  arithmetic instead of reading the water. Depth is spent on legibility instead
-  (deep fish are dimmer).
-- **Controls.** Left, right and Space are one verb; **exactly one cast per step**
-  however many clicks arrive, and the extras are not queued for later. Reeling is
-  0.7 s after an empty cast against 0.3 s after a catch — the anti-mash rule,
-  expressed in the fiction instead of in a counter.
-- **Score.** `ratio = points / PAR`, `PAR = 0.55 × (15 + 3) = 9.9` — the golden
-  fish is worth 3 and is confined to indices 4..11, because the index also sets
-  the deadline and a golden fish at 0 is gone before the player has read the
-  water.
+- **The field is the water surface** (`FRAMES.ground`, field y runs out from
+  the pier). Each fish is drawn on the camera ray through its field point at
+  its own cosmetic depth (`placeOnRay`), so deep fish look deep and still
+  cover the pixels of their catch ellipse. The depth never reaches the rite.
+- **The lead is drawn.** Every fish trails a wake on the surface exactly as long
+  as the distance it swims during one flight ("aim one wake ahead of the
+  fish"), and for the first three casts a dashed ring marks where the lure must
+  land to catch the fish nearest the pointer (`ghostCasts`, `nearestFish`).
+  The speed band is 3× wide and stratified, so no memorised offset plays the
+  rite: the unit suite searches for the best constant and requires it to lose.
+- **The rivals are visible.** In the last 1.5 s before a rival's deadline its
+  float bobs over the fish, on a line from its boat; at the deadline the fish
+  is yanked out of the water to that boat and the name tag's tally ticks up.
+  Your catches leap out of the water into the creel on the pier.
+- **Controls.** Aim with the pointer, cast with **left, right or Space**.
+  **Exactly one cast per step** however many clicks arrive, and the extras are
+  not queued. Reeling is 0.6 s after an empty cast against 0.3 s after a catch
+  (both ×1.5 by wave 53): the anti-mash rule, expressed in the fiction. The
+  reticle on the water shows the reel as a filling dial.
+- **Score.** `ratio = points / PAR`, `PAR = 0.66 × (15 + 3) = 11.88`. The golden
+  fish is worth 3, swims fast and shallow, and is confined to indices 4..11,
+  because the index also sets the deadline.
+- **What changed from the side-on version.** The view moved from a side-on
+  cutaway (hook dropped at the pointer, sinking for 0.45 s) to a pier over a
+  lake (lure cast in an arc), because "it sinks, so it does not catch on the
+  way down" needed a sentence and "it is in the air" does not. Lanes now span
+  the lake (±3.2 across the field's 9 units), so the catch ellipse is wider
+  across a fish's path (`RY_K` 0.6) and the reels and squeeze were retuned
+  against the calibration gate: reference player 0.89 / 0.67 / 0.61 at waves
+  3 / 28 / 53, clumsy player 0.10 at wave 53, flawless 0.985 at wave 53.
 
 ---
 

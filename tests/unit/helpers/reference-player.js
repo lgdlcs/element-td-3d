@@ -78,7 +78,7 @@ import {
   OFFROAD_RITE, HALF_W, RIVAL_COUNT as OFFROAD_RIVALS,
 } from '../../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../../src/minigames/rites/HuntRite.js';
-import { FISHING_RITE, FISH, SINK, SWIMMING } from '../../../src/minigames/rites/FishingRite.js';
+import { FISHING_RITE, FISH, FLIGHT, SWIMMING } from '../../../src/minigames/rites/FishingRite.js';
 
 const DT = MINIGAMES.dt;
 
@@ -561,13 +561,13 @@ function huntIntent(inst) {
 
 /* ---- fishing ----------------------------------------------------------- */
 /**
- * From `tests/unit/fishing-rite.test.js` (`SKILLED` = `aimAt(SINK)`): cast at
- * where the nearest uncontested fish WILL BE when the hook lands. The lead is
+ * From `tests/unit/fishing-rite.test.js` (`SKILLED` = `aimAt(FLIGHT)`): cast at
+ * where the nearest uncontested fish WILL BE when the lure lands. The lead is
  * the entire rite; `aimAt(0)` is the same player without it and scores far less.
  */
 function fishingIntent(inst) {
   if (inst.hook || inst.t < inst.readyAt) return NO_INTENT;
-  const tl = inst.t + DT + SINK;
+  const tl = inst.t + DT + FLIGHT;
   let best = -1, bestD = Infinity;
   for (let i = 0; i < FISH; i++) {
     const f = inst.fish[i];
@@ -586,7 +586,7 @@ function fishingIntent(inst) {
   // fish-travel behind the hook — which is not a worse angler, it is an angler
   // playing a rite that does not exist.
   return {
-    aim: (now) => ({ x: inst.fishX(f, now + DT + SINK), y: inst.fishY(f, now + DT + SINK) }),
+    aim: (now) => ({ x: inst.fishX(f, now + DT + FLIGHT), y: inst.fishY(f, now + DT + FLIGHT) }),
     axis: null, fire: true, alt: false,
   };
 }
