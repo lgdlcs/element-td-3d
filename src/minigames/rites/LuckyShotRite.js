@@ -589,8 +589,8 @@ export const LUCKY_SHOT_RITE = {
   name: 'Lucky Shot',
   hint: 'Knock down the tin targets — every shot costs a round',
   rules: [
-    'Shoot the targets sliding past: ducks are worth 1, rabbits 2, plates 3.',
-    'The golden one pays 4x, once. The figure with its hands up costs you 1.',
+    'Shoot the targets as they slide past. Ducks 1, rabbits 2, plates 3.',
+    'The golden one pays 4x, once. The figure with raised hands costs 1.',
     '24 rounds, and a miss spends one too. 38 points pays in full.',
   ],
   keys: [

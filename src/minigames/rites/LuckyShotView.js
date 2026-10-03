@@ -19,24 +19,33 @@
  *  4. EVERYTHING IS BUILT ONCE. Meshes, textures and particle pools are made in
  *     the constructor and only moved, shown or hidden afterwards: no allocation
  *     per frame, no material created mid-rite (each new one is a shader compile,
- *     docs/PERF_BUDGET.md), and one `dispose()` returns all of it.
+ *     docs/PERF_BUDGET.md), and one `dispose()` returns all of it. The
+ *     constructor ends with one render so the host's compile sees every
+ *     material the first frames will use, and uploads every texture a cue swaps in.
+ *  5. THE CAMERA MAY MOVE. It sways a little toward the aim, so the rows slide
+ *     against each other and the booth reads as a room, not a picture. The host
+ *     re-picks the pointer every frame, so a moving camera never moves a shot.
  */
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MINIGAMES } from '../../core/Config.js';
-import { clamp } from '../contract.js';
+import { clamp, FIELD } from '../contract.js';
 import { RiteView, FRAMES, placeOnRay, addStandardLights, Bursts } from '../Stage3D.js';
 import {
-  ROW_TABLE, TARGETS, AMMO, PAR, RESET_SPIN, LOW_AMMO, GOLDEN_MULT,
+  ROW_TABLE, TARGETS, AMMO, PAR, RESET_SPIN, LOW_AMMO, GOLDEN_MULT, BYSTANDER_VALUE,
 } from './LuckyShotRite.js';
 
 /**
  * Depth of each row BEHIND the gameplay plane, front row first (negative is in
  * front of it). Presentation only: the hit test never sees these numbers.
  */
-const ROW_DEPTH = [-1.6, 0.9, 3.2];
-const WALL_DEPTH = 4.6;
+const ROW_DEPTH = [-2.0, 1.4, 4.6];
+const WALL_DEPTH = 6.8;
+/** Shelf depth in world units: the plank each row's targets stand on, seen from above. */
+const SHELF = 1.3;
+/** How far the camera drifts toward the aim at the field's edge, in world units. */
+const SWAY = 1.2;
 const AWNING_DEPTH = -2.2;
 const COUNTER_DEPTH = -3.2;
 
@@ -138,7 +147,11 @@ const ROW_KIND = ['duck', 'rabbit', 'plate'];
 
 class LuckyShotView extends RiteView {
   constructor(stage, rite) {
-    super(stage, rite, { frame: FRAMES.upright, fov: 42, tilt: -9, background: 0x0d0805 });
+    // Looked at from a little above and to the right: the shelves show their
+    // tops, the tin shows its thickness, and the rows stand at visibly
+    // different depths. The margin is the room the sway needs to keep all four
+    // field corners on screen.
+    super(stage, rite, { frame: FRAMES.upright, fov: 40, tilt: -15, yaw: 7, margin: 0.05, background: 0x0d0805 });
     this.scene.environment = stage.environment();
     this.scene.environmentIntensity = 0.3;
     this.P = readPalette();
@@ -149,7 +162,10 @@ class LuckyShotView extends RiteView {
     this.hitAt = new Float64Array(TARGETS).fill(-1e9);
     this._tmp = new THREE.Vector3();
     this._tmp2 = new THREE.Vector3();
-    this._hudKey = '';
+    this._hud = { points: -1, ammo: -1, streak: -1, pulse: -1 };
+    this.sway = 0;
+    this._camBase = new THREE.Vector3();
+    this._camLook = new THREE.Vector3();
 
     this.#buildLights();
     this.#buildTextures();
@@ -160,6 +176,8 @@ class LuckyShotView extends RiteView {
     this.#buildFx();
     this._built = true;
     this.layout(16 / 9);
+    this.render(0, 0);
+    for (const t of this.popTex.values()) stage.renderer.initTexture(t);
   }
 
   // ---- construction -------------------------------------------------------
@@ -267,13 +285,15 @@ class LuckyShotView extends RiteView {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), brass);
       const board = new THREE.Mesh(this.#boardGeometry(row), boardMat[row]);
       board.receiveShadow = true;
-      S.add(rail, board);
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), darkWood);
+      shelf.receiveShadow = true;
+      S.add(rail, board, shelf);
       let crestMesh = null;
       if (crest[row]) {
         crestMesh = new THREE.Mesh(this.#boardGeometry(row, 0.5), crest[row]);
         S.add(crestMesh);
       }
-      return { rail, board, crest: crestMesh };
+      return { rail, board, shelf, crest: crestMesh };
     });
 
     // The awning: stripes, a scalloped hem, and a string of bulbs.
@@ -377,7 +397,7 @@ class LuckyShotView extends RiteView {
         new THREE.MeshStandardMaterial({ color: 0xbdb3a0, roughness: 0.7 }),
       ],
       golden: new THREE.MeshStandardMaterial({
-        color: 0xffc642, roughness: 0.2, metalness: 0.95, emissive: 0x7a4a00, emissiveIntensity: 0.55,
+        color: 0xffc642, roughness: 0.3, metalness: 0.55, emissive: 0x8a5600, emissiveIntensity: 0.8,
       }),
       figure: new THREE.MeshStandardMaterial({ color: 0xf1e6d0, roughness: 0.85 }),
     };
@@ -406,7 +426,7 @@ class LuckyShotView extends RiteView {
       }
       pivot.add(body);
       this.scene.add(pivot);
-      this.items.push({ pivot, body, mesh, badge, kind, look: '' });
+      this.items.push({ pivot, body, mesh, badge, kind, lookKind: '', lookValue: 0 });
     }
 
     this.star = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -443,35 +463,61 @@ class LuckyShotView extends RiteView {
     this.scene.add(this.rifle);
   }
 
+  /**
+   * A light reticle over a dark one a size larger: the light one alone vanished
+   * over the yellow ducks and the golden target, the dark one alone over the
+   * dark wood. Together they read on everything in the booth.
+   */
   #buildCrosshair() {
-    const m = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(this.P.goldHi), depthTest: false, depthWrite: false, transparent: true, toneMapped: false,
+    const mat = (color) => new THREE.MeshBasicMaterial({
+      color, depthTest: false, depthWrite: false, transparent: true, toneMapped: false,
     });
+    const halo = mat(0x0a0604);
+    halo.opacity = 0.85;
+    const m = mat(0xfff6e2);
     this.crossMat = m;
     this.cross = new THREE.Group();
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.27, 0.31, 40), m);
-    this.cross.add(ring);
+    const add = (geo, material, order) => {
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.renderOrder = order;
+      this.cross.add(mesh);
+      return mesh;
+    };
+    add(new THREE.RingGeometry(0.235, 0.345, 40), halo, 10);
+    add(new THREE.RingGeometry(0.265, 0.315, 40), m, 11);
     for (let q = 0; q < 4; q++) {
-      const tick = new THREE.Mesh(new THREE.PlaneGeometry(0.035, 0.2), m);
       const a = q * Math.PI / 2;
-      tick.position.set(Math.cos(a) * 0.46, Math.sin(a) * 0.46, 0);
-      tick.rotation.z = a + Math.PI / 2;
-      this.cross.add(tick);
+      for (const [w, h, material, order] of [[0.085, 0.25, halo, 10], [0.035, 0.2, m, 11]]) {
+        const tick = add(new THREE.PlaneGeometry(w, h), material, order);
+        tick.position.set(Math.cos(a) * 0.46, Math.sin(a) * 0.46, 0);
+        tick.rotation.z = a + Math.PI / 2;
+      }
     }
-    this.cross.add(new THREE.Mesh(new THREE.CircleGeometry(0.03, 10), m));
-    this.cross.renderOrder = 10;
-    this.cross.traverse((o) => { o.renderOrder = 10; });
+    add(new THREE.CircleGeometry(0.06, 12), halo, 10);
+    add(new THREE.CircleGeometry(0.03, 10), m, 11);
     this.scene.add(this.cross);
   }
 
   #buildFx() {
-    this.sparks = new Bursts({ count: 220, size: 0.09, gravity: -8 });
-    this.shards = new Bursts({ count: 160, size: 0.11, gravity: -14, additive: false, drag: 0.99 });
+    const seed = this.rite.fxSeed >>> 0;
+    this.sparks = new Bursts({ count: 220, size: 0.09, gravity: -8, seed });
+    this.shards = new Bursts({ count: 160, size: 0.11, gravity: -14, additive: false, drag: 0.99, seed: seed ^ 0x5bd1e995 });
     this.scene.add(this.sparks.points, this.shards.points);
+    // Every score a shot can show, made now: a row's value, the golden's
+    // multiple of it, and the bystander's penalty.
     this.popTex = new Map();
+    for (const R of ROW_TABLE) {
+      this.#popTexture(R.value);
+      this.#popTexture(R.value * GOLDEN_MULT);
+    }
+    this.#popTexture(BYSTANDER_VALUE);
     this.pops = [];
     for (let k = 0; k < POPS; k++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, toneMapped: false }));
+      // Born with a map, so the program compiled behind the intro card is the
+      // USE_MAP one a cue needs; a cue then only swaps which texture.
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.#popTexture(1), transparent: true, depthTest: false, toneMapped: false,
+      }));
       s.visible = false;
       s.renderOrder = 9;
       this.scene.add(s);
@@ -482,7 +528,7 @@ class LuckyShotView extends RiteView {
 
   #popTexture(value) {
     const label = value > 0 ? `+${value}` : `${value}`;
-    let t = this.popTex.get(label);
+    let t = this.popTex.get(value);
     if (!t) {
       const col = value < 0 ? this.P.danger : value > 3 ? this.P.goldHi : this.P.gold;
       t = canvasTexture(128, 64, (g, w, h) => {
@@ -492,7 +538,7 @@ class LuckyShotView extends RiteView {
         g.strokeText(label, w / 2, h / 2 + 2);
         g.fillStyle = col; g.fillText(label, w / 2, h / 2 + 2);
       });
-      this.popTex.set(label, t);
+      this.popTex.set(value, t);
     }
     return t;
   }
@@ -517,9 +563,15 @@ class LuckyShotView extends RiteView {
       const foot = R.y - r * 1.02;
       const kk = placeOnRay(cam, f, 0, foot, ROW_DEPTH[row] - 0.25, v);
       this.rowK[row] = placeOnRay(cam, f, 0, 0, ROW_DEPTH[row], this._tmp2);
-      const { rail, board, crest } = this.rows[row];
+      const { rail, board, shelf, crest } = this.rows[row];
       rail.position.copy(v);
       rail.scale.set(26 * kk, 0.07 * kk, 0.12 * kk);
+      // The plank the targets stand on runs back from the rail; its top is
+      // what the raised camera sees, and what their shadows fall on.
+      placeOnRay(cam, f, 0, foot, ROW_DEPTH[row] - 0.25 + SHELF / 2, v);
+      shelf.position.copy(v);
+      shelf.position.y -= 0.03;
+      shelf.scale.set(26 * kk, 0.06, SHELF);
       const below = row === 0 ? foot - (-3.45) : row === 1 ? 0.95 : 0.85;
       placeOnRay(cam, f, 0, foot, ROW_DEPTH[row] - 0.32, v);
       board.position.copy(v);
@@ -541,9 +593,10 @@ class LuckyShotView extends RiteView {
     // Box depths are in world units along the plane normal (world z here), so
     // the counter's front face sits at COUNTER_DEPTH - 0.6 and the scoreboard
     // is painted just in front of it, below the lip of the top slab.
-    k = placeOnRay(cam, f, 0, -4.2, COUNTER_DEPTH, v);
+    // Tall enough to run off the bottom of the stage at any sway.
+    k = placeOnRay(cam, f, 0, -5.0, COUNTER_DEPTH, v);
     this.counter.position.copy(v);
-    this.counter.scale.set(26 * k, 1.7 * k, 1.2);
+    this.counter.scale.set(26 * k, 3.3 * k, 1.2);
     k = placeOnRay(cam, f, 0, -3.36, COUNTER_DEPTH, v);
     this.counterTop.position.copy(v);
     this.counterTop.scale.set(26 * k, 0.1 * k, 1.3);
@@ -553,8 +606,9 @@ class LuckyShotView extends RiteView {
 
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
+    // Left end of the counter: the rifle owns the right.
     for (let s = 0; s < AMMO; s++) {
-      const x = 7.4 - s * 0.25;
+      const x = -7.4 + s * 0.25;
       const kk = placeOnRay(cam, f, x, -3.31, COUNTER_DEPTH - 0.1, v);
       m.compose(v, q, new THREE.Vector3(kk, kk, kk));
       this.shells.setMatrixAt(s, m);
@@ -563,10 +617,14 @@ class LuckyShotView extends RiteView {
     this.shellK = placeOnRay(cam, f, 0, 0, COUNTER_DEPTH, v);
 
     this.wallK = placeOnRay(cam, f, 0, 0, WALL_DEPTH, v);
-    this.rifleK = placeOnRay(cam, f, 5.6, -4.4, -6.2, v);
+    // Low in the right corner and short: the muzzle stays under the front
+    // rail wherever it points, so the rifle never covers a live target.
+    this.rifleK = placeOnRay(cam, f, 6.4, -5.6, -6.2, v);
     this.rifleBase = v.clone();
-    this.rifle.scale.setScalar(this.rifleK * 1.45);
+    this.rifle.scale.setScalar(this.rifleK * 1.25);
     this._ammoShown = -1;
+    this._camBase.copy(cam.position);
+    this.world(0, 0, this._camLook);
   }
 
   // ---- cues: where every effect starts -----------------------------------
@@ -603,8 +661,7 @@ class LuckyShotView extends RiteView {
     }
     const p = this.pops[this.popAt];
     this.popAt = (this.popAt + 1) % POPS;
-    p.s.material.map = this.#popTexture(ev.value);
-    p.s.material.needsUpdate = true;
+    p.s.material.map = this.popTex.get(ev.value) ?? p.s.material.map;
     p.life = 0.9; p.x = ev.x; p.y = ev.y;
   }
 
@@ -620,6 +677,13 @@ class LuckyShotView extends RiteView {
     this.recoil = Math.max(0, this.recoil - dt * 7);
     this.flash = Math.max(0, this.flash - dt * 14);
     this.golden = Math.max(0, this.golden - dt * 2.4);
+
+    // The sway, first: everything below is placed through this camera.
+    const want = R.aimed ? clamp(R.aimX / FIELD.hw, -1, 1) : 0;
+    this.sway += (want - this.sway) * Math.min(1, dt * 2.2);
+    cam.position.copy(this._camBase).addScaledVector(f.ux, this.sway * SWAY);
+    cam.lookAt(this._camLook);
+    cam.updateMatrixWorld();
 
     // Targets.
     let goldenItem = -1;
@@ -643,8 +707,7 @@ class LuckyShotView extends RiteView {
       it.pivot.rotation.x = -lying * DOWN_TILT;
       it.pivot.rotation.z = Math.sin(this.clock * 3 + i) * 0.03 * (1 - lying);
 
-      const look = tg.kind === 'creep' ? `c${tg.value}` : tg.kind;
-      if (look !== it.look) this.#dress(it, tg, look);
+      if (tg.kind !== it.lookKind || tg.value !== it.lookValue) this.#dress(it, tg);
       if (tg.kind === 'golden' && !down) goldenItem = i;
     }
 
@@ -718,8 +781,9 @@ class LuckyShotView extends RiteView {
     this.shards.update(dt);
   }
 
-  #dress(it, tg, look) {
-    it.look = look;
+  #dress(it, tg) {
+    it.lookKind = tg.kind;
+    it.lookValue = tg.value;
     const golden = tg.kind === 'golden';
     if (it.kind === 'plate') it.mesh.material = golden ? this.bodyMat.goldenPlate : this.bodyMat.plate;
     else if (it.kind === 'figure') it.mesh.material = this.bodyMat.figure;
@@ -738,9 +802,9 @@ class LuckyShotView extends RiteView {
     const R = this.rite;
     const low = R.ammo <= LOW_AMMO;
     const pulse = low && R.ammo > 0 ? Math.round((Math.sin(this.clock * 9) * 0.5 + 0.5) * 3) : 0;
-    const key = `${R.points}|${R.ammo}|${R.bestStreak}|${pulse}`;
-    if (key === this._hudKey) return;
-    this._hudKey = key;
+    const h = this._hud;
+    if (h.points === R.points && h.ammo === R.ammo && h.streak === R.bestStreak && h.pulse === pulse) return;
+    h.points = R.points; h.ammo = R.ammo; h.streak = R.bestStreak; h.pulse = pulse;
     const g = this.hudCanvas.getContext('2d');
     const W = this.hudCanvas.width, H = this.hudCanvas.height;
     g.clearRect(0, 0, W, H);
