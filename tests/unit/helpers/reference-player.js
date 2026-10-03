@@ -47,9 +47,9 @@
  * read the fall schedule, the claim deadlines, the exact hit discs. So the body
  * degrades EXECUTION (when, where, how steadily) and never KNOWLEDGE. In a rite
  * whose difficulty is mostly "can you read the warning in time", that makes
- * every number here an UPPER BOUND on what a human scores — `platforms` is the
- * clear case, and its measured curve should be read as "even knowing the whole
- * schedule, this is what execution costs you". This is a limit of the harness,
+ * every number here an UPPER BOUND on what a human scores. (`platforms` used to
+ * be the clear case; its brain now reads only the tile tiers the 3D floor
+ * shows, so its row is the one exception.) This is a limit of the harness,
  * not of the rites, and the six rite suites' own bots have the same limit; it is
  * recorded here rather than quietly absorbed.
  *
@@ -71,7 +71,7 @@ import { riteRng } from '../../../src/minigames/schedule.js';
 
 import { HEAVEN_RITE, PLAY_HW, PLAY_HH } from '../../../src/minigames/rites/HeavenRite.js';
 import {
-  PLATFORMS_RITE, cellX, cellY, cellAt, neighbours,
+  PLATFORMS_RITE, cellX, cellY, neighbours, STRESS_LEAD as PLATFORMS_STRESS,
 } from '../../../src/minigames/rites/PlatformsRite.js';
 import { LUCKY_SHOT_RITE, TARGETS } from '../../../src/minigames/rites/LuckyShotRite.js';
 import {
@@ -441,35 +441,52 @@ export function heavenBestXY(inst) {
 
 /* ---- platforms --------------------------------------------------------- */
 /**
- * Lifted from `tests/unit/platforms-rite.test.js` (`skilled`). Stand still while
- * the plate is comfortable; otherwise move to whichever neighbour lasts longest.
- * Reads `inst.gone`, so it is an ORACLE and scores above any human — stated at
- * the original site and repeated here so nobody reads a perfect run as a claim
- * about the player experience.
+ * Lifted from `tests/unit/platforms-rite.test.js` (`skilled`). It reads only
+ * what the 3D floor SHOWS: a tile is settled, darkened (`STRESS_LEAD` x the
+ * warning ahead of its shake), shaking (with a glow that grows as it nears the
+ * drop), or a hole. Settled tiles all look alike, so among them it prefers the
+ * one with the most settled ground around it — "hop away from the collapse".
+ * It leaves its own tile as soon as it darkens.
+ *
+ * NOT AN ORACLE ANY MORE. The 2D rite's bot read `inst.gone` directly and
+ * re-planned 1.1 s ahead, which made reaction lag free by construction and the
+ * whole column of this rite a picture of the bot. Seeing only the tiers is what
+ * a player sees, so lag and missteps now cost what they cost a player.
+ *
+ * Mid-hop it plans from the tile it is flying to, so the axis it holds is the
+ * NEXT hop, which the rite queues for the landing.
  */
-const NB = new Int32Array(4);
+const NB = new Int32Array(8);
+const NB2 = new Int32Array(8);
+
+/** What a tile looks like at `t`, as a number: higher is safer. */
+function platformsLook(inst, i) {
+  const left = inst.gone[i] - inst.t;
+  if (left <= 0) return -1e9;
+  const w = inst.shake[i];
+  if (left <= w) return left;                              // shaking: the glow says how long
+  if (left <= w * PLATFORMS_STRESS) return 50; // darkened
+  let open = 0;
+  const n = neighbours(i, NB2);
+  for (let k = 0; k < n; k++) if (inst.gone[NB2[k]] - inst.t > inst.shake[NB2[k]] * PLATFORMS_STRESS) open++;
+  return 100 + open;
+}
 
 function platformsIntent(inst) {
-  const cur = cellAt(inst.px, inst.py);
-  if (cur < 0) return NO_INTENT;
+  if (!inst.alive) return NO_INTENT;
+  const cur = inst.to >= 0 ? inst.to : inst.cell;
+  const here = platformsLook(inst, cur);
+  if (here >= 100) return NO_INTENT;
   const n = neighbours(cur, NB);
-  let best = cur, bestGone = inst.gone[cur];
+  let best = cur, bestV = here;
   for (let k = 0; k < n; k++) {
-    if (inst.gone[NB[k]] > bestGone) { bestGone = inst.gone[NB[k]]; best = NB[k]; }
+    const v = platformsLook(inst, NB[k]);
+    if (v > bestV) { bestV = v; best = NB[k]; }
   }
-  const target = inst.gone[cur] - inst.t > 1.1 ? cur : best;
-  const gx = cellX(target), gy = cellY(target);
-  // The CHOICE of tile is what the reaction time delays. The walk to it is a
-  // closed loop on the marker's live position, which is why this is a function.
+  if (best === cur) return NO_INTENT;
   return {
     aim: null,
-    axis: () => {
-      const tx = gx - inst.px, ty = gy - inst.py;
-      return {
-        x: Math.abs(tx) > 0.06 ? Math.sign(tx) : 0,
-        y: Math.abs(ty) > 0.06 ? Math.sign(ty) : 0,
-      };
-    },
+    axis: { x: Math.sign(cellX(best) - cellX(cur)), y: Math.sign(cellY(best) - cellY(cur)) },
     fire: false,
     alt: false,
   };

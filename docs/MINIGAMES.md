@@ -14,7 +14,7 @@ outright, in one commit, and everything below describes what replaced them.
 | rite | id | clock | verb | scores on | `RAND_CALLS` | rivals |
 |---|---|---:|---|---|---:|:--:|
 | escape from gay heaven **(3D)** | `heaven` | 20 s | steer a mote, pointer or `axis` | strikes dodged out of a fixed count | 121 | — |
-| Falling Platforms | `platforms` | 24 s | steer a marker, `axis` only | survival + who you outlasted | 41 | yes |
+| Falling Platforms **(3D)** | `platforms` | 24 s | hop tile to tile, `axis` only | survival + who you outlasted | 41 | yes |
 | Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
 | Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
 | Game Hunt | `hunt` | 20 s | reaction shot | animals taken out of 8 | 69 | yes |
@@ -44,7 +44,8 @@ Files:
 | `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, intro card, loop, clock, click queue, result, payout. |
 | `src/minigames/rites/HeavenRite.js` | `heaven` — dodge everything pink. |
 | `src/minigames/rites/HeavenView.js` | `heaven` — its cloud arena in 3D. |
-| `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 dalles, they all fall. |
+| `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 floating tiles, they all fall. The hop logic. |
+| `src/minigames/rites/PlatformsView.js` | `platforms` — its 3D floor over the void. |
 | `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery's logic. **The reference rite.** |
 | `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
 | `src/minigames/rites/OffroadRite.js` | `offroad` — top-down rally, boost and bomb. |
@@ -1145,8 +1146,8 @@ step of your rite can time out, `duration` must exceed
 `steps × (per-step timeout + resolve hold)`, or a player who does nothing sees
 fewer results than the UI promised. Derive the number rather than feeling it, and
 assert in a unit test that the idle run finishes inside it. `platforms` shows the
-honest version of the other direction: its own schedule wants 25.99 s at wave 3
-and gets 24, so the score's denominator is `runLength`, the *shorter* of the two,
+honest version of the other direction: its own schedule wants about 25.5 s at wave
+3 and gets 24, so the score's denominator is `runLength`, the *shorter* of the two,
 and both cases are scored out of the run the player actually got.
 
 **Escape and the result card race by design.** Never assume `close()` happens
@@ -1167,8 +1168,8 @@ standing wall for a beam, a crystal for a ring), the way out is drawn
 saturated magenta anywhere on the stage. `luckyshot` encodes a row's
 value three ways at once — height, size and speed — so the back row reads as
 worth more before anyone has read a number. `platforms` gives its crack warning
-four channels: a fuse bar whose *length* is the time left, a colour flip, an
-accelerating shake and widening seams.
+four channels: the tile darkens first, then a tremble, a crack glow and a sink
+that all grow until the drop, and a "!" over your own head.
 
 **A pulse goes on the glow, never on the silhouette.** A shape that breathes is a
 shape whose hitbox appears to breathe, and a hitbox that lies is worse than no
@@ -1284,29 +1285,69 @@ it is the name the map used.
   one pip per strike on a dark plate: blue dodged, pink touched. The strike
   light is warm, never pink: only what can hit is pink.
 
-### `platforms` — Falling Platforms · 24 s · 41 draws · rivals
+### `platforms` — Falling Platforms · 24 s · 41 draws · rivals · **3D**
 
-Twenty-eight stone dalles over a void, 7 × 4. They crack, they shake, they go.
-You and three rivals stand on them and **the only verb is where you stand**.
+Twenty-eight floating tiles over a violet void, 7 × 4. They darken, shake,
+glow along their cracks and tumble into the fog. You and three rivals hop
+between them, and **the only verb is where you hop**.
 
-- **Controls.** `axis` only, continuous at 4.4 u/s, diagonals normalised. **The
-  marker is not snapped to tiles**: a tile-snapped marker turns every decision
-  into a keypress that lands or does not, and all the pressure of a falling-floor
-  game is in the half second where you are committed and not yet across. The cost
-  is named: cell boundaries are invisible mid-move, so the drawn gaps between
-  plates are **paint only** — you fall because the cell under you is gone or off
-  the grid, never because you were over a seam.
-- **Three legibility tiers**, because the warning *is* the game: settled →
-  stressed (desaturated, hairline seam, slow tremble, `STRESS_LEAD` × the warning
-  ahead of it) → cracking (loud, four redundant channels). The warning-to-interval
-  ratio is ~2.8 so about three plates are live at once. A first pass at 1.0 s
-  against a 0.85 s interval was **measured wrong**: with one doomed plate among
-  four neighbours, moving anywhere was correct, and a scripted player who could
-  see nothing beyond the loud tier scored 0.92 — identical to an omniscient one.
-- **Score.** `0.75 × (alive / runLength) + 0.25 × (rivals outlasted / 3)`.
-  `runLength` is the shorter of the clock and the schedule, so both the wave-3
-  case (the floor never quite empties) and the wave-53 case (the floor runs out
-  at ~13.9 s and the rite ends there) are scored out of the run the player got.
+- **Controls.** `axis` only. One arrow is one hop to the next tile, in
+  `HOP` = 0.42 s; holding keeps hopping; two arrows hop diagonally. Nobody
+  presses two keys in the same frame, so a second arrow within
+  `TAKEOFF_GRACE` = 80 ms of takeoff that keeps the hop's direction bends that
+  hop diagonal; without it, "hold two arrows" gave a straight hop plus an extra
+  diagonal one. A press that starts mid-air is queued for the landing and wins
+  over a key held through the hop, so a quick tap is never lost; letting go of
+  one of two keys never overwrites a queued press; a key merely held through a
+  hop is not queued, or one long press would be two hops. **The edge of the floor is a wall**: a hop that would leave the
+  grid drops the off-grid component, and does nothing if none is left. The
+  void you fall into is the holes, which you can see.
+- **Why hops, not the old sliding marker.** The 2D rite steered a free marker
+  across invisible cell boundaries and added a SAG (a cracking tile pulled you
+  back toward its centre, by a per-tile amount) so that leaving late cost
+  something. Both needed a paragraph to explain, and in 3D a body standing half
+  over a gap looks like it should fall. A hop lands on a tile or in a hole, and
+  the eye sees which before it happens. The sag and its per-tile temper are
+  deleted.
+- **The collapse is unchanged** (four seeded swells plus a well under the
+  player, ranked into a permutation, the player's tile first), so neighbours
+  go together and the last ground is a pocket you have to reach early.
+- **Timing.** A tile STARTS to shake on a constant beat in `order`; it shakes
+  for the wave's `warn` × (1 ± 0.35), read off the collapse draws, then drops.
+  `warn` runs 1.5 → 0.85 s and the beat 0.85 → 0.42 s over waves 3 → 53, on a
+  square-root curve so the middle waves already bite. The view darkens a tile
+  `STRESS_LEAD` = 1.3 × its shake before the drop. One shake length for the
+  whole floor made reaction time a cliff (always make it, or never); the
+  spread turns it into a slope, the same lesson the 2D temper taught.
+- **Rivals.** Ghost hop lists built in `init` from the same schedule: each
+  hops to its longest-lived neighbour `lag` seconds before its tile goes. The
+  published `SeededRivals.outAt` is a cap: from `LURE` = 2.2 s before it, a
+  doomed ghost stops reacting and wanders over tiles that outlast the cap
+  toward the nearest hole, then misjudges one hop into it and lands at exactly
+  the cap (or rides its own tile down if that goes first). Before the lure,
+  ~7% of rival deaths were leaps off the floor edge, which the rules call a
+  wall; over 6 000 runs there are now none. 2.5% of deaths now come up to one
+  `HOP` early, riding a tile that drops just before the cap (mean −3 ms). A
+  ghost is never drawn standing on a tile that has gone, and never ends off
+  the floor or on live stone (both unit-tested).
+- **Score.** `0.75 × (alive / runLength) + 0.25 × (rivals outlasted / 3)`,
+  unchanged. Idle dies with the first tile: 0.06–0.12 (40 seeds × 5 waves).
+- **Calibration.** The harness brain no longer reads `gone`: it sees what the
+  floor shows (settled, darkened, shaking with its glow, hole), leaves a tile
+  when it darkens, and picks the neighbour with the most settled ground around
+  it. Gate seeds: 0.934 / 0.731 / 0.614 at waves 3 / 28 / 53, every platforms
+  gate green. On 30 held-out seeds the same player reads 0.93 / 0.84 / 0.74,
+  i.e. about 0.1–0.2 generous; the old 2D rite read 0.62 / 0.53 / 0.47 there,
+  0.2 punishing. Five seeds is a small sample for a rite whose runs end in one
+  fall.
+- **The view.** Ground frame, camera ~52° down at fov 32, fitted to the FLOOR
+  rather than the 16 × 9 field (nothing is picked), drifting toward you. Tiles
+  are beveled slabs on jittered rock cones; the crack glow is an emissive map
+  at intensity 0 when quiet. Bodies are capsules with eyes and party hats,
+  squash on landing, tremble on a shaking tile, tumble when they fall; two on
+  one tile stand side by side. A "!" pops over you when your tile starts to
+  shake. The HUD (tiles left, who is still up, crossed out when they fall) is
+  a CanvasTexture plane parented to the camera, repainted on change only.
 
 ### `luckyshot` — Lucky Shot · 20 s · 24 draws · no rivals · **the reference**
 

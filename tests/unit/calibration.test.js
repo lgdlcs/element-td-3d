@@ -494,11 +494,7 @@ describe('the reference player itself', () => {
     expect(moved.length, `reaction lag moved the score on only ${moved.length} of `
       + `${RITE_IDS.length} rites — the instrument has no grip on the rest, so their `
       + `rows in the tables above are weaker evidence than the others. `
-      + `Moved: [${moved.join(', ')}]. Unmoved: [${flat.join(', ')}]. `
-      + `(\`platforms\` is expected to be the unmoved one: its brain, like the `
-      + `author's bot it is lifted from, reads the fall schedule and re-plans 1.1 s `
-      + `ahead, so any lag under 1.1 s is free BY CONSTRUCTION OF THE BOT. That is `
-      + `a known blind spot of the harness, recorded in reference-player.js.)`)
+      + `Moved: [${moved.join(', ')}]. Unmoved: [${flat.join(', ')}].`)
       .toBeGreaterThanOrEqual(4);
   });
 
