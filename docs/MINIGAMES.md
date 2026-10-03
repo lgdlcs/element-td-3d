@@ -1378,7 +1378,7 @@ the bottom-right corner. Same competitive rule as `hunt`, same clock,
   cover the pixels of their catch ellipse. The depth never reaches the rite.
 - **The lead is drawn.** Every fish trails a wake on the surface exactly as long
   as the distance it swims during one flight ("aim one wake ahead of the
-  fish"), and for the first three casts a dashed ring marks where the lure must
+  fish"), with a ripple marking its tail so the full length reads, and for the first three casts a dashed ring marks where the lure must
   land to catch the fish nearest the pointer (`ghostCasts`, `nearestFish`).
   The speed band is 3× wide and stratified, so no memorised offset plays the
   rite: the unit suite searches for the best constant and requires it to lose.
@@ -1389,7 +1389,7 @@ the bottom-right corner. Same competitive rule as `hunt`, same clock,
 - **Controls.** Aim with the pointer, cast with **left, right or Space**.
   **Exactly one cast per step** however many clicks arrive, and the extras are
   not queued. Reeling is 0.6 s after an empty cast against 0.3 s after a catch
-  (both ×1.5 by wave 53): the anti-mash rule, expressed in the fiction. The
+  (both ×1.45 by wave 53): the anti-mash rule, expressed in the fiction. The
   reticle on the water shows the reel as a filling dial.
 - **Score.** `ratio = points / PAR`, `PAR = 0.66 × (15 + 3) = 11.88`. The golden
   fish is worth 3, swims fast and shallow, and is confined to indices 4..11,
@@ -1400,8 +1400,10 @@ the bottom-right corner. Same competitive rule as `hunt`, same clock,
   way down" needed a sentence and "it is in the air" does not. Lanes now span
   the lake (±3.2 across the field's 9 units), so the catch ellipse is wider
   across a fish's path (`RY_K` 0.6) and the reels and squeeze were retuned
-  against the calibration gate: reference player 0.89 / 0.67 / 0.61 at waves
-  3 / 28 / 53, clumsy player 0.10 at wave 53, flawless 0.985 at wave 53.
+  against the calibration gate: reference player 0.89 / 0.62 / 0.52 at waves
+  3 / 28 / 53, clumsy player 0.15 at wave 53 (floor 0.10), flawless 1.0 at
+  wave 53. The ratio moves in steps of about 0.017 (one point on one of five
+  seeds), so a margin under two steps is not a margin.
 
 ---
 

@@ -75,10 +75,11 @@ const REEL_HELD = 0.3;
 /**
  * How much longer both reels take at wave 53 than at wave 3. Together with
  * CLAIM_SQUEEZE this is the difficulty curve: fewer casts, less water. Tuned
- * against tests/unit/calibration.test.js (reference player 0.89 / 0.67 / 0.61
- * at waves 3 / 28 / 53, clumsy player 0.10 at wave 53).
+ * against tests/unit/calibration.test.js (reference player 0.89 / 0.62 / 0.52
+ * at waves 3 / 28 / 53, clumsy player 0.15 at wave 53 against a 0.10 floor).
+ * 0.42 and 0.47 keep the clumsy player at 0.15 or above; 0.50 left it at 0.101.
  */
-const REEL_WAVE = 0.5;
+const REEL_WAVE = 0.45;
 /**
  * How far the rivals' claim schedule is compressed by wave 53. rivals.js says a
  * rite wanting a different rhythm "scales the RESULT"; this is that scale. The

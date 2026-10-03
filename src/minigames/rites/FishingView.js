@@ -47,6 +47,7 @@ const FISH_LOOK = 1.25;
 const LINE_PTS = 16;
 const RINGS = 10;
 const POPS = 5;
+const SPARKLE = Object.freeze({ color: 0xffe08a, speed: 0.6, life: 0.6, up: 0.9 });
 /** Where the rival boats float, in field units: beyond the far edge, never over a fish. */
 const BOATS = [[-6.4, 6.2], [0.6, 6.9], [6.8, 6.0]];
 const RIVAL_COLOR = [0xe0573f, 0x4f9be6, 0xa77be0];
@@ -116,6 +117,7 @@ class FishingView extends RiteView {
     this._boatTip = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
     this._hud = { points: -1, w: 0 };
     this._labels = [-1, -1, -1];
+    this.labelK = 1;
     this.textures = [];
 
     this.#buildLights();
@@ -195,10 +197,11 @@ class FishingView extends RiteView {
       r.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = r; g.fillRect(0, 0, w, w);
     }));
-    // A V of ripples, fish at the right edge, fading out to the left.
+    // A V of ripples, fish at the right edge, closed by a ripple at the left:
+    // the tail end is the lead, so it must read, not fade out.
     this.wakeTex = this.#tex(canvasTexture(256, 64, (g, w, h) => {
       const fade = g.createLinearGradient(0, 0, w, 0);
-      fade.addColorStop(0, 'rgba(255,255,255,0)');
+      fade.addColorStop(0, 'rgba(255,255,255,0.5)');
       fade.addColorStop(0.75, 'rgba(255,255,255,0.75)');
       fade.addColorStop(1, 'rgba(255,255,255,0.95)');
       g.strokeStyle = fade;
@@ -212,6 +215,10 @@ class FishingView extends RiteView {
       g.fillStyle = fade;
       g.globalAlpha = 0.35;
       g.fillRect(0, h / 2 - 3, w, 6);
+      g.globalAlpha = 1;
+      g.strokeStyle = 'rgba(255,255,255,0.95)';
+      g.lineWidth = 6;
+      g.beginPath(); g.moveTo(12, 3); g.quadraticCurveTo(-4, h / 2, 12, h - 3); g.stroke();
     }));
     this.wakeTex.anisotropy = 8;
     this.ringTex = this.#tex(canvasTexture(128, 128, (g, w) => {
@@ -536,7 +543,7 @@ class FishingView extends RiteView {
     const cork = new THREE.MeshStandardMaterial({ color: 0xb8875a, roughness: 0.8 });
     const blank = new THREE.MeshStandardMaterial({ color: 0x1d2a3a, roughness: 0.35, metalness: 0.3 });
     const reelMat = new THREE.MeshStandardMaterial({ color: 0xc9ccd2, roughness: 0.25, metalness: 0.85 });
-    this.rodLen = 4.2;
+    this.rodLen = 2.6;
     const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.9, 10).rotateX(Math.PI / 2).translate(0, 0, 0.45), cork);
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.05, this.rodLen - 0.9, 8).rotateX(Math.PI / 2)
       .translate(0, 0, 0.9 + (this.rodLen - 0.9) / 2), blank);
@@ -661,10 +668,14 @@ class FishingView extends RiteView {
     this.pier.updateMatrixWorld();
     this.basketMesh.getWorldPosition(this._basket);
     this._basket.y += 0.35;
-    // HUD: bottom-left, a fixed share of the view height, 1 unit in front of the lens.
+    // HUD: bottom-left, 1 unit in front of the lens. A share of the view
+    // height, grown on a short screen so its text stays readable on a phone;
+    // the boat tags grow with it.
+    const cssH = this.stage.cssH || 900;
     const h = 2 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
     const w = h * cam.aspect;
-    const size = Math.min(h * 0.34, w * 0.36);
+    const size = Math.min(h * clamp(230 / cssH, 0.34, 0.6), w * 0.36);
+    this.labelK = clamp(600 / cssH, 1, 1.8);
     this.hud.scale.set(size, size, 1);
     this.hud.position.set(-w / 2 + size * 0.55, -h / 2 + size * 0.16, -1);
   }
@@ -805,7 +816,7 @@ class FishingView extends RiteView {
           this.goldGlow.scale.setScalar(1.6 + 0.25 * Math.sin(this.clock * 6));
           if (this.clock > this.sparkleAt) {
             this.sparkleAt = this.clock + 0.12;
-            this.sparks.emit(this.goldGlow.position, 2, { color: 0xffe08a, speed: 0.6, life: 0.6, up: 0.9 });
+            this.sparks.emit(this.goldGlow.position, 2, SPARKLE);
           }
         }
         continue;
@@ -854,7 +865,8 @@ class FishingView extends RiteView {
       b.g.updateMatrixWorld();
       b.tip.getWorldPosition(this._boatTip[r]);
       b.label.material.opacity = 0.85 + strike * 0.15;
-      b.label.scale.set(2.6 * (1 + strike * 0.15), 0.65 * (1 + strike * 0.15), 1);
+      const grow = this.labelK * (1 + strike * 0.15);
+      b.label.scale.set(2.6 * grow, 0.65 * grow, 1);
       if (R.tally[r] !== this._labels[r]) this.#paintLabel(r);
     }
     // A rival's float and line over the fish it is about to take.
@@ -1014,7 +1026,7 @@ class FishingView extends RiteView {
     g.font = '700 54px Georgia, serif';
     g.fillStyle = this.P.goldHi;
     g.textAlign = 'right';
-    const par = PAR.toFixed(1);
+    const par = String(Math.ceil(PAR));
     g.font = '600 28px ui-monospace, Menlo, monospace';
     const pw = g.measureText(` / ${par}`).width;
     g.fillStyle = 'rgba(233,235,243,0.6)';
