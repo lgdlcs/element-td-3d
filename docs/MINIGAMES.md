@@ -73,8 +73,8 @@ export const LUCKY_SHOT_RITE = {
   name: 'Lucky Shot',          // display title
   hint: 'Knock down the tin targets — every shot costs a round',
   rules: [                     // REQUIRED: 2-4 lines on the intro card (§5)
-    'Shoot the targets sliding past: ducks are worth 1, rabbits 2, plates 3.',
-    'The golden one pays 4x, once. The figure with its hands up costs you 1.',
+    'Shoot the targets as they slide past. Ducks 1, rabbits 2, plates 3.',
+    'The golden one pays 4x, once. The figure with raised hands costs 1.',
     '24 rounds, and a miss spends one too. 38 points pays in full.',
   ],
   keys: [                      // REQUIRED: the intro card's key list (§5)
@@ -318,20 +318,33 @@ world(x, y) = frame.origin + frame.ux * x + frame.uy * y
 `uy` must be orthogonal and the same length.
 
 **The pick.** The host converts every pointer event with
-`stage.pick(view, clientX, clientY, rect)`: a ray from the view's **steady**
-camera through the pixel, intersected with the gameplay plane, converted back
-to field units. So `input.x/y` and every `PointerClick` are field units exactly
-as before, a 2-pixel error on a big screen is the same field distance as on a
-small one, and `fieldToClient` is its exact inverse (tests and tools aim with
-`host.fieldToClient(x, y)`, never with a copy of the projection).
+`stage.pick(view, clientX, clientY, rect)`: a ray from the view's camera (never
+the kicked one) through the pixel, intersected with the gameplay plane,
+converted back to field units. So `input.x/y` and every `PointerClick` are field
+units exactly as before, a 2-pixel error on a big screen is the same field
+distance as on a small one, and `fieldToClient` is its exact inverse (tests and
+tools aim with `host.fieldToClient(x, y)`, never with a copy of the
+projection). The host also **re-picks once per frame** at the last pointer
+position, so a view may move its camera (a sway, a slow pan, a chase) and a
+still pointer stays on the same pixel: the aim never drifts and a shot lands
+where the crosshair is. The pick runs inside the host's crash guard.
 
-**The framing.** `frameField(camera, frame, aspect, { fov, tilt, margin })`
+**The framing.** `frameField(camera, frame, aspect, { fov, tilt, yaw, margin })`
 (called by `RiteView.layout`) bisects the camera distance until **all four
-field corners** are inside the view, at any aspect, for any tilt. Positive
-`tilt` moves the camera toward field −y (behind the near edge of a ground
-frame); negative tilt looks down at an upright frame from above. Things you
-put outside the field (an awning, a counter, the sky) may be cropped; the field
-never is.
+field corners** are inside the view, at any aspect, for any tilt and yaw.
+Positive `tilt` moves the camera toward field −y (behind the near edge of a
+ground frame); negative tilt looks down at an upright frame from above.
+Positive `yaw` swings it toward field +x. `margin` (NDC) is the room a camera
+that moves needs to keep the corners in. Things you put outside the field (an
+awning, a counter, the sky) may be cropped; the field never is.
+
+**Make it look 3D.** A camera square to the plane makes every `placeOnRay`
+object project onto its field disc, so the scene reads as a flat picture.
+`luckyshot` gets its depth from four things the next views should copy: a
+camera off-axis (`tilt: -15, yaw: 7`), rows several world units apart in
+depth with shelves whose tops the camera can see, a camera that sways toward
+the aim (`SWAY`, re-picked by the host), and 3D reactions (targets topple
+backwards onto their shelf, shadows fall on the shelves).
 
 **Depth without moving the hit test.** Something drawn *behind* (or in front
 of) the gameplay plane would no longer cover the pixels the hit test uses —
@@ -343,9 +356,11 @@ depends only on `depth`, the mapping is affine per depth: placing the foot of a
 target with `placeOnRay` and offsetting by `r * k` along `uy` lands exactly on
 its centre. `luckyshot` puts its three rows at three real depths this way.
 
-**Never shake `view.camera`.** Recoil and impact go in `view.kick`; the stage
-adds it for the draw and removes it afterwards, so the pick never moves. The
-CSS stage kick (§8, presentation cues) still applies on top.
+**Move `view.camera` smoothly, never shake it.** A slow, continuous camera
+move is fine (the per-frame re-pick follows it). A transient jolt (recoil,
+impact) goes in `view.kick`; the stage adds it for the draw and removes it
+afterwards, so the aim does not jitter with it. The CSS stage kick (§8,
+presentation cues) still applies on top.
 
 ---
 
@@ -422,7 +437,13 @@ Corollaries:
   name, its `rules` (2–4 lines) and its `keys` (keycaps from `ui/uikit.js
   key()`, the same caps as the rest of the game), and "Space or click to
   start · starts in 10". It starts on its own after **10 s** (the last three
-  seconds beep), then flashes *Go*. Your `init()` has already run and your view
+  seconds beep), then flashes *Go*. The card shows the rite's name in the
+  shell header only, not twice. **A 3D rite cannot start before its view
+  exists**: a start press or the end of the countdown during the load turns the
+  countdown into "loading the scene…" and the rite starts the moment the view
+  is ready, so no press is ever picked through a missing camera. If the stage
+  cannot be created (no context), the rite is abandoned, unpaid, instead of
+  played blind. Your `init()` has already run and your view
   is already drawing, so the card sits over the scene the player is about to be
   handed; your `update()` has not run, so nothing is moving yet. Nothing about
   it reaches you: no `dt`, no `duration`, no `rand()`. It is **skippable** by
@@ -441,9 +462,14 @@ Corollaries:
 - **One 3D stage, and the board stops rendering behind it.** A def with a
   `view` is drawn through one host-owned `Stage3D`: one WebGL2 context, created
   lazily on the first 3D rite and reused for every rite after it (never a
-  context per rite), DPR capped at 1.5 (1.25 on `low`, 1 and no MSAA on
-  `potato`), no post chain, one optional shadow map (`stage.shadows`, off on
-  `low`/`potato`), a shared PMREM room environment (`stage.environment()`).
+  context per rite). It is a SECOND context next to the board's, for the rest
+  of the session; between rites its drawing buffer is shrunk to 1×1
+  (`stage.release()`). On every open it follows the board's preset
+  (`stage.setQuality`): DPR capped at the smallest of 1.5, the preset's
+  `pixelRatioCap` and the board's live pixel ratio (which carries
+  AdaptiveResolution's verdict), no MSAA on `potato` (fixed when the context is
+  made), one optional shadow map (`stage.shadows`, off on `low`/`potato`), no
+  post chain, a shared PMREM room environment (`stage.environment()`).
   While it is up, `host.ownsFrame` is true and **the board is not rendered**:
   `Game.frame` skips its scene updates and `pipeline.render` (the canvas keeps
   its last frame behind the veil), and main.js stops feeding the resolution
@@ -479,8 +505,9 @@ Corollaries:
 - **1× speed.** The rite runs from the variable-rate half of `Game.frame`, so
   `state.speed` (1×/2×/3×) does not reach it.
 - **A crash is contained.** An exception from your `update`, `draw`, or any view
-  call (`createView`, `layout`, `render`, `cue`), or a view module that fails to
-  load, is caught,
+  call (`createView`, `layout`, `render`, `cue`, the pick through its camera),
+  a compile that throws (the view is still disposed), or a view module that
+  fails to load, is caught,
   reported through `console.error`, and the rite is abandoned with zero reward —
   the run continues. Without that wall, a throw propagates into main.js's rAF
   loop and *kills the whole game*. It is caught, not swallowed: the e2e suite
@@ -717,7 +744,7 @@ rendering.
 ### 8.1 Writing a 3D view
 
 **Read `src/minigames/rites/LuckyShotView.js` second.** It is the reference
-view, and its docblock lists the four things to copy. The shape:
+view, and its docblock lists the five things to copy. The shape:
 
 ```js
 // src/minigames/rites/VigilView.js
@@ -767,17 +794,28 @@ The rules, each of which the reference view follows and says why:
    target's hit disc (the boards under `luckyshot`'s rails stop at the rail).
 3. **Build once, never allocate per frame, never add a material mid-rite.** A
    new material is a shader compile on the frame it first appears; the host
-   compiles what is in the scene at creation, behind the intro card. Swap
-   between pre-built materials instead, toggle `visible`, animate intensity.
+   compiles AND draws what is in the scene at creation, behind the intro card
+   (`stage.compile`), which also uploads its textures and makes the shadow map.
+   So: end the constructor with `this.render(0, 0)` so every mesh is already
+   dressed in the material it will use; give a material that will get a `map`
+   later one at construction (a map appearing is a new program); pre-build
+   every texture a cue swaps in and upload it with
+   `stage.renderer.initTexture(t)`; swap between pre-built materials, toggle
+   `visible`, animate intensity. No template strings or objects in `render`
+   either: compare numbers. `node tools/scratch/rite-gpu.mjs --rite <id>
+   --port <port>` fails if a program or texture appears during play.
 4. **A fixed light count.** `addStandardLights` gives a hemisphere fill and a
    key; add point lights if you need them but keep them in the scene at
    intensity 0 when idle — toggling `visible` changes the count and recompiles
    every lit material (docs/PERF_BUDGET.md, Round 11). At most one shadow
    caster, and only when `stage.shadows`.
 5. **Dispose what you made.** `RiteView.dispose()` frees everything reachable
-   from the scene; register anything else (a material you swap out, a texture
-   cache) with `this.own(x)`. Never dispose `stage.environment()`.
-6. **Never shake `this.camera`.** Use `this.kick`.
+   from the scene, lights included (a shadow-casting light's `dispose()` is the
+   only thing that frees its shadow map); register anything else (a material
+   you swap out, a texture cache) with `this.own(x)`. Never dispose
+   `stage.environment()`. `rite-gpu.mjs` fails if textures or programs after
+   close grow from one cycle to the next.
+6. **Move `this.camera` smoothly or not at all; jolts go in `this.kick`.**
 7. **No new DOM.** HUD text a rite needs goes into the scene (a `CanvasTexture`
    repainted only when its content changes — see `#paintHud`); the clock, the
    intro and the result card are the host's.
@@ -999,6 +1037,14 @@ where the headline says "Flawless" over a 0.54. Tune the game.
 - **The view is not unit-tested.** It imports three and needs WebGL. What the
   logic owes it is tested instead: `luckyshot` pins "one cue per round, with
   `x, y, i, value`", because the view starts every effect from it.
+- **Purity is tested in e2e, for every rite with a view.** `rites.spec.js`
+  ("a 3D view never mutates its rite") fires real shots, stubs the host's
+  stepping, calls `render`, `layout` and `cue` by hand, and requires the
+  instance to serialise to the same bytes (typed arrays expanded). A new view
+  is picked up automatically from the registry.
+- **Check the GPU ledger.** `node tools/scratch/rite-gpu.mjs --rite <id>
+  --port <port>` (rule 3 and 5 above) exits 1 on a mid-play compile or upload
+  or a leak across open/close cycles.
 - **Look at it.** `node tools/rite-shots.mjs --rite <id> --port <port> --quick
   --out <dir>` writes the intro card, a frame on a shot, a mid-play frame, a
   stage-only close-up and the result card in ~15 s, and prints console errors.

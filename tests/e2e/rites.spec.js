@@ -67,7 +67,7 @@
 import { test, expect } from '@playwright/test';
 import { startRun } from './helpers.js';
 // THE POINT OF THE FILE. Imported, not transcribed — see the docblock.
-import { MINIGAME_IDS } from '../../src/minigames/registry.js';
+import { MINIGAME_IDS, riteDef } from '../../src/minigames/registry.js';
 
 /**
  * The wave the rite stands in front of. 20 rather than 3 so the reward formula
@@ -425,6 +425,49 @@ test.describe('rites — every minigame opens, runs, scores, pays once and close
       expect(errors, `${id}: console errors during the session`).toEqual([]);
       expect(warnings.slice(warnBefore), `${id}: console warnings during the session`)
         .toEqual([]);
+    });
+  }
+});
+
+/**
+ * A VIEW READS THE RITE AND NEVER WRITES IT (docs/MINIGAMES.md §8.1 rule 1).
+ *
+ * Nothing in node can hold a view to that, because a view needs WebGL. Here the
+ * host's stepping is stubbed out after a few real shots, every view entry point
+ * is called by hand — render, layout at two aspects, a cue of each shape — and
+ * the instance must serialise to the same bytes before and after. Typed arrays
+ * are expanded, so a write into one is caught too.
+ */
+test.describe('rites — a 3D view never mutates its rite', () => {
+  for (const id of MINIGAME_IDS.filter((i) => riteDef(i)?.view)) {
+    test(`${id}: render, layout and cue leave the instance byte-identical`, async ({ page }) => {
+      const { errors } = await startRun(page, { freeze: true });
+      await openRite(page, id);
+      await page.waitForFunction(() => window.__game.minigames.ownsFrame, null, { timeout: 15000 });
+      for (const [x, y] of [[0, -2], [3, -0.6], [-4, 1], [6, -2]]) {
+        const c = await page.evaluate(([fx, fy]) => window.__game.minigames.fieldToClient(fx, fy), [x, y]);
+        await page.mouse.click(c.x, c.y);
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      }
+      const same = await page.evaluate(() => {
+        const h = window.__game.minigames;
+        const inst = h.instance;
+        const view = h._view;
+        h.update = () => {};
+        const snap = () => JSON.stringify(inst, (k, v) => (ArrayBuffer.isView(v) ? Array.from(v) : v));
+        const before = snap();
+        for (let i = 0; i < 20; i++) view.render(i / 20, 1 / 60);
+        view.layout(4 / 3);
+        view.layout(16 / 9);
+        view.cue({ type: 'good', x: 0, y: 0, i: 0, value: 1 });
+        view.cue({ type: 'miss', x: 1, y: 1, i: -1, value: 0 });
+        view.cue({ type: 'start' });
+        for (let i = 0; i < 5; i++) view.render(0.5, 1 / 60);
+        return { equal: snap() === before, size: before.length };
+      });
+      expect(same.size, `${id}: snapshot is empty`).toBeGreaterThan(100);
+      expect(same.equal, `${id}: the view wrote to the rite`).toBe(true);
+      expect(errors).toEqual([]);
     });
   }
 });
