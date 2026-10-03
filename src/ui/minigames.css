@@ -456,6 +456,9 @@
   flex-direction: column;
   gap: 10px;
   max-width: min(560px, 92%);
+  /* Safety net: whatever the viewport, the start line stays reachable. */
+  max-height: 100%;
+  overflow: auto;
   padding: 20px 26px 18px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-m);
@@ -470,15 +473,6 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--rite-accent, var(--gold));
-}
-
-.ri-card h3 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: 30px;
-  line-height: 1.1;
-  color: var(--ink);
 }
 
 .ri-rules {
@@ -526,7 +520,7 @@
   color: var(--ink-2);
 }
 .ri-start kbd { font-size: 11px; padding: 4px 8px 5px; color: var(--ink); border-color: var(--rite-accent, var(--gold)); }
-.ri-auto {
+.ri-auto, .ri-wait {
   margin-left: auto;
   font-family: var(--font-num);
   font-size: 11px;
@@ -534,6 +528,7 @@
   text-transform: uppercase;
   color: var(--ink-3);
 }
+.ri-auto[hidden], .ri-wait[hidden] { display: none; }
 .ri-auto b {
   display: inline-block;
   min-width: 2ch;
@@ -584,7 +579,6 @@
 
 @media (max-width: 720px) {
   .ri-card { padding: 12px 14px; gap: 6px; }
-  .ri-card h3 { font-size: 21px; }
   .ri-rules { font-size: 12px; }
 }
 
@@ -814,4 +808,40 @@
   #rite-title { font-size: 23px; }
   #rite-result-headline { font-size: 27px; }
   .rr-gold b { font-size: 34px; }
+}
+
+/* ---- short windows (a phone held sideways) -----------------------------
+   Width is not the constraint at 844x390, height is: the stage gets ~200px.
+   The header drops its hint, the stage takes a larger share of the height,
+   and the intro and result cards go dense so the start line and Continue stay
+   on screen. */
+@media (max-height: 480px) {
+  #rite { --rite-stage-h: 66vh; }
+  /* 32px: 14px of padding a side, same arithmetic as the narrow block. */
+  .rite-shell {
+    width: min(96vw, calc((var(--rite-stage-h) - 2px) * 16 / 9 + 32px));
+    padding: 8px 14px 8px;
+    gap: 6px;
+  }
+  #rite-hint { display: none; }
+  #rite-title { font-size: 19px; }
+  .rite-intro { padding: 6px; }
+  .ri-card {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    column-gap: 16px;
+    row-gap: 4px;
+    padding: 8px 12px;
+    max-width: 100%;
+  }
+  .ri-kicker { grid-column: 1 / -1; font-size: 9.5px; }
+  .ri-rules { font-size: 11.5px; gap: 3px; line-height: 1.25; }
+  .ri-keys { margin: 0; padding: 0; border-top: 0; align-self: start; gap: 5px 8px; }
+  .ri-act { font-size: 12px; }
+  .ri-start { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; }
+  .rite-result { padding: 8px; gap: 2px; }
+  #rite-result-headline { font-size: 22px; }
+  .rr-gold { margin-top: 2px; }
+  .rr-gold b { font-size: 28px; }
+  .rr-go { margin-top: 6px; }
 }
