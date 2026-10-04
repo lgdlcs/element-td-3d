@@ -835,7 +835,12 @@ export class Game {
       if (e.code === 'Escape' && this.spectating) { this.exitSpectate('key'); return; }
       switch (e.code) {
         case 'Escape': this.#cancelSelection(true); break;
-        case 'Space': e.preventDefault(); this.startWaveNow(); break;
+        case 'Space':
+          e.preventDefault();
+          // A held Space, or the tail of a mash that just closed a rite's result
+          // card, is not a decision to send the next wave.
+          if (!e.repeat && !this.minigames?.swallowsCommit()) this.startWaveNow();
+          break;
         case 'KeyP': this.state.paused = !this.state.paused; this.hud.refreshTop(); break;
         case 'Digit1': this.setSpeed(1); break;
         case 'Digit2': this.setSpeed(2); break;

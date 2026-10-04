@@ -426,6 +426,42 @@ test.describe('the rite host', () => {
     expect(errors, errors.join('\n')).toEqual([]);
   });
 
+  test('mashing Space through the result card does not send the next wave', async ({ page }) => {
+    const { errors } = await startRun(page, { freeze: false });
+    await openRite(page);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    expect(await host(page, () => window.__game.minigames.mode)).toBe('result');
+
+    /**
+     * The mash is dispatched in one evaluate, so its rhythm is the player's and
+     * not headless Chromium's: Playwright's own presses arrive over a second
+     * apart here, which is no mash at all. The first press closes the card,
+     * every later one lands on the board, and a held key's auto-repeat follows.
+     */
+    const after = await host(page, () => {
+      const fire = (type, repeat = false) => document.dispatchEvent(
+        new KeyboardEvent(type, { code: 'Space', key: ' ', repeat, bubbles: true, cancelable: true }));
+      for (let i = 0; i < 6; i++) { fire('keydown'); fire('keyup'); }
+      fire('keydown');
+      for (let i = 0; i < 10; i++) fire('keydown', true);
+      fire('keyup');
+      const g = window.__game;
+      return { open: g.minigames.isOpen, listeners: g.minigames.listenerCount, phase: g.state.phase, wave: g.state.wave };
+    });
+    expect(after.open).toBe(false);
+    expect(after.listeners).toBe(0);
+    expect(after.phase, 'the mash leaked into the board and sent a wave').toBe('prep');
+
+    await spinUntil(page, 'performance.now() - h._closedAt > 600');
+    await page.keyboard.press('Space');
+    const sent = await host(page, () => window.__game.state);
+    expect(sent.phase, 'a deliberate Space after the card still sends the wave').toBe('combat');
+    expect(sent.wave).toBe(after.wave + 1);
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  });
+
   test('blur and a hidden tab stop the clock, and the key that wakes it is not a shot', async ({ page }) => {
     const { errors } = await startRun(page, { freeze: false });
     await openRite(page);

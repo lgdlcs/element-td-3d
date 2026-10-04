@@ -466,7 +466,13 @@ Corollaries:
 - **A veil and a keyboard shield.** Every game key is swallowed at capture on
   `document` while a rite is up. Without it, Space — this overlay's primary verb
   — sends the next wave from behind the veil. That is a real, measured incident
-  in this repo (see `HUD.js` `_onKeyShield`).
+  in this repo (see `HUD.js` `_onKeyShield`). **The shield outlives the
+  overlay by a mash**: the press that closes the result card is the first of
+  several, so `Game.js` asks `host.swallowsCommit()` before Space sends a wave,
+  and the host answers yes within 500 ms of the close or of the last press it
+  swallowed (each one renews it). It is a timestamp, not a listener, so
+  `listenerCount` is still 0 at close. A held Space (`e.repeat`) never sends a
+  wave. `tests/e2e/minigame.spec.js` "mashing Space" holds it.
 - **A click resolves where it was pressed.** §1.1. The queue is also **cleared on
   suspend**: the click that gave the window its focus back is not a shot.
 - **One gold credit, ever.** `#settle` is guarded by `_credited`. Escape spam, a
