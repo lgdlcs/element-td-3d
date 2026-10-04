@@ -3,15 +3,14 @@
  * MinigameHost, in a DOM but without a GPU.
  *
  * The host is deliberately importable here: it depends on Config, Waves, the
- * contract, the registry and one 2D context, and on NOTHING from three.js or
+ * contract and the registry, and on NOTHING from three.js or
  * Game.js. That is not an accident of the import graph, it is the property that
  * lets the two guarantees below — no leaked listeners, never a second gold
  * credit — be tested at all rather than asserted in a docblock.
  *
- * jsdom has no canvas backend, so `getContext('2d')` returns null and every
- * element measures 0x0. MinigameHost.#render bails on a zero-sized canvas before
- * it touches the painter, which is exactly the same path a real browser takes on
- * a display:none overlay — so what is exercised here is the LOGIC of the host:
+ * jsdom has no WebGL2 and every element measures 0x0, so the host never loads
+ * a stage and plays every rite blind, which is exactly the path a browser takes
+ * when it refuses a context — so what is exercised here is the LOGIC of the host:
  * the loop, the clock, the input plumbing, the settle guard and the teardown.
  * Anything pixel-shaped is tests/e2e's job.
  *
@@ -104,6 +103,8 @@ const HOST_RITE = {
   id: HOST_RITE_ID,
   name: 'Host Test Rite',
   hint: 'Commit while the window is open',
+  rules: ['Commit while the window is open.', 'Six commits, one point each.'],
+  keys: [{ keys: ['Space', 'Click'], action: 'Commit' }, { keys: ['↑', '↓'], action: 'Nothing at all' }],
   // Long enough that an idle run is ended by the CLOCK (which several tests
   // below depend on) and short enough that 3 000 steps comfortably reach it.
   duration: 18,
@@ -161,13 +162,9 @@ function key(code, type = 'keydown') {
 /**
  * A pointer event on the stage, in CLIENT pixels.
  *
- * jsdom has no layout, so getBoundingClientRect() is all zeros and Painter.ppu
- * is whatever the last layout() left it at (1, since #render bails on a 0x0
- * canvas before it ever calls layout). That is not a limitation here — it makes
- * client pixels and world units the SAME NUMBERS, which is exactly what a test
- * about "which position was recorded" wants: no transform to reason about, so a
- * failure is about the queue and never about the letterbox. The letterbox itself
- * is tests/e2e's job.
+ * jsdom has no layout and no WebGL2, so nothing maps a pointer to the field
+ * unless a test installs a view (see `openAimed` in the click-queue block).
+ * The real camera pick is tests/e2e's job.
  */
 function pointer(type, x, y, button = 0) {
   const el = root.querySelector('#rite-stage');
@@ -178,27 +175,7 @@ function pointer(type, x, y, button = 0) {
 }
 
 /**
- * A no-op 2D context.
- *
- * jsdom's getContext() is not implemented and reports itself through the virtual
- * console on EVERY construction — 25 identical "Not implemented" lines for this
- * file alone. tests/unit/setup.js exists because a suite whose output is noise
- * trains everyone to stop reading the output; adding to that noise rather than
- * removing its cause would be the exact mistake that file argues against. This
- * removes the cause: the host gets a context-shaped object, never calls it
- * (#render bails on a 0x0 canvas first), and jsdom has nothing to complain about.
- */
-function stub2d() {
-  const noop = () => stub;
-  const stub = new Proxy({ canvas: { width: 0, height: 0 } }, {
-    get: (t, k) => (k in t ? t[k] : noop),
-    set: () => true,
-  });
-  return stub;
-}
-
-/**
- * Open a rite AND stand through its five-second announcement.
+ * Open a rite AND stand through its intro card.
  *
  * Every test below this line is about what happens once the field is live —
  * the loop, the clock, the click queue, the settle guard — and none of them is
@@ -220,7 +197,6 @@ let root; let game; let host;
 
 beforeEach(() => {
   RITES[HOST_RITE_ID] = HOST_RITE;
-  window.HTMLCanvasElement.prototype.getContext = stub2d;
   document.body.innerHTML = '<div id="ui-root"></div>';
   root = document.getElementById('ui-root');
   game = fakeGame();
@@ -267,47 +243,61 @@ describe('mounting', () => {
 
 // ===========================================================================
 /**
- * The five-second announcement, which is the only part of a rite the PLAYER
- * gets for free: the clock does not run and the rite is not stepped.
+ * The intro card — rules, keys, a countdown — which is the only part of a rite
+ * the PLAYER gets for free: the clock does not run and the rite is not stepped.
  *
- * The number 5 is hard-coded here rather than imported, on purpose. COUNTDOWN
+ * The number 10 is hard-coded here rather than imported, on purpose. COUNTDOWN
  * is private to the host and a test that reads the same constant as the code
  * asserts nothing — it would keep passing if the pre-roll silently became one
- * second. These tests fail if the length changes, which is the point: five
+ * second. These tests fail if the length changes, which is the point: ten
  * seconds is a design decision and changing it should require saying so.
  */
-describe('the pre-roll', () => {
+describe('the intro card', () => {
   const num = () => root.querySelector('#rite-count-num').textContent;
-  const shown = () => !root.querySelector('#rite-count').hidden;
+  const shown = () => !root.querySelector('#rite-intro').hidden;
 
-  it('opens onto the announcement, not onto the game', () => {
+  it('opens onto the rules and the keys, not onto the game', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
     expect(host.mode).toBe('countdown');
     expect(shown()).toBe(true);
-    expect(num()).toBe('5');
-    // And the heading — which the announcement deliberately does not repeat —
-    // is already naming what is about to start.
+    expect(num()).toBe('10');
+    expect([...root.querySelectorAll('#rite-rules li')].map((li) => li.textContent))
+      .toEqual(HOST_RITE.rules);
+    const rows = [...root.querySelectorAll('#rite-keys li')].map((li) => ({
+      keys: [...li.querySelectorAll('kbd')].map((k) => k.textContent),
+      action: li.querySelector('.ri-act').textContent,
+    }));
+    expect(rows).toEqual(HOST_RITE.keys);
     expect(root.querySelector('#rite-title').textContent).toBe(HOST_RITE.name);
+  });
+
+  it('cannot be made to inject markup through a rule or a key label', () => {
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, rules: ['<img src=x onerror=alert(1)>', 'ok'], keys: [{ keys: ['<b>'], action: '<i>x</i>' }] };
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    expect(root.querySelector('#rite-rules img')).toBeNull();
+    expect(root.querySelector('#rite-keys b')).toBeNull();
+    expect(root.querySelector('#rite-keys kbd').textContent).toBe('<b>');
   });
 
   it('spends no rite time and no clock while it counts', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
-    for (let i = 0; i < 31; i++) host.update(0.1);      // 3.1 seconds
+    for (let i = 0; i < 71; i++) host.update(0.1);      // 7.1 seconds
     expect(host.mode).toBe('countdown');
-    expect(num()).toBe('2');
+    expect(num()).toBe('3');
     // The rite's own clock has not moved, and neither has the host's.
     expect(host.instance.t).toBe(0);
     expect(host._remaining).toBe(HOST_RITE.duration);
   });
 
-  it('hands over after five seconds and starts the clock then', () => {
+  it('hands over after ten seconds and starts the clock then', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
-    for (let i = 0; i < 49; i++) host.update(0.1);      // 4.9s
+    for (let i = 0; i < 99; i++) host.update(0.1);      // 9.9s
     expect(host.mode).toBe('countdown');
-    // Two frames rather than one: 49 x 0.1 is 4.899999... in binary floating
-    // point, so the exact boundary frame is not a claim worth making.
+    // Two frames rather than one: 99 x 0.1 is not exactly 9.9 in binary
+    // floating point, so the exact boundary frame is not a claim worth making.
     host.update(0.1); host.update(0.1);
     expect(host.mode).toBe('play');
+    expect(shown()).toBe(false);
     for (let i = 0; i < 10; i++) host.update(0.1);      // one second of play
     expect(host.instance.t).toBeGreaterThan(0.9);
     expect(host._remaining).toBeLessThan(HOST_RITE.duration);
@@ -354,13 +344,113 @@ describe('the pre-roll', () => {
   it('is suspended by a lost window, exactly as play is', () => {
     host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
     window.dispatchEvent(new window.Event('blur'));
-    for (let i = 0; i < 60; i++) host.update(0.1);      // six seconds away
+    for (let i = 0; i < 120; i++) host.update(0.1);     // twelve seconds away
     expect(host.mode).toBe('countdown');
-    expect(num()).toBe('5');
+    expect(num()).toBe('10');
   });
 });
 
 // ===========================================================================
+describe('a 3D rite without WebGL', () => {
+  /**
+   * jsdom has no WebGL2, exactly like a browser that refused a context. A def
+   * with a `view` must then play blind — logic, clock, payout and teardown all
+   * intact — rather than throw, and must never load the view module (which
+   * would drag three.js into a node-side import).
+   */
+  it('plays the logic, pays, and never asks for the view', () => {
+    const view = vi.fn(() => { throw new Error('the view module must not be loaded here'); });
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view };
+    const before = census();
+    try {
+      const onDone = vi.fn();
+      expect(openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0, onDone })).toBe(true);
+      expect(host.ownsFrame).toBe(false);
+      for (let i = 0; i < 400 && host.mode === 'play'; i++) host.update(0.1);
+      expect(host.mode).toBe('result');
+      host.close();
+      expect(view).not.toHaveBeenCalled();
+      expect(onDone).toHaveBeenCalledTimes(1);
+      expect(host.listenerCount).toBe(0);
+      expect(before.live).toBe(0);
+    } finally {
+      before.restore();
+    }
+  });
+});
+
+// ===========================================================================
+describe('a 3D rite whose view has not loaded yet', () => {
+  /**
+   * Until the view exists there is no camera to pick through, so a press would
+   * land at the neutral (0, 0) and spend a round on nothing anybody can see.
+   * The stage promise is stubbed so the test controls when (and whether) the
+   * view arrives; WebGL2 is faked present so the host takes the 3D path.
+   */
+  let restore;
+  beforeEach(() => {
+    const had = 'WebGL2RenderingContext' in window;
+    const prev = window.WebGL2RenderingContext;
+    window.WebGL2RenderingContext = function WebGL2RenderingContext() {};
+    restore = () => { if (had) window.WebGL2RenderingContext = prev; else delete window.WebGL2RenderingContext; };
+  });
+  afterEach(() => restore());
+
+  it('holds the card through a start press and the whole countdown', () => {
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: () => new Promise(() => {}) };
+    host._stageP = new Promise(() => {});
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    key('Space');
+    expect(host.mode).toBe('countdown');
+    for (let i = 0; i < 200; i++) host.update(0.1);
+    expect(host.mode).toBe('countdown');
+    expect(root.querySelector('.ri-wait').hidden).toBe(false);
+    expect(root.querySelector('.ri-auto').hidden).toBe(true);
+  });
+
+  it('starts the moment the view is ready if the player already asked', async () => {
+    const view = { dispose: vi.fn(), layout() {}, render() {}, cue() {} };
+    const stage = { setQuality: vi.fn(), compile: vi.fn(), release: vi.fn(), dispose() {} };
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: async () => ({ createView: () => view }) };
+    host._stageP = Promise.resolve(stage);
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    key('Space');
+    expect(host.mode).toBe('countdown');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(stage.compile).toHaveBeenCalledWith(view);
+    expect(host.mode).toBe('play');
+    host.close();
+    expect(view.dispose).toHaveBeenCalledTimes(1);
+    expect(stage.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons, unpaid, when the stage cannot be had', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: async () => ({ createView: () => ({}) }) };
+    host._stageP = Promise.resolve(null);
+    const onDone = vi.fn();
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0, onDone });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(host.isOpen).toBe(false);
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ reward: 0, skipped: true }));
+    expect(game.addGold).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('disposes a view whose compile throws', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const view = { dispose: vi.fn() };
+    const stage = { setQuality() {}, compile: () => { throw new Error('compile'); }, release() {}, dispose() {} };
+    RITES[HOST_RITE_ID] = { ...HOST_RITE, view: async () => ({ createView: () => view }) };
+    host._stageP = Promise.resolve(stage);
+    host.open({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(host.isOpen).toBe(false);
+    expect(view.dispose).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
+});
+
 describe('teardown', () => {
   it('releases every listener it took, measured from the platform', () => {
     const c = census();
@@ -451,6 +541,18 @@ describe('the keyboard shield', () => {
  */
 describe('the click queue', () => {
   /**
+   * Open the rite with a loaded view whose pick is client px -> field units
+   * with +y flipped (jsdom has no WebGL2, so the real Stage3D never loads).
+   * The numbers in and out are then the same, so a failure here is about the
+   * queue and never about a camera.
+   */
+  function openAimed() {
+    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    host._stage = { pick: (_v, x, y) => ({ x, y: -y }), release() {}, dispose() {} };
+    host._view = { layout() {}, render() {}, cue() {}, dispose() {} };
+  }
+
+  /**
    * Record every input record the rite is handed, DEEP-COPIED.
    *
    * Copied because the records are pooled and reused (contract.js
@@ -474,7 +576,7 @@ describe('the click queue', () => {
   }
 
   it('a right-click is a positioned click and is NOT a primary commit', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointerdown', 3, -2, 2);
     host.update(DT);
@@ -487,7 +589,7 @@ describe('the click queue', () => {
   });
 
   it('a left-click still counts as an action, and is queued as well', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointerdown', 1, -1, 0);
     host.update(DT);
@@ -507,7 +609,7 @@ describe('the click queue', () => {
    * out of the pointerdown handler, it is not testing anything.
    */
   it('resolves a click at the position it was PRESSED, not where the pointer went', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
 
     pointer('pointerdown', 2, -1, 0);      // A
@@ -523,7 +625,7 @@ describe('the click queue', () => {
   });
 
   it('keeps the arrival order of several clicks in one frame', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointerdown', 1, 0, 0);
     pointer('pointerdown', 2, 0, 2);
@@ -535,7 +637,7 @@ describe('the click queue', () => {
   });
 
   it('delivers the queue to the FIRST sub-step only', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointerdown', 4, 0, 0);
     host.update(DT * 5);                   // one frame, five fixed steps
@@ -551,7 +653,7 @@ describe('the click queue', () => {
   });
 
   it('drops clicks past the cap instead of growing the queue', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     for (let i = 0; i < MINIGAMES.maxClicksPerStep + 8; i++) pointer('pointerdown', i, 0, 0);
     host.update(DT);
@@ -562,7 +664,7 @@ describe('the click queue', () => {
   });
 
   it('a keyboard commit is a click too, at the last known pointer position', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointermove', 5, -3);
     key('Space');
@@ -574,7 +676,7 @@ describe('the click queue', () => {
   });
 
   it('a blur empties the queue: a click that refocused the window is not a shot', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointerdown', 7, 0, 0);
     window.dispatchEvent(new window.Event('blur'));
@@ -586,7 +688,7 @@ describe('the click queue', () => {
   });
 
   it('the context menu never opens over the rite, veil included', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     for (const sel of ['#rite', '#rite .rite-veil', '#rite-stage', '#rite-skip']) {
       const e = new window.Event('contextmenu', { bubbles: true, cancelable: true });
       root.querySelector(sel).dispatchEvent(e);
@@ -599,7 +701,7 @@ describe('the click queue', () => {
   });
 
   it('releasing the right button does not release a held left button', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     pointer('pointerdown', 0, 0, 0);
     expect(host._input.down).toBe(true);
     pointer('pointerup', 0, 0, 2);
@@ -609,7 +711,7 @@ describe('the click queue', () => {
   });
 
   it('ignores buttons that are not a game verb', () => {
-    openRite({ id: HOST_RITE_ID, wave: 9, occurrence: 0 });
+    openAimed();
     const seen = record(host);
     pointer('pointerdown', 1, 0, 1);        // middle
     pointer('pointerdown', 2, 0, 3);        // back
@@ -664,13 +766,13 @@ describe('per-rite dressing', () => {
       openRite({ id: '__themed', wave: 9, occurrence: 0 });
       expect(host.$el.dataset.rite).toBe('fishing');
       expect(root.querySelector('#rite-eyebrow').textContent).toBe('Cast · before wave 9');
-      expect(host.$canvas.style.cursor).toBe('grab');
+      expect(host.$gl.style.cursor).toBe('grab');
       root.querySelector('#rite-skip').click();
       expect(root.querySelector('#rite-result-detail').textContent).toBe('You left the water');
       host.close();
       // The cursor is inline style, so it MUST be cleared or it survives into a
       // rite that never asked to be steered.
-      expect(host.$canvas.style.cursor).toBe('');
+      expect(host.$gl.style.cursor).toBe('');
     } finally {
       delete RITES.__themed;
     }

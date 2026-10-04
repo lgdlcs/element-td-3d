@@ -18,13 +18,13 @@
    ========================================================================= */
 
 /* ---- the per-rite palette, on :root and NOWHERE ELSE --------------------
-   Every flat colour a rite's CANVAS paints with lives here, under a name
+   Every flat colour a rite's 3D VIEW paints with lives here, under a name
    prefixed by the rite it belongs to. The `#rite[data-rite=…]` blocks further
    down map these onto the generic `--rite-accent` / `--rite-stage-bg` /
    `--rite-veil` that the CHROME uses; they define no colour of their own.
 
-   WHY THE PREFIX, AND WHY :root. A rite has no DOM — it is handed a Painter and
-   nothing else, by design — so the only element it can read a variable off is
+   WHY THE PREFIX, AND WHY :root. A rite and its view have no DOM, by design,
+   so the only element they can read a variable off is
    `document.documentElement`, via the `Lottery.js:722` pattern. A custom
    property declared inside `#rite[data-rite="hunt"]` is scoped to the OVERLAY
    element, which a rite never sees, so that lookup silently missed and the
@@ -55,25 +55,15 @@
   /* Dust and low sun. */
   --rite-offroad-accent: #d98b4a;
 
-  /* Forest before dawn. The canopy darks are tokens too, because the rite
-     paints its own treeline and the stage gradient behind it has to agree — two
-     sets of greens tuned by hand in two files is the drift this section exists
-     to stop. Pelt and ember stay literals in HuntRite: they are the SUBJECT,
-     not the room, and they must not change when the room is retuned. */
+  /* Forest at dusk. The accent is the first rival's colour in the 3D scene
+     (lantern, name plate, tracer) and the chrome's accent; the forest itself
+     is material colour in HuntView.js, art rather than theme. */
   --rite-hunt-accent: #86c294;
-  --rite-hunt-canopy-far: #0e1d15;
-  --rite-hunt-canopy-mid: #0a160f;
-  --rite-hunt-canopy-near: #040a07;
-  --rite-hunt-trunk-far: #0b1610;
-  --rite-hunt-trunk-near: #030806;
-  --rite-hunt-floor: #0a1310;
 
-  /* Under the waterline. `deep` is the bottom of the stage gradient below and
-     the bottom of the water the canvas paints; they are one colour or the
-     illusion of a continuous body of water breaks at the canvas edge. */
+  /* `accent` is the chrome and the fill of the creel bar the 3D view paints
+     (FishingView reads it once); `deep` is the bottom of the stage gradient. */
   --rite-fishing-accent: #6cc3dd;
   --rite-fishing-deep: #03070c;
-  --rite-fishing-shelf: #0b2233;
 }
 
 #rite {
@@ -263,11 +253,11 @@
 
 /* THE STAGE IS THE FIELD, AT 16:9, WITH NOTHING LEFT OVER.
    ------------------------------------------------------------------------
-   `Painter.layout` letterboxes contract.js's 16x9 FIELD into whatever box this
-   rule produces (`ppu = min(cssW/16, cssH/9)`). So any box that is not 16:9 is
-   not "a stage with a margin", it is a stage the rite CANNOT PAINT INTO: the
-   slack becomes dead bars that no rite can reach and that read, to the player,
-   as the world ending early. `fishing`'s waterline stopped in mid-air in them.
+   Every view frames contract.js's 16x9 FIELD into whatever box this rule
+   produces (Stage3D `frameField`). So any box that is not 16:9 is not "a stage
+   with a margin", it is slack the field does not fill. When the rites were 2D
+   that slack was dead black bars; `fishing`'s waterline stopped in mid-air in
+   them.
 
    THE BUG THIS RULE IS WRITTEN AGAINST. `aspect-ratio: 16/9` with BOTH
    `width: 100%` and `max-height: 56vh` is over-constrained, and CSS resolves it
@@ -324,6 +314,9 @@
   pointer-events: auto;
   cursor: crosshair;
 }
+/* The host hides the 3D canvas until its first frame. Needed because
+   `.rite-stage canvas` out-ranks the UA's `[hidden]` rule. */
+.rite-stage canvas[hidden] { display: none; }
 
 /* ---- the six themes -----------------------------------------------------
    One block per rite, three properties each, and nothing else: the chrome is
@@ -390,8 +383,7 @@
 }
 
 #rite[data-rite="fishing"] {
-  /* Under the waterline. Light comes from above and dies quickly, which is
-     also the depth cue the rite plays on. */
+  /* Seen behind the 3D lake only while it loads and at the letterbox edges. */
   --rite-stage-bg:
     radial-gradient(110% 130% at 50% -10%, rgba(74, 156, 186, 0.28), transparent 64%),
     linear-gradient(180deg, #061018, var(--rite-fishing-deep));
@@ -425,43 +417,137 @@
   .rite-shell { transition: opacity var(--t-fast) linear; transform: none; }
 }
 
-/* ---- the pre-roll -------------------------------------------------------
-   Five seconds of announcement over the field the rite is about to hand over.
+/* ---- the intro card -----------------------------------------------------
+   Up to ten seconds over the field the rite is about to hand over: the name,
+   two to four lines of rules, the keys, and the way to start. The card sits on
+   the left two thirds of a lightened veil so the scene it describes stays
+   readable around it.
 
-   The veil here is DELIBERATELY lighter than `.rite-suspend`'s and carries no
-   blur: suspension hides a field the player must not be able to read (the
-   clock is stopped and they could be studying it for free), while the pre-roll
-   exists precisely so they CAN read it. Same reason `pointer-events: none` —
-   the press that skips the count is handled by the stage underneath, so the
-   announcement never eats the click that dismisses it. */
+   `pointer-events: none` on the wrapper: the press that starts the rite is
+   handled by the stage underneath, so the card never eats the click that
+   dismisses it. */
 
+.rite-intro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4%;
+  pointer-events: none;
+  background: radial-gradient(80% 90% at 50% 50%, rgba(5, 6, 10, 0.62), rgba(5, 6, 10, 0.30));
+}
+.rite-intro[hidden] { display: none; }
+
+.ri-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(560px, 92%);
+  /* Safety net: whatever the viewport, the start line stays reachable. */
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px 26px 18px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-m);
+  background: var(--glass-hi);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(229, 189, 121, 0.08) inset;
+  backdrop-filter: blur(6px);
+}
+
+.ri-kicker {
+  font-family: var(--font-num);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--rite-accent, var(--gold));
+}
+
+.ri-rules {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.ri-rules li { position: relative; padding-left: 16px; }
+.ri-rules li::before {
+  content: '';
+  position: absolute;
+  left: 2px; top: 0.55em;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--rite-accent, var(--gold));
+}
+
+.ri-keys {
+  margin: 4px 0 0;
+  padding: 10px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 14px;
+  align-items: center;
+}
+.ri-keys li { display: contents; }
+/* A key row never wraps: a cap alone on its own line reads as a separate
+   binding. The rules column gives way instead. */
+.ri-caps { display: inline-flex; gap: 4px; justify-self: end; white-space: nowrap; }
+.ri-caps kbd { font-size: 11px; min-width: 22px; padding: 4px 6px 5px; }
+.ri-act { font-size: 13px; color: var(--ink); white-space: nowrap; }
+
+.ri-start {
+  margin: 8px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.ri-start kbd { font-size: 11px; padding: 4px 8px 5px; color: var(--ink); border-color: var(--rite-accent, var(--gold)); }
+.ri-auto, .ri-wait {
+  margin-left: auto;
+  font-family: var(--font-num);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ri-auto[hidden], .ri-wait[hidden] { display: none; }
+.ri-auto b {
+  display: inline-block;
+  min-width: 2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--rite-accent, var(--gold));
+}
+
+@keyframes rite-count-tick {
+  0%   { transform: scale(1.35); opacity: 0.4; }
+  60%  { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.rite-intro.tick .ri-auto b { animation: rite-count-tick 320ms var(--ease); }
+
+/* "Go": shown for GO_FLASH once the field is handed over, and fades itself. */
 .rite-count {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
   pointer-events: none;
-  background: radial-gradient(70% 70% at 50% 50%, rgba(5, 6, 10, 0.52), rgba(5, 6, 10, 0.18));
 }
 .rite-count[hidden] { display: none; }
-
-.rite-count .rc-ready {
-  font-family: var(--font-num);
-  font-size: 11.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-}
-
-/* Tabular figures and a fixed line box: 5 and 1 are different widths in most
-   proportional faces, and a number that shifts every second reads as a jitter
-   in the layout rather than as a count. */
 .rite-count b {
   font-family: var(--font-display);
-  font-variant-numeric: tabular-nums;
   font-size: 76px;
   line-height: 1;
   font-weight: 400;
@@ -469,28 +555,21 @@
   text-shadow: 0 0 28px rgba(0, 0, 0, 0.6);
 }
 
-/* One keyframe per state: `tick` is restarted from JS on every whole second,
-   `go` runs once when the field is handed over and fades itself out — the host
-   only has to hide the element after GO_FLASH. */
-@keyframes rite-count-tick {
-  0%   { transform: scale(1.28); opacity: 0.35; }
-  60%  { transform: scale(1); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
-.rite-count.tick b { animation: rite-count-tick 320ms var(--ease); }
-
 @keyframes rite-count-go {
   0%   { transform: scale(0.9); opacity: 1; }
   35%  { transform: scale(1.12); opacity: 1; }
   100% { transform: scale(1.5); opacity: 0; }
 }
-.rite-count.go { background: none; }
-.rite-count.go .rc-ready { opacity: 0; transition: opacity var(--t-fast) linear; }
 .rite-count.go b { animation: rite-count-go 450ms var(--ease) both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .rite-count.tick b,
+  .rite-intro.tick .ri-auto b,
   .rite-count.go b { animation: none; }
+}
+
+@media (max-width: 720px) {
+  .ri-card { padding: 12px 14px; gap: 6px; }
+  .ri-rules { font-size: 12px; }
 }
 
 /* ---- suspension -------------------------------------------------------- */
@@ -719,4 +798,42 @@
   #rite-title { font-size: 23px; }
   #rite-result-headline { font-size: 27px; }
   .rr-gold b { font-size: 34px; }
+}
+
+/* ---- short windows (a phone held sideways) -----------------------------
+   Width is not the constraint at 844x390, height is: the stage gets ~200px.
+   The header drops its hint, the stage takes a larger share of the height,
+   and the intro and result cards go dense so the start line and Continue stay
+   on screen. */
+@media (max-height: 480px) {
+  #rite { --rite-stage-h: 66vh; }
+  /* 32px: 14px of padding a side, same arithmetic as the narrow block. */
+  .rite-shell {
+    width: min(96vw, calc((var(--rite-stage-h) - 2px) * 16 / 9 + 32px));
+    padding: 8px 14px 8px;
+    gap: 6px;
+  }
+  #rite-hint { display: none; }
+  #rite-title { font-size: 19px; }
+  .rite-intro { padding: 6px; }
+  .ri-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 16px;
+    row-gap: 4px;
+    padding: 8px 12px;
+    max-width: 100%;
+  }
+  .ri-kicker { grid-column: 1 / -1; font-size: 9.5px; }
+  .ri-rules { font-size: 11.5px; gap: 3px; line-height: 1.25; }
+  .ri-keys { margin: 0; padding: 0; border-top: 0; align-self: start; gap: 5px 8px; }
+  .ri-act { font-size: 12px; }
+  .ri-caps { gap: 3px; }
+  .ri-caps kbd { font-size: 10px; min-width: 18px; padding: 3px 4px 4px; }
+  .ri-start { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; }
+  .rite-result { padding: 8px; gap: 2px; }
+  #rite-result-headline { font-size: 22px; }
+  .rr-gold { margin-top: 2px; }
+  .rr-gold b { font-size: 28px; }
+  .rr-go { margin-top: 6px; }
 }

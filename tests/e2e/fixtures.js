@@ -20,7 +20,7 @@
 
 // Vite's HMR client, replaced by a no-op that satisfies every import the
 // transformed modules make of it.
-const VITE_CLIENT_STUB =
+export const VITE_CLIENT_STUB =
   'export const createHotContext = () => ({ accept(){}, acceptExports(){}, prune(){}, dispose(){}, decline(){}, invalidate(){}, on(){}, off(){}, send(){} });' +
   'export const updateStyle = () => {}; export const removeStyle = () => {}; export const injectQuery = (u) => u;' +
   'export const createHotContextLegacy = () => ({ accept(){}, dispose(){}, invalidate(){}, on(){}, send(){} });';

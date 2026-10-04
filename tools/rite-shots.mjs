@@ -17,6 +17,11 @@
  *   --board   loaded | empty     what is behind the veil
  *   --w --h --dpr                viewport
  *   --tag                        filename prefix
+ *   --port                       dev server port (default 5273), so parallel
+ *                                agents can each run their own server
+ *   --quick                      five shots instead of twenty-odd: the intro
+ *                                card, two moments of play (one right on a
+ *                                shot), a stage-only close-up, the result card
  */
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -33,11 +38,15 @@ const H = Number(arg('h', 900));
 const DPR = Number(arg('dpr', 1));
 const TAG = arg('tag', `${RITE}-${W}x${H}${DPR !== 1 ? `@${DPR}x` : ''}`);
 const WAVE = Number(arg('wave', 12));
+const PORT = Number(arg('port', 5273));
+const QUICK = argv.includes('--quick');
 
 mkdirSync(OUTDIR, { recursive: true });
 
 const browser = await chromium.launch({
-  args: ['--use-angle=metal', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
+  // Metal on macOS; on Linux `--use-angle=gl` reaches the real GPU (without it
+  // headless Chromium falls back to SwiftShader, ~100x slower).
+  args: [`--use-angle=${process.platform === 'darwin' ? 'metal' : 'gl'}`, '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
     '--enable-gpu-rasterization', '--disable-frame-rate-limit', '--hide-scrollbars', '--mute-audio'],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: DPR });
@@ -51,7 +60,7 @@ await page.route('**/@vite/client', (route) => route.fulfill({
   body: 'export const createHotContext = () => ({ accept(){}, prune(){}, dispose(){}, invalidate(){}, on(){}, send(){} }); export const updateStyle = () => {}; export const removeStyle = () => {}; export const injectQuery = (u) => u;',
 }));
 
-await page.goto('http://localhost:5273/?q=high', { waitUntil: 'load' });
+await page.goto(`http://localhost:${PORT}/?q=high`, { waitUntil: 'load' });
 await page.waitForFunction(() => !!window.__game, null, { timeout: 90000 });
 
 const shots = [];
@@ -154,6 +163,33 @@ if (RITE === 'lottery') {
 
   const stage = await page.locator('#rite-stage').boundingBox();
   Object.assign(box, { x: stage.x, y: stage.y, w: stage.width, h: stage.height });
+
+  if (QUICK) {
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+    await page.mouse.move(cx, cy);
+    await page.waitForTimeout(1200);
+    await snap('intro-card');
+    await page.keyboard.press('Space');
+    for (let i = 0; i < 16; i++) {
+      await page.mouse.move(cx + Math.sin(i * 0.8) * box.w * 0.36, cy + Math.cos(i * 1.3) * box.h * 0.3);
+      await page.keyboard.press('Space');
+      await page.waitForTimeout(i === 4 ? 30 : 140);
+      if (i === 4) await snap('play-on-shot');
+      if (i === 11) await snap('play-mid');
+    }
+    writeFileSync(`${OUTDIR}/${TAG}-${String(shots.length).padStart(2, '0')}-stage.png`,
+      await page.screenshot({ type: 'png', clip: { x: box.x, y: box.y, width: box.w, height: box.h } }));
+    shots.push(`${OUTDIR}/${TAG}-${String(shots.length).padStart(2, '0')}-stage.png`);
+    await page.evaluate(() => { window.__game.minigames._remaining = 0.05; });
+    await page.waitForTimeout(1600);
+    await snap('result');
+    await page.evaluate(() => window.__game.minigames.close());
+    await page.waitForTimeout(400);
+    await snap('after-close');
+    await browser.close();
+    console.log(JSON.stringify({ tag: TAG, shots, errors: logs.filter((l) => /error|warn/i.test(l)) }, null, 2));
+    process.exit(0);
+  }
 
   // ---- play it. Generic input that suits every rite: pointer sweeping the
   // stage plus commits and slot presses, so something is always happening.

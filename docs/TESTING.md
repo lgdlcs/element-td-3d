@@ -33,6 +33,16 @@ always is — the suite attaches to it. Otherwise it spawns `npm run dev` and
 waits up to 120 s. **Do not kill port 5273 to "get a clean run"**; other agents
 and open browser tabs share it.
 
+**Your own port.** `E2E_PORT=5281 npx playwright test …` points the suite (and
+the server it would spawn, `npx vite --port 5281 --strictPort`) at another
+port, so several checkouts or agents can each run their own. `tools/rite-shots.mjs`
+takes `--port` for the same reason.
+
+**The GPU.** The launch flag `--use-angle=` is chosen per platform: `metal` on
+macOS, `gl` elsewhere (override with `E2E_ANGLE`). On Linux, `metal` silently
+falls back to SwiftShader and every frame of the board costs seconds, which is
+what made headless runs there look "slow" rather than broken.
+
 ---
 
 ## Philosophy: the net freezes the version that works
@@ -180,9 +190,9 @@ tests hardest:
   must be on **observable state** (`#rite.open`, the instance's own counters) and
   any loop must be bounded in **frames**, never in milliseconds.
   `tests/e2e/minigame.spec.js` marks the frame-bounded loops that exist because
-  of this. Converting world units to client pixels has the same shape: use
-  `Painter.toClient` plus `getBoundingClientRect`, never a second copy of the
-  letterbox maths inside the spec.
+  of this. Converting field units to client pixels has the same shape: use the
+  host's `fieldToClient` (a projection through the view's camera), never a
+  second copy of the camera maths inside the spec.
 - **Nothing is still, even when the game is paused.** `state.paused` stops the
   simulation and nothing else: every shader's `uTime` keeps advancing, the camera
   idles, the environment breathes and the grade pass lays down per-frame film

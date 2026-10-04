@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rite sandbox (dev)</title>
+  <!-- DEV ONLY. Vite serves every .html in the root during `npm run dev`, but
+       `vite build` bundles index.html alone, so this page and src/dev/ never
+       reach dist/. `npm run check:nodev` proves it. -->
+  <link rel="stylesheet" href="/src/ui/ui.css" />
+  <link rel="stylesheet" href="/src/ui/minigames.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="ui-root"></div>
+  </div>
+  <script type="module" src="/src/dev/RiteSandbox.js"></script>
+</body>
+</html>

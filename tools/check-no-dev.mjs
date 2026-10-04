@@ -1,5 +1,5 @@
 /**
- * Prove the dev panel is not in the production bundle.
+ * Prove the dev panel and the rite sandbox are not in the production bundle.
  *
  *   npm run build && node tools/check-no-dev.mjs
  *
@@ -22,8 +22,15 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DIST = 'dist';
-/** Anything that would only be present if the module had been bundled. */
-const NEEDLES = ['DevPanel', 'devpanel', 'DEV PANEL'];
+/**
+ * Anything that would only be present if a src/dev/ module had been bundled:
+ * the dev panel, and the rite sandbox (src/dev/RiteSandbox.js, whose page is
+ * rites.html). The sandbox strings are its visible heading and its window hook,
+ * both of which survive minification.
+ */
+const NEEDLES = ['DevPanel', 'devpanel', 'DEV PANEL', 'RiteSandbox', 'Rite sandbox', '__sandbox'];
+/** Pages that exist only for the dev server. `vite build` must not emit them. */
+const DEV_PAGES = ['rites.html'];
 
 if (!existsSync(DIST)) {
   console.error(`no ${DIST}/ — run \`npm run build\` first`);
@@ -47,16 +54,16 @@ if (files.length === 0) {
   process.exit(2);
 }
 
-const bad = [];
+const bad = DEV_PAGES.filter((p) => existsSync(join(DIST, p))).map((p) => `${DIST}/${p} was emitted`);
 for (const f of files) {
   const text = readFileSync(f, 'utf8');
   for (const n of NEEDLES) if (text.includes(n)) bad.push(`${f} contains "${n}"`);
 }
 
 if (bad.length) {
-  console.error('THE DEV PANEL IS IN THE BUILD:');
+  console.error('DEV-ONLY CODE IS IN THE BUILD:');
   for (const b of bad) console.error(`  ${b}`);
   process.exit(1);
 }
 
-console.log(`ok — ${files.length} built files scanned, no trace of src/dev/`);
+console.log(`ok — ${files.length} built files scanned, no trace of src/dev/ or ${DEV_PAGES.join(', ')}`);

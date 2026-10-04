@@ -80,8 +80,8 @@ export const FIELD = Object.freeze({
  *     frame. A rite that stores a PointerClick and reads it two steps later is
  *     reading recycled memory: the x/y it finds belong to a shot the player took
  *     afterwards. COPY WHAT YOU KEEP (`{ x: c.x, y: c.y }`), never the record.
- *     This is the `Painter.ppu` of the input side: an edge with no runtime check
- *     and a failure mode that looks like a physics bug, so it is named here.
+ *     An edge with no runtime check and a failure mode that looks like a
+ *     physics bug, so it is named here.
  *
  * Beyond the cap the host DROPS clicks silently rather than growing the queue.
  * Twelve primary commits inside one frame is a macro or a stuck button, not a
@@ -209,9 +209,6 @@ export function slotsWith(index, count = 1) {
  * @property {(ctx: MinigameCtx) => void} init
  * @property {(dt: number, input: object) => (boolean|void)} update
  *   Called at a FIXED dt (MINIGAMES.dt). Return true to end the rite early.
- * @property {(g: import('./Painter.js').Painter, alpha: number) => void} draw
- *   Called once per rendered frame at a variable rate. MUST NOT mutate state.
- *   `alpha` is the interpolation fraction into the next step, in [0,1).
  * @property {() => MinigameScore} score  Pure. Safe to call at any time.
  * @property {() => void} [teardown]
  * @property {() => Array<{type: string, x?: number, y?: number}>} [drainEvents]
@@ -239,6 +236,20 @@ export function slotsWith(index, count = 1) {
  * @property {string} [cursor]  CSS cursor for the stage. Defaults to the
  *   stylesheet's crosshair. A rite that is steered rather than aimed should say
  *   so — a crosshair over a car is a promise the controls do not keep.
+ * @property {string[]} rules   2-4 short lines for the intro card, in the order
+ *   a first-time player needs them: the goal, the one verb, what scores, what
+ *   ends it. One sentence each; if a rule needs a second sentence the rite needs
+ *   a simpler rule.
+ * @property {Array<{keys: string[], action: string}>} keys  The intro card's key
+ *   list. Each `keys` entry renders as one keycap, so 'W/Z' is one cap that
+ *   names both layouts (the host binds by `e.code`, so physical KeyW is 'W' on
+ *   QWERTY and 'Z' on AZERTY). List only what the host actually binds for this
+ *   rite (MinigameHost AXIS_KEYS / COMMIT_KEYS / SLOT_KEYS, plus 'Click' and
+ *   'Right-click'). tests/unit/minigames.test.js holds every def to it.
+ * @property {() => Promise<{createView: (stage: object, rite: MinigameInstance) => object}>} view
+ *   The rite's 3D view module, as a DYNAMIC import (`() => import('./XView.js')`)
+ *   so this file and the rite module stay importable in node without three.js.
+ *   The host draws every rite through Stage3D with it. See docs/MINIGAMES.md §8.
  */
 
 /**

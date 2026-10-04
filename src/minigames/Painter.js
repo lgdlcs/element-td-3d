@@ -1,5 +1,9 @@
 /**
- * THE PAINTER — the only thing a rite is allowed to draw with.
+ * THE PAINTER — the 2D world-unit drawing API of the lottery (ui/Lottery.js).
+ *
+ * The rites drew with it until each got a 3D view (MinigameHost, Stage3D); no
+ * rite may import it now. The notes below still say "rite" where they were
+ * written for one: read it as "whatever is handed a Painter".
  *
  * It owns one transform and one job: turn the fixed 16x9 world rectangle
  * (contract.js FIELD) into whatever canvas the player has, letterboxed, at the

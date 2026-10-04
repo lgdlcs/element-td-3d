@@ -1,13 +1,15 @@
 /**
  * RITE INPUT, IN A REAL BROWSER.
  *
- * Two facts about MinigameHost's pointer handling that no other environment can
- * establish, and that the unit suites therefore cannot own:
+ * Three facts about rite input that no other environment can establish, and
+ * that the unit suites therefore cannot own:
  *
  *  1. THE CLICK QUEUE. Two `pointerdown` events at two different points of the
- *     canvas, dispatched inside ONE animation frame, resolve as two distinct
- *     hits at two different world positions — even when the pointer has moved
- *     somewhere else entirely before the fixed step that consumes them. Before
+ *     canvas, dispatched inside ONE animation frame, reach the rite as two
+ *     clicks at two different world positions, and the first resolves as a hit
+ *     where it was pressed, even when the pointer has moved somewhere else
+ *     entirely before the fixed step that consumes them (luckyshot's rack
+ *     drops the second). Before
  *     the queue the host kept a scalar click count plus one live pointer
  *     position, so a press at A followed by a move to B resolved at B: a hit
  *     credited to the wrong target. jsdom can dispatch those three events but
@@ -21,6 +23,11 @@
  *     before the click: the menu that never opens is the one whose event was
  *     `defaultPrevented`.
  *
+ *  3. HUNT HITS WHAT IT DRAWS. A press on a runner's head, as the 3D view draws
+ *     it, outside the body disc, takes the animal. Only a real view can say
+ *     where the head is drawn; tools/scratch/hunt-silhouette.mjs measures the
+ *     whole silhouette, this test keeps the one claim in CI.
+ *
  * TWO RULES THIS FILE OBEYS, BOTH LEARNED THE HARD WAY
  *
  * NO WALL CLOCK, ANYWHERE. Headless runs at roughly 4 fps here and the host
@@ -29,10 +36,11 @@
  * condition; there is not a `performance.now()` or a `waitForTimeout` in the
  * file. tests/e2e/minigame.spec.js:81 names the same trap.
  *
- * NO SECOND LETTERBOX. World coordinates are converted to client pixels with
- * the host's own `painter.toClient` plus the canvas's `getBoundingClientRect`.
- * Re-deriving the transform in the spec would be a second implementation, free
- * to drift from the first and to agree with itself while both are wrong.
+ * NO SECOND TRANSFORM. World coordinates are converted to client pixels with
+ * the host's own `fieldToClient` — for this 3D rite, a projection through the
+ * view's camera, the exact inverse of the raycast the host picks with.
+ * Re-deriving it in the spec would be a second implementation, free to drift
+ * from the first and to agree with itself while both are wrong.
  *
  * WHY THE AIM IS EXACT AND NOT APPROXIMATE. `this.t` only ever advances inside
  * a fixed sub-step, and the queue is handed to the FIRST sub-step that runs
@@ -68,6 +76,8 @@ async function openLuckyShot(page, wave = 20, occurrence = 0) {
   await page.waitForFunction(() => window.__game.minigames.mode === 'play', null, { timeout: 10000 });
   await page.waitForFunction(() => window.__game.minigames.instance?.targets?.length > 0,
     null, { timeout: 10000 });
+  // The 3D view (and with it the raycast pick) is a dynamic import.
+  await page.waitForFunction(() => window.__game.minigames.ownsFrame, null, { timeout: 15000 });
 }
 
 /**
@@ -112,7 +122,7 @@ async function waitForClicks(page, n) {
 }
 
 test.describe('rite input', () => {
-  test('two presses in one frame are two hits, at the two places they were pressed', async ({ page }) => {
+  test('two presses in one frame reach the rite at the two places they were pressed', async ({ page }) => {
     const { errors } = await startRun(page, { freeze: false });
     await openLuckyShot(page);
     await recordClicks(page);
@@ -159,12 +169,9 @@ test.describe('rite input', () => {
         return { ok: false, candidates };
       }
 
-      // THE HOST'S OWN TRANSFORM. Never a second copy of the letterbox maths.
-      const rect = h.$canvas.getBoundingClientRect();
-      const toClient = (p) => {
-        const c = h.painter.toClient(p.x, p.y);
-        return { x: rect.left + c.x, y: rect.top + c.y };
-      };
+      // THE HOST'S OWN TRANSFORM. Never a second copy of the projection.
+      const toClient = (p) => h.fieldToClient(p.x, p.y);
+      const canvas = h.$gl;
 
       /**
        * Empty air, above every rank: the back row tops out at 0.95 + 0.48.
@@ -177,7 +184,7 @@ test.describe('rite input', () => {
       const pb = toClient(b);
       const pAway = toClient(away);
 
-      const press = (p) => h.$canvas.dispatchEvent(new PointerEvent('pointerdown', {
+      const press = (p) => canvas.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true, clientX: p.x, clientY: p.y,
         button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
       }));
@@ -231,11 +238,72 @@ test.describe('rite input', () => {
     expect(got.pointer.y).toBeCloseTo(plan.away.y, 1);
     expect(Math.abs(got.pointer.y - plan.a.y)).toBeGreaterThan(2);
 
-    // TWO DISTINCT HITS, on the two targets that were aimed at and no others.
-    expect(got.shots).toBe(2);
-    expect(got.hits).toBe(2);
-    expect(got.down).toEqual([plan.a.i, plan.b.i].sort((p, q) => p - q));
+    // The first press is a hit on the target it was aimed at, at its own place
+    // and not at the pointer's. The second falls inside the rifle's rack
+    // (LuckyShotRite RACK) and is dropped by the rite, not by the queue.
+    expect(got.shots).toBe(1);
+    expect(got.hits).toBe(1);
+    expect(got.down).toEqual([plan.a.i]);
 
+    expect(errors).toEqual([]);
+  });
+
+  test('hunt: a press on a runner\'s head, outside its body disc, takes it', async ({ page }) => {
+    const { errors } = await startRun(page, { freeze: false });
+    await page.evaluate(() => window.__game.startMinigame('hunt', 20, 0));
+    await page.waitForSelector('#rite.open', { timeout: 10000 });
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.__game.minigames.mode === 'play' && window.__game.minigames.ownsFrame,
+      null, { timeout: 15000 });
+
+    /**
+     * One evaluate: wait for a runner alone on its patch of field, read where
+     * the VIEW draws its head (projected, then picked back onto the field), and
+     * press there, moved on by exactly what the animal runs before the step
+     * that resolves the press. Same timing argument as the queue test above.
+     */
+    const plan = await page.evaluate(async () => {
+      const { MINIGAMES } = await import('/src/core/Config.js');
+      const h = window.__game.minigames, R = h.instance, v = h._view, st = h._stage;
+      const rect = h.$gl.getBoundingClientRect();
+      for (let n = 0; n < 600 && h.isOpen; n++) {
+        await new Promise((r) => requestAnimationFrame(r));
+        if (R.recoil > 0) continue;
+        const t = R.t + MINIGAMES.dt;
+        for (const a of R.animals) {
+          if (a.state !== 'live' || t >= a.claimAt - 0.05) continue;
+          const now = R.posAt(a, R.t), then = R.posAt(a, t);
+          if (Math.abs(then.x) > 6.5) continue;
+          const head = v.items[a.i].root.getObjectByName('head');
+          head.updateMatrixWorld(true);
+          const s = head.getWorldPosition(v.camera.position.clone()).project(v.camera);
+          const f = st.pick(v, rect.left + (s.x + 1) / 2 * rect.width, rect.top + (1 - s.y) / 2 * rect.height, rect);
+          const aim = { x: f.x + then.x - now.x, y: f.y + then.y - now.y };
+          const off = Math.hypot(aim.x - then.x, aim.y - then.y) / a.hitR;
+          if (off <= 1.05) continue;
+          if (R.animals.some((b) => b !== a && b.state === 'live' && R.covers(b, aim.x, aim.y, t))) continue;
+          const c = h.fieldToClient(aim.x, aim.y);
+          h.$gl.dispatchEvent(new PointerEvent('pointerdown', {
+            bubbles: true, clientX: c.x, clientY: c.y,
+            button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+          }));
+          return { ok: true, i: a.i, species: a.species, off };
+        }
+      }
+      return { ok: false };
+    });
+    expect(plan.ok, 'no lone runner came on screen').toBe(true);
+
+    const state = await page.evaluate(async (i) => {
+      const h = window.__game.minigames;
+      for (let n = 0; n < 600 && h.isOpen && h.instance.shots < 1; n++) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return { state: h.instance.animals[i].state, shots: h.instance.shots };
+    }, plan.i);
+    // Farther from the body centre than the body disc reaches, and still a take.
+    expect(plan.off).toBeGreaterThan(1.05);
+    expect(state).toEqual({ state: 'taken', shots: 1 });
     expect(errors).toEqual([]);
   });
 
@@ -256,7 +324,7 @@ test.describe('rite input', () => {
     });
 
     const at = await page.evaluate(() => {
-      const r = window.__game.minigames.$canvas.getBoundingClientRect();
+      const r = window.__game.minigames.$stage.getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     });
     await page.mouse.click(at.x, at.y, { button: 'right' });

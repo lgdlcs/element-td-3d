@@ -556,3 +556,42 @@ counts, which are not timings at all.
 Rule 6, earned here: **an ablation that lands on 16.7 ms, or that beats the
 resolution sweep, is reporting a dead frame loop or a drifting machine. Print
 absolute values and a floor cell in every probe, never deltas alone.**
+
+## The rite stage (3D minigames)
+
+Measured 2026-10-03 on the Linux box (GTX 970, headless Chromium, ANGLE GL,
+1600x900) with `tools/scratch/rite-gpu.mjs`, Lucky Shot, three open/close
+cycles. The probe reads the stage renderer's `info` and fails on the three
+rules below; it caught all three defects on the first 3D rite before they were
+fixed.
+
+| | textures | programs | buffer |
+|---|---|---|---|
+| intro card (after the host's compile) | 20 | 12 | 892x502 |
+| after 8 shots | 20 | 12 | 892x502 |
+| after close, every cycle | 2 | 1 | 1x1 |
+
+1. **No program and no texture appears during play.** A cue that gave a
+   sprite its first `map` compiled a new program on the first hit, and textures
+   first used on a played frame were uploaded there. Now the stage's
+   `compile(view)` compiles and draws once behind the card, and views build
+   every texture a cue swaps in up front.
+2. **Nothing grows across cycles.** `disposeObject` did not dispose lights, so
+   every rite at medium and above left its 1024x1024 shadow map behind: +2
+   textures per open, without bound. Lights are now disposed with the scene.
+3. **The stage holds no full-size buffer between rites.** It is a second
+   WebGL context for the rest of the session once a 3D rite has opened (the
+   board keeps its own); `close()` shrinks its drawing buffer to 1x1. Sharing
+   the board's renderer instead would save the context but couple the rite to
+   the board's post chain and resolution controllers; not done.
+
+The stage's DPR is the smallest of 1.5, the preset's `pixelRatioCap` and the
+board's live pixel ratio. Measured at DPR 2: `low` renders the rite at 1.0
+(it was 1.25, more pixels than the board was allowed), `high` at 1.5. Geometry
+counts still rise during play (70 to ~87): buffers first drawn on a hit (holes,
+shards). Those are vertex uploads of a few hundred bytes, not compiles.
+
+After a forced `WEBGL_lose_context` and restore, three.js recovers on its own
+(frames keep coming), and the first close logs `delete: object does not belong
+to this context` warnings from disposing objects of the lost context. Known,
+harmless, not handled.

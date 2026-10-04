@@ -2,7 +2,7 @@
  * ONE SIMULATED PLAYER, SIX RITES — the instrument that makes them comparable.
  *
  * The six rites have four different verbs (chase a point, hop on an 8-way grid,
- * click a target, steer plus two buttons). Nothing can play all of them with one
+ * click a target, steer plus a boost). Nothing can play all of them with one
  * body of code, and a bot that tried would be a strawman in five of them and a
  * fair test in one. So this file splits the player in two:
  *
@@ -47,9 +47,9 @@
  * read the fall schedule, the claim deadlines, the exact hit discs. So the body
  * degrades EXECUTION (when, where, how steadily) and never KNOWLEDGE. In a rite
  * whose difficulty is mostly "can you read the warning in time", that makes
- * every number here an UPPER BOUND on what a human scores — `platforms` is the
- * clear case, and its measured curve should be read as "even knowing the whole
- * schedule, this is what execution costs you". This is a limit of the harness,
+ * every number here an UPPER BOUND on what a human scores. (`platforms` used to
+ * be the clear case; its brain now reads only the tile tiers the 3D floor
+ * shows, so its row is the one exception.) This is a limit of the harness,
  * not of the rites, and the six rite suites' own bots have the same limit; it is
  * recorded here rather than quietly absorbed.
  *
@@ -69,16 +69,14 @@ import { mulberry32, hashStr } from '../../../src/core/Rng.js';
 import { FIELD, makeInput, clickAt } from '../../../src/minigames/contract.js';
 import { riteRng } from '../../../src/minigames/schedule.js';
 
-import { HEAVEN_RITE } from '../../../src/minigames/rites/HeavenRite.js';
+import { HEAVEN_RITE, PLAY_HW, PLAY_HH } from '../../../src/minigames/rites/HeavenRite.js';
 import {
-  PLATFORMS_RITE, cellX, cellY, cellAt, neighbours,
+  PLATFORMS_RITE, cellX, cellY, neighbours, STRESS_LEAD as PLATFORMS_STRESS,
 } from '../../../src/minigames/rites/PlatformsRite.js';
-import { LUCKY_SHOT_RITE, TARGETS } from '../../../src/minigames/rites/LuckyShotRite.js';
-import {
-  OFFROAD_RITE, HALF_W, RIVAL_COUNT as OFFROAD_RIVALS,
-} from '../../../src/minigames/rites/OffroadRite.js';
+import { LUCKY_SHOT_RITE, TARGETS, RACK } from '../../../src/minigames/rites/LuckyShotRite.js';
+import { OFFROAD_RITE, HALF_W } from '../../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../../src/minigames/rites/HuntRite.js';
-import { FISHING_RITE, FISH, SINK, SWIMMING } from '../../../src/minigames/rites/FishingRite.js';
+import { FISHING_RITE, FISH, FLIGHT, SWIMMING } from '../../../src/minigames/rites/FishingRite.js';
 
 const DT = MINIGAMES.dt;
 
@@ -407,67 +405,103 @@ const NO_INTENT = Object.freeze({ aim: null, axis: null, fire: false, alt: false
 
 /* ---- heaven ------------------------------------------------------------ */
 /**
- * Lifted verbatim from `tests/unit/heaven-rite.test.js` (`bestY` / `SKILLED`,
- * the author's v3). Find the earliest moment anything occupies the mote's
- * column, then take the height with the most room at that moment and just after
- * it. Two weaker versions are documented at the original site; do not reinvent
- * them here.
+ * The author's bot, exported so `tests/unit/heaven-rite.test.js` plays the same
+ * brain this gate measures (one copy, not two that drift). Reads the telegraphs through `threatAt` (pink is negative, blue and clear air
+ * positive) on a polar grid around the mote, and goes to the nearest point with
+ * enough room. With nothing telegraphed it drifts toward the middle, where the
+ * next aimed strike has the most floor around it.
  */
-const HORIZON = 2.6;
-const PROBE = 0.04;
-const PHASES = Object.freeze([[0, 2], [0.22, 1], [0.55, 0.5]]);
-const SAMPLES = 91;
+const HEAVEN_RADII = Object.freeze([0.5, 1.0, 1.5, 2.0, 2.6, 3.2, 3.9]);
+const HEAVEN_ANGLES = 16;
+const HEAVEN_ROOM = 0.8;
 
-function heavenBestY(inst) {
-  let dz = 0;
-  while (dz <= HORIZON && !Number.isFinite(inst.clearanceAt(inst.mx, 0, inst.t + dz))) dz += PROBE;
-  if (dz > HORIZON) return 0;
-  const hh = FIELD.hh - 0.2;
-  let best = inst.my;
+export function heavenBestXY(inst) {
+  const lim = (v, h) => (v < -h ? -h : v > h ? h : v);
+  const hw = PLAY_HW;
+  const hh = PLAY_HH;
+  let bx = inst.mx, by = inst.my;
   let bestV = -Infinity;
-  for (let i = 0; i < SAMPLES; i++) {
-    const y = -hh + (2 * hh * i) / (SAMPLES - 1);
-    let v = 0;
-    for (const [d, w] of PHASES) {
-      v += w * Math.max(-2.5, Math.min(0.9, inst.clearanceAt(inst.mx, y, inst.t + dz + d)));
+  for (let r = -1; r < HEAVEN_RADII.length; r++) {
+    const rad = r < 0 ? 0 : HEAVEN_RADII[r];
+    const n = r < 0 ? 1 : HEAVEN_ANGLES;
+    for (let k = 0; k < n; k++) {
+      const a = (k / HEAVEN_ANGLES) * Math.PI * 2 + r * 0.2;
+      const x = lim(inst.mx + Math.cos(a) * rad, hw);
+      const y = lim(inst.my + Math.sin(a) * rad, hh);
+      const v = Math.min(HEAVEN_ROOM, inst.threatAt(x, y))
+        - 0.06 * Math.hypot(x - inst.mx, y - inst.my)
+        - 0.02 * Math.hypot(x, y);
+      if (v > bestV) { bestV = v; bx = x; by = y; }
     }
-    v -= Math.abs(y - inst.my) * 0.03;
-    if (v > bestV) { bestV = v; best = y; }
   }
-  return best;
+  return { x: bx, y: by };
 }
 
 /* ---- platforms --------------------------------------------------------- */
 /**
- * Lifted from `tests/unit/platforms-rite.test.js` (`skilled`). Stand still while
- * the plate is comfortable; otherwise move to whichever neighbour lasts longest.
- * Reads `inst.gone`, so it is an ORACLE and scores above any human — stated at
- * the original site and repeated here so nobody reads a perfect run as a claim
- * about the player experience.
+ * Lifted from `tests/unit/platforms-rite.test.js` (`skilled`). It reads only
+ * what the 3D floor SHOWS: a tile is settled, darkened (`STRESS_LEAD` x the
+ * warning ahead of its shake), shaking (with a glow that grows as it nears the
+ * drop), or a hole. Settled tiles all look alike, so among them it prefers the
+ * one with the most settled ground reachable from it: "hop toward the room".
+ * Tiles wear out under a player who lingers (PlatformsRite LINGER), so every
+ * stop leaves a hole behind, and counting only adjacent open tiles walked the
+ * bot into dead ends. It leaves its own tile as soon as it darkens.
+ *
+ * NOT AN ORACLE ANY MORE. The 2D rite's bot read `inst.gone` directly and
+ * re-planned 1.1 s ahead, which made reaction lag free by construction and the
+ * whole column of this rite a picture of the bot. Seeing only the tiers is what
+ * a player sees, so lag and missteps now cost what they cost a player.
+ *
+ * Mid-hop it plans from the tile it is flying to, so the axis it holds is the
+ * NEXT hop, which the rite queues for the landing.
  */
-const NB = new Int32Array(4);
+const NB = new Int32Array(8);
+const NB2 = new Int32Array(8);
+
+/** What a tile looks like at `t`, as a number: higher is safer. */
+function platformsLook(inst, i) {
+  const left = inst.gone[i] - inst.t;
+  if (left <= 0) return -1e9;
+  const w = inst.shake[i];
+  if (left <= w) return left;                              // shaking: the glow says how long
+  if (left <= w * PLATFORMS_STRESS) return 50; // darkened
+  return 100 + settledRoom(inst, i);
+}
+
+const ROOM = new Int32Array(64);
+const SEEN = new Uint8Array(64);
+/** Settled tiles reachable from `i` through settled tiles: "where there is room". */
+function settledRoom(inst, i) {
+  const settled = (c) => inst.gone[c] - inst.t > inst.shake[c] * PLATFORMS_STRESS;
+  SEEN.fill(0);
+  let head = 0, tail = 0;
+  ROOM[tail++] = i; SEEN[i] = 1;
+  while (head < tail) {
+    const n = neighbours(ROOM[head++], NB2);
+    for (let k = 0; k < n; k++) {
+      const c = NB2[k];
+      if (!SEEN[c] && settled(c)) { SEEN[c] = 1; ROOM[tail++] = c; }
+    }
+  }
+  return tail;
+}
 
 function platformsIntent(inst) {
-  const cur = cellAt(inst.px, inst.py);
-  if (cur < 0) return NO_INTENT;
+  if (!inst.alive) return NO_INTENT;
+  const cur = inst.to >= 0 ? inst.to : inst.cell;
+  const here = platformsLook(inst, cur);
+  if (here >= 100) return NO_INTENT;
   const n = neighbours(cur, NB);
-  let best = cur, bestGone = inst.gone[cur];
+  let best = cur, bestV = here;
   for (let k = 0; k < n; k++) {
-    if (inst.gone[NB[k]] > bestGone) { bestGone = inst.gone[NB[k]]; best = NB[k]; }
+    const v = platformsLook(inst, NB[k]);
+    if (v > bestV) { bestV = v; best = NB[k]; }
   }
-  const target = inst.gone[cur] - inst.t > 1.1 ? cur : best;
-  const gx = cellX(target), gy = cellY(target);
-  // The CHOICE of tile is what the reaction time delays. The walk to it is a
-  // closed loop on the marker's live position, which is why this is a function.
+  if (best === cur) return NO_INTENT;
   return {
     aim: null,
-    axis: () => {
-      const tx = gx - inst.px, ty = gy - inst.py;
-      return {
-        x: Math.abs(tx) > 0.06 ? Math.sign(tx) : 0,
-        y: Math.abs(ty) > 0.06 ? Math.sign(ty) : 0,
-      };
-    },
+    axis: { x: Math.sign(cellX(best) - cellX(cur)), y: Math.sign(cellY(best) - cellY(cur)) },
     fire: false,
     alt: false,
   };
@@ -488,6 +522,8 @@ function platformsIntent(inst) {
  * policy is evaluated at the same instant, so neither change is visible.
  */
 const SHOT_PERIOD = 12;
+/** Steps between two shots the rifle will take (RACK): a press sooner is dropped. */
+const RACK_PERIOD = Math.ceil(RACK / DT - 1e-6);
 
 function luckyAim(inst) {
   const t = inst.t + DT;
@@ -505,69 +541,102 @@ function luckyAim(inst) {
 
 /* ---- offroad ----------------------------------------------------------- */
 /**
- * From `tests/unit/offroad-rite.test.js` (`driver()`), bombs on. Aim at the next
- * nugget, fall back to the next gate, boost only while on the road, mine when a
- * rival is behind. Written against the public surface only, and it leads the
- * corner by 2.2 units because the car does not self-centre.
+ * From `tests/unit/offroad-rite.test.js` (`driver()`). Pick the next nugget,
+ * fall back to the next gate, boost once standing on a fast stretch. The rite
+ * steers on the arrows only, so this is a keyboard player: the CHOICE of target
+ * is the intent (lagged by the body), the arrow held toward it is the servo
+ * (`axis` as a function, evaluated live), exactly as `platforms` splits it.
  */
 function offroadIntent(inst) {
-  const cam = inst.centreAt(inst.s);
-  const u = inst.x - cam;
+  const target = offroadTarget(inst);
+  const u = inst.x - inst.centreAt(inst.s);
+  const boost = inst.boostT <= 0 && inst.boostLeft > 0 && Math.abs(u) < HALF_W && inst.isFast(inst.s);
+  return { aim: null, axis: () => offroadSteer(inst, target), fire: boost, alt: false };
+}
 
-  let target = null;
+/**
+ * The next thing worth being over: the next nugget, unless a gate comes first,
+ * in which case the gate, threaded on the side the nugget after it lies.
+ */
+export function offroadTarget(inst) {
+  let coin = null;
   for (const c of inst.coins) {
     if (c.taken || c.s < inst.s) continue;
-    if (c.s - inst.s > 9) break;
-    target = { s: c.s, u: c.u };
+    if (c.s - inst.s <= 12) coin = c;
     break;
   }
-  if (!target) {
-    const g = inst.gates[inst.nextGate];
-    target = g ? { s: g.s, u: 0 } : { s: inst.s + 5, u: 0 };
+  const g = inst.gates[inst.nextGate];
+  if (g && (!coin || g.s < coin.s)) {
+    const side = coin ? clampAbs(coin.u, g.hw * 0.5) : 0;
+    return { s: g.s, u: side };
   }
-
-  const boost = inst.boostT <= 0 && inst.boostLeft > 0 && Math.abs(u) < HALF_W;
-
-  let bomb = false;
-  if (inst.bombsLeft > 0 && Math.abs(u) < 0.35) {
-    for (let id = 0; id < OFFROAD_RIVALS; id++) {
-      if (inst.s - inst.rivalDist(id, inst.t) > 3) { bomb = true; break; }
-    }
-  }
-
-  return {
-    aim: { x: inst.centreAt(target.s + 2.2) + target.u - cam, y: 0 },
-    axis: null,
-    fire: boost,
-    alt: bomb,
-  };
+  return coin ? { s: coin.s, u: coin.u } : { s: inst.s + 6, u: 0 };
 }
+
+const clampAbs = (v, m) => Math.max(-m, Math.min(m, v));
+
+/**
+ * The arrow a driver holds to arrive over `target`: the lateral speed that gets
+ * there in the time left, less what the ruts and the corner already do to the
+ * car (the rite's DRIFT_RATE and CENTRIFUGAL, which a player learns by feel).
+ */
+export function offroadSteer(inst, target) {
+  const speed = inst.speed || 7.4;
+  const T = Math.max(0.18, (target.s - inst.s) / speed);
+  const want = inst.centreAt(target.s) + target.u;
+  const drift = 0.45 * (inst.x - inst.centreAt(inst.s)) - 0.35 * inst.slopeAt(inst.s) * speed;
+  const need = (want - inst.x) / T - drift;
+  const err = need - inst.vx;
+  // Press and hold, not flutter: a held arrow is released only once the car has
+  // overshot what it needs. A human taps a few times a second, and the body
+  // rolls its misread per change of key, so a servo that chatters would be
+  // charged for presses no player makes.
+  const held = OFFROAD_HELD.get(inst) ?? 0;
+  let x = held;
+  if (held === 0) x = err > 0.9 ? 1 : err < -0.9 ? -1 : 0;
+  else if (held * err < -0.2) x = 0;
+  OFFROAD_HELD.set(inst, x);
+  return { x, y: 0 };
+}
+
+const OFFROAD_HELD = new WeakMap();
 
 /* ---- hunt -------------------------------------------------------------- */
 /**
- * From `tests/unit/hunt-rite.test.js` (`SKILLED` + `aim`): shoot the instant the
- * animal is up and the trigger is free, at the animal's MASS rather than its
- * feet. The 0.30 body lift is duplicated from the rite on purpose at the
- * original site — same reasoning applies to this copy.
+ * From `tests/unit/hunt-rite.test.js` (`SKILLED`): shoot the running animal the
+ * instant the trigger is free, at where its body is on the step the shot
+ * resolves. A POLICY rather than a point, for the reason `aim` documents: the
+ * animal is moving, and a lagged hand TRACKS a runner rather than aiming at a
+ * copy of where it was a third of a second ago.
  */
 function huntIntent(inst) {
-  const a = inst.liveAnimal();
+  // Two animals can be running at once. Take the most urgent one that is not
+  // about to reach cover; a runner with under HUNT_LET_GO left is let go, the
+  // way a player stops chasing a hare that is already at the bush.
+  let a = null;
+  for (const b of inst.animals) {
+    if (b.state !== 'live' || b.claimAt - inst.t < HUNT_LET_GO) continue;
+    if (!a || b.claimAt < a.claimAt) a = b;
+  }
+  a = a ?? inst.liveAnimal();
   if (!a) return NO_INTENT;
-  const aim = { x: a.x, y: a.y + 0.30 * a.scale };
-  // The aim is published even during recoil so the hand is already there when
-  // the trigger frees; only the trigger respects the lock.
-  return { aim, axis: null, fire: inst.recoil <= 0, alt: false };
+  // The aim is published even during the reload so the hand is already on the
+  // runner when the trigger frees; only the trigger respects the lock.
+  return { aim: (now) => inst.posAt(a, now + DT), axis: null, fire: inst.recoil <= 0, alt: false };
 }
+
+/** Seconds before its deadline at which a hunt brain stops chasing a runner. */
+const HUNT_LET_GO = 0.35;
 
 /* ---- fishing ----------------------------------------------------------- */
 /**
- * From `tests/unit/fishing-rite.test.js` (`SKILLED` = `aimAt(SINK)`): cast at
- * where the nearest uncontested fish WILL BE when the hook lands. The lead is
+ * From `tests/unit/fishing-rite.test.js` (`SKILLED` = `aimAt(FLIGHT)`): cast at
+ * where the nearest uncontested fish WILL BE when the lure lands. The lead is
  * the entire rite; `aimAt(0)` is the same player without it and scores far less.
  */
 function fishingIntent(inst) {
   if (inst.hook || inst.t < inst.readyAt) return NO_INTENT;
-  const tl = inst.t + DT + SINK;
+  const tl = inst.t + DT + FLIGHT;
   let best = -1, bestD = Infinity;
   for (let i = 0; i < FISH; i++) {
     const f = inst.fish[i];
@@ -586,17 +655,17 @@ function fishingIntent(inst) {
   // fish-travel behind the hook — which is not a worse angler, it is an angler
   // playing a rite that does not exist.
   return {
-    aim: (now) => ({ x: inst.fishX(f, now + DT + SINK), y: inst.fishY(f, now + DT + SINK) }),
+    aim: (now) => ({ x: inst.fishX(f, now + DT + FLIGHT), y: inst.fishY(f, now + DT + FLIGHT) }),
     axis: null, fire: true, alt: false,
   };
 }
 
 /** riteId -> (inst, step) => Intent. The only per-rite knowledge in the file. */
 const INTENT = Object.freeze({
-  heaven: (inst) => ({ aim: { x: inst.mx, y: heavenBestY(inst) }, axis: null, fire: false, alt: false }),
+  heaven: (inst) => ({ aim: heavenBestXY(inst), axis: null, fire: false, alt: false }),
   platforms: platformsIntent,
   luckyshot: (inst, step) => ({
-    aim: luckyAim(inst), axis: null, fire: step % SHOT_PERIOD === 0, alt: false,
+    aim: luckyAim(inst), axis: null, fire: step % Math.max(SHOT_PERIOD, RACK_PERIOD) === 0, alt: false,
   }),
   offroad: offroadIntent,
   hunt: huntIntent,

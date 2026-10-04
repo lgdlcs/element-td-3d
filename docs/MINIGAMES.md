@@ -13,14 +13,24 @@ outright, in one commit, and everything below describes what replaced them.
 
 | rite | id | clock | verb | scores on | `RAND_CALLS` | rivals |
 |---|---|---:|---|---|---:|:--:|
-| escape from gay heaven | `heaven` | 20 s | steer a mote, pointer or `axis` | seconds survived | 121 | — |
-| Falling Platforms | `platforms` | 24 s | steer a marker, `axis` only | survival + who you outlasted | 41 | yes |
-| Lucky Shot | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
-| Offroad Racing | `offroad` | 26 s | steer, boost, bomb | gates + gold + placing | 58 | yes |
-| Game Hunt | `hunt` | 20 s | reaction shot | animals taken out of 8 | 69 | yes |
-| Fishing | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
+| escape from gay heaven **(3D)** | `heaven` | 20 s | steer a mote, pointer or `axis` | strikes dodged out of a fixed count | 121 | — |
+| Falling Platforms **(3D)** | `platforms` | 24 s | hop tile to tile, `axis` only; a tile wears out under you in 2.5 s | survival + who you outlasted | 41 | yes |
+| Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds, 0.5 s rack | points against a fixed PAR (60) | 24 | — |
+| Offroad Racing **(3D)** | `offroad` | 26 s | steer, boost | gates + gold + placing | 58 | yes |
+| Game Hunt **(3D)** | `hunt` | 20 s | reaction shot at runners, reload | animals taken out of 10 | 69 | yes |
+| Fishing **(3D)** | `fishing` | 20 s | leading shot (cast on the drawn lead ring) | points against a fixed PAR | 94 | yes |
 
-Full write-ups in §13. Files:
+Full write-ups in §13.
+
+> **EVERY RITE IS 3D.** Each rite is a pure logic module plus a three.js view
+> drawn through one shared `Stage3D`; `view` is a required member of the def.
+> `luckyshot` is the reference (logic `LuckyShotRite.js`, view
+> `LuckyShotView.js`). The 2D rite path (`#rite-canvas`, `MinigameHost.#render2D`
+> and the instance's `draw`) was deleted once the sixth view landed.
+> `Painter.js` stays, because the lottery (§10) still draws with it; no rite
+> may import it.
+
+Files:
 
 | Path | What it is |
 |---|---|
@@ -28,21 +38,29 @@ Full write-ups in §13. Files:
 | `src/minigames/schedule.js` | Which rite, which wave, which seed. **Pure.** |
 | `src/minigames/registry.js` | The one place a rite is announced. **Pure.** |
 | `src/minigames/rivals.js` | Deterministic opponents. **Pure.** |
-| `src/minigames/Painter.js` | The world-unit drawing API. Takes a 2D context. |
-| `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, loop, clock, click queue, result, payout. |
+| `src/minigames/Stage3D.js` | The one WebGL renderer, the field frame, the raycast pick, `RiteView`, lights, `Bursts`. Imports three. |
+| `src/minigames/Painter.js` | The 2D world-unit drawing API. Used by the lottery (`src/ui/Lottery.js`) only; no rite draws with it. |
+| `src/minigames/MinigameHost.js` | Overlay, veil, keyboard shield, intro card, loop, clock, click queue, result, payout. |
 | `src/minigames/rites/HeavenRite.js` | `heaven` — dodge everything pink. |
-| `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 dalles, they all fall. |
-| `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery. **The reference rite.** |
-| `src/minigames/rites/OffroadRite.js` | `offroad` — top-down rally, boost and bomb. |
-| `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot. |
-| `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot. |
+| `src/minigames/rites/HeavenView.js` | `heaven` — its cloud arena in 3D. |
+| `src/minigames/rites/PlatformsRite.js` | `platforms` — 28 floating tiles, they all fall. The hop logic. |
+| `src/minigames/rites/PlatformsView.js` | `platforms` — its 3D floor over the void. |
+| `src/minigames/rites/LuckyShotRite.js` | `luckyshot` — the shooting gallery's logic. **The reference rite.** |
+| `src/minigames/rites/LuckyShotView.js` | `luckyshot` — its 3D booth. **The reference view.** |
+| `src/minigames/rites/OffroadRite.js` | `offroad` — rally logic: steer and boost. Drawn by `OffroadView.js` (chase camera). |
+| `src/minigames/rites/HuntRite.js` | `hunt` — the reaction shot's logic. |
+| `src/minigames/rites/HuntView.js` | `hunt` — its 3D clearing, stands and blind. |
+| `src/minigames/rites/FishingRite.js` | `fishing` — the leading shot's logic. |
+| `src/minigames/rites/FishingView.js` | `fishing` — its 3D lake, seen from the pier. |
 | `src/ui/minigames.css` | The overlay's styling. Tokens only, plus one `[data-rite]` block per rite. |
 | `tests/unit/minigames.test.js` | Contract, schedule, registry, reward curve. `node` env. |
 | `tests/unit/rivals.test.js` | The rival model on its own. `node` env. |
 | `tests/unit/rite-theme.test.js` | Theme tokens reach the canvas. **`jsdom` env.** |
 | `tests/unit/helpers/rite-contract.js` | `assertRiteContract(def)` — the checklist every rite passes. |
 | `tests/unit/<id>-rite.test.js` | One per rite: the shared checklist plus what is specific to it. |
-| `tests/unit/minigame-host.test.js` | Host: leaks, credit, clock, click queue, shield. `jsdom` env. |
+| `tests/unit/minigame-host.test.js` | Host: leaks, credit, clock, intro card, click queue, shield, no-WebGL. `jsdom` env. |
+| `tools/rite-shots.mjs` | Screenshots of a rite (`--quick`, `--port`). §9. |
+| `tools/scratch/rite-frametime.mjs` | Board vs rite frame time, paired, plus "did the board render". §9. |
 
 ---
 
@@ -56,16 +74,32 @@ fresh **instance**. Nothing else is exported to the rest of the game.
 export const LUCKY_SHOT_RITE = {
   id: 'luckyshot',             // stable; feeds the RNG label
   name: 'Lucky Shot',          // display title
-  hint: 'Shoot the rows — left, right or Space, and count your rounds',
+  hint: 'Knock down the tin targets — every shot costs a round',
+  rules: [                     // REQUIRED: 2-4 lines on the intro card (§5)
+    'Shoot the targets as they slide past. Ducks 1, rabbits 2, plates 3.',
+    'The golden one pays 4x, once. The figure with raised hands costs 1.',
+    '24 rounds, half a second to reload each. A miss spends one too. 60 points pays in full.',
+  ],
+  keys: [                      // REQUIRED: the intro card's key list (§5)
+    { keys: ['Mouse'], action: 'Aim' },
+    { keys: ['Click', 'Space'], action: 'Shoot' },
+  ],
   duration: 20,                // seconds on the clock
   create: () => new LuckyShotRite(),
+  view: () => import('./LuckyShotView.js'),   // the 3D view; a DYNAMIC import (§8)
   // All optional. See §8's "Dressing" and the MinigameDef typedef in contract.js.
   theme: 'luckyshot',          // selects the [data-rite] block in minigames.css
   eyebrow: 'Gallery',          // overline; the host appends ' · before wave N'
   abandonNote: 'You left the gallery',               // result card, on a skip
-  // cursor: 'none',           // omit to keep the stylesheet's crosshair
+  cursor: 'none',              // the view draws its own 3D crosshair
 };
 ```
+
+`view` is a function returning a **dynamic** `import()`. That is the whole
+trick that keeps `registry.js` and every `*Rite.js` importable in node: the
+`import()` expression is not evaluated until the host calls it, so three.js is
+never loaded by a unit test. Never write `import { createView } from
+'./XView.js'` at the top of a rite module.
 
 ```js
 interface MinigameInstance {
@@ -74,18 +108,43 @@ interface MinigameInstance {
   /** Called at a FIXED dt. Return true to end the rite early. */
   update(dt: number, input: MinigameInput): boolean | void;
 
-  /** Variable rate. MUST NOT mutate state. `alpha` is the step interpolation fraction. */
-  draw(g: Painter, alpha: number): void;
-
   /** Pure. Safe to call at any time, any number of times. */
   score(): { ratio: number, headline: string, detail: string };
 
   teardown?(): void;
 
-  /** Optional. Returns AND CLEARS presentation cues; the host turns them into sound and shake. */
-  drainEvents?(): Array<{ type: string, x?: number, y?: number }>;
+  /** Optional. Returns AND CLEARS presentation cues; the host turns them into sound and
+   *  shake, then forwards each one to the view's cue(). Extra fields are allowed. */
+  drainEvents?(): Array<{ type: string, x?: number, y?: number, [k: string]: any }>;
 }
 ```
+
+```js
+// The module `def.view()` resolves to:
+export function createView(stage: Stage3D, rite: MinigameInstance): RiteView;
+
+class RiteView {                 // extend the base in src/minigames/Stage3D.js
+  scene: THREE.Scene;            // yours; disposed by dispose()
+  camera: THREE.PerspectiveCamera; // the STEADY camera — the pick raycasts through it
+  frame: FieldFrame;             // where the 16x9 field sits in your world (§2)
+  kick: { x, y, z, pitch, yaw }; // transient camera offset, applied for the draw only
+  layout(aspect: number): void;  // canvas resized: reframe (base does frameField)
+  render(alpha: number, dt: number): void; // READ the rite, move your meshes. Never write the rite.
+  cue(ev): void;                 // one drained event, after the host played its sound
+  dispose(): void;               // free every GPU resource you made (base: scene + own()ed)
+}
+```
+
+**Lifecycle, as the host runs it.** `open()` → `def.create()` → `init(ctx)` →
+intro card up → the host imports `Stage3D.js` (once per session) and
+`def.view()` in parallel → `createView(stage, instance)` → `stage.compile(view)`
+(shaders compile behind the card, not on the first played frame) → every frame:
+`layout()` if the canvas size changed, `render(alpha, dt)`, `stage.render(view)`
+→ drained events: sound, CSS kick, `view.cue(ev)` → `close()` → `view.dispose()`.
+`render` runs during the intro card and the result card too (with `rite.t`
+frozen), so the scene is visible behind both. All view calls run inside the
+host's `#guard`: a throw in view code abandons the rite exactly like a throw in
+`update`.
 
 ```js
 type MinigameCtx = {
@@ -142,15 +201,14 @@ next `pointerdown`; the array handed to the rite is the same array identity ever
 step. That is what keeps a reaction game at zero allocation per frame, and it
 means a rite that stores a `PointerClick` and reads it two steps later is reading
 a shot the player took **afterwards**. **Copy what you keep** — `{ x: c.x, y: c.y }`,
-never the record. This is the `Painter.ppu` of the input side: no runtime check,
-and a failure mode that looks like a physics bug.
+never the record. There is no runtime check, and the failure mode looks like a
+physics bug.
 
 Beyond the cap the host **drops** clicks silently rather than growing the queue.
 Twelve primary commits inside one frame is a macro or a stuck button, not a
 player, and an unbounded queue is an unbounded frame.
 
-All four shooting-shaped rites (`luckyshot`, `hunt`, `fishing`, and `offroad`'s
-mines only indirectly) read `clicks` and **never** `action`/`altAction` for the
+All three shooting-shaped rites (`luckyshot`, `hunt`, `fishing`) read `clicks` and **never** `action`/`altAction` for the
 same press — counting both fires twice.
 
 ### 1.2 Right-click is an alias, never a requirement
@@ -170,13 +228,10 @@ press with a settling delay. In a game measured in tens of milliseconds, making
 the secondary button the only route to the primary verb is a handicap applied to
 one platform and to nobody else.
 
-`offroad` is the single exception, and it is an exception because the two buttons
-there are **two genuinely different decisions**, not two ways to say the same
-thing: primary = **boost**, secondary = **bomb**. Neither is time-critical to the
-millisecond, and — note, because it is stronger than the rule requires — **both
-are still keyboard-reachable**: boost takes `action` (so Space/Enter), bomb takes
-`altAction` **or** `slots[0]` (Digit1). So even in `offroad` the secondary button
-is a convenience, not a gate.
+`offroad` used to be the single exception (primary = boost, secondary = bomb).
+The bomb was cut in its 3D rework, so today **no rite gives the secondary
+button a meaning of its own**: `offroad` ignores `altAction` and `slots`, and a
+left click, Space or Enter is its one commit (boost).
 
 ### `slots` is for rites whose verb is *choose*
 
@@ -185,8 +240,8 @@ of several a player picked. The host translates `Digit1..Digit6` and
 `Numpad1..Numpad6` (by `e.code`, so the same six physical keys on AZERTY) into
 six counters, in the same shape and for the same reason as `action`. A rite that
 does not care never reads the field. `SLOT_COUNT` is 6 because six is the number
-of elements, which is the only fixed-arity choice this game has. Today exactly
-one rite reads it: `offroad`, for the bomb.
+of elements, which is the only fixed-arity choice this game has. Today no rite
+reads it (`offroad` did, for its bomb, until the bomb was cut).
 
 The letters `A S D F G H` were rejected: `A`, `S`, `D`, `W`, `Z` and `Q` are all
 in the host's `AXIS_KEYS`, so a rite using them would be steering at the same
@@ -215,29 +270,80 @@ it.
 ## 2. The coordinate space — read this one twice
 
 **A rite never sees a pixel.** It works in a fixed **16 × 9 rectangle**, origin at
-the **centre**: `x ∈ [-8, 8]`, `y ∈ [-4.5, 4.5]`, **+y is up**. The host
-letterboxes that rectangle onto whatever canvas the player has, at their DPR.
+the **centre**: `x ∈ [-8, 8]`, `y ∈ [-4.5, 4.5]`, **+y is up**. Each view
+frames that rectangle with its camera (`frameField`, §8.1) on whatever stage the
+player has, and the host picks the pointer back through the same camera.
 
 Consequences, all of them load-bearing:
 
-- Resizing the window changes the letterbox and **nothing else**. Difficulty,
+- Resizing the window changes the camera framing and **nothing else**. Difficulty,
   hit windows and travel distances are identical on every screen.
 - A test at 1600×900 therefore proves something about every other screen. A rite
   written in pixels makes every measurement local to one monitor.
-- `Painter` deliberately has **no accessor for the raw `CanvasRenderingContext2D`**.
-  If a primitive is missing, add it to `Painter` in world units, for everyone.
-  `blob`, `ellipse`, `capsule`, `clipRect` and `linearFill` were all added that
-  way for the six rites; `blob` is the one that matters, because a canopy, a
-  deer, a boar, a fish and a car body are all "a smooth closed silhouette" and
-  `poly` only does straight segments.
-- **`linearFill` is the one hole in "no raw context".** It returns a
-  `CanvasGradient`, an opaque handle that escapes the class. The rule is written
-  rather than enforced: call it from `draw` only, and pass the result straight
-  back into a `fill`. The alternative — twenty stacked translucent rectangles —
-  is worse and slower.
-- `Painter.text`'s `size` and `tracking` are in world units too. Passing a
-  pixel-sized tracking there renders one word across the whole field with the
-  rest of the sentence clipped off — that happened, on the first screenshot.
+
+### 2.1 In 3D: the field frame, the pick, and depth
+
+A 3D rite's **logic is unchanged**: still 16 × 9 field units, centre origin, +y
+up, and every hit test is still written in field units. The view says where
+that rectangle lives in its world with a **field frame**
+(`Stage3D.js`):
+
+```
+world(x, y) = frame.origin + frame.ux * x + frame.uy * y
+```
+
+| preset | field x → | field y (+up) → | gameplay plane | for |
+|---|---|---|---|---|
+| `FRAMES.upright` | world +X | world +Y | z = 0, facing +Z | galleries, side views (luckyshot, hunt) |
+| `FRAMES.ground` | world +X | world **−Z** | y = 0, facing +Y | top-down / tilted arenas, a water surface (platforms, offroad, heaven, fishing) |
+
+1 field unit = 1 world unit in both presets. A custom frame is legal: `ux` and
+`uy` must be orthogonal and the same length.
+
+**The pick.** The host converts every pointer event with
+`stage.pick(view, clientX, clientY, rect)`: a ray from the view's camera (never
+the kicked one) through the pixel, intersected with the gameplay plane,
+converted back to field units. So `input.x/y` and every `PointerClick` are field
+units exactly as before, a 2-pixel error on a big screen is the same field
+distance as on a small one, and `fieldToClient` is its exact inverse (tests and
+tools aim with `host.fieldToClient(x, y)`, never with a copy of the
+projection). The host also **re-picks once per frame** at the last pointer
+position, so a view may move its camera (a sway, a slow pan, a chase) and a
+still pointer stays on the same pixel: the aim never drifts and a shot lands
+where the crosshair is. The pick runs inside the host's crash guard.
+
+**The framing.** `frameField(camera, frame, aspect, { fov, tilt, yaw, margin })`
+(called by `RiteView.layout`) bisects the camera distance until **all four
+field corners** are inside the view, at any aspect, for any tilt and yaw.
+Positive `tilt` moves the camera toward field −y (behind the near edge of a
+ground frame); negative tilt looks down at an upright frame from above.
+Positive `yaw` swings it toward field +x. `margin` (NDC) is the room a camera
+that moves needs to keep the corners in. Things you put outside the field (an
+awning, a counter, the sky) may be cropped; the field never is.
+
+**Make it look 3D.** A camera square to the plane makes every `placeOnRay`
+object project onto its field disc, so the scene reads as a flat picture.
+`luckyshot` gets its depth from four things the next views should copy: a
+camera off-axis (`tilt: -15, yaw: 7`), rows several world units apart in
+depth with shelves whose tops the camera can see, a camera that sways toward
+the aim (`SWAY`, re-picked by the host), and 3D reactions (targets topple
+backwards onto their shelf, shadows fall on the shelves).
+
+**Depth without moving the hit test.** Something drawn *behind* (or in front
+of) the gameplay plane would no longer cover the pixels the hit test uses —
+unless it sits on the camera ray through its field position.
+`placeOnRay(camera, frame, x, y, depth, out)` puts it there and returns the
+scale `k` to apply to its size; a disc of field radius `r` drawn with world
+radius `r * k` covers exactly the screen disc the logic tests. Because `k`
+depends only on `depth`, the mapping is affine per depth: placing the foot of a
+target with `placeOnRay` and offsetting by `r * k` along `uy` lands exactly on
+its centre. `luckyshot` puts its three rows at three real depths this way.
+
+**Move `view.camera` smoothly, never shake it.** A slow, continuous camera
+move is fine (the per-frame re-pick follows it). A transient jolt (recoil,
+impact) goes in `view.kick`; the stage adds it for the draw and removes it
+afterwards, so the aim does not jitter with it. The CSS stage kick (§8,
+presentation cues) still applies on top.
 
 ---
 
@@ -267,9 +373,9 @@ The host builds this and hands it to you as `ctx.rand`. You never construct one.
 
 **`ctx.wave` may move the numbers and never the count.** That is the whole rule in
 one sentence, and each of the six shows a different way to honour it: `heaven`
-draws all 30 hazard bands on every wave and makes a late wave harder by
-*compressing the spawn schedule*, so a low wave simply runs out of clock around
-band 10; `luckyshot` scales row speeds only; `offroad` scales the track's
+draws all 30 strikes on every wave and makes a late wave harder by
+*compressing the schedule*, so a low wave simply runs out of clock around
+strike 13; `luckyshot` scales row speeds only; `offroad` scales the track's
 amplitude and the rival pressure; `SeededRivals` takes `wave` and spends exactly
 `count * PER_RIVAL` draws regardless.
 
@@ -289,8 +395,8 @@ rule as `MINIGAME_IDS` (§8) and `rivals.js`'s `NAMES`.
 ## 4. Fixed timestep
 
 `update(dt, input)` is always called with `dt === MINIGAMES.dt` (1/60), from an
-accumulator, exactly like `Game.frame`. `draw` is called once per rendered frame
-at a variable rate. A rite stepped at the display's refresh rate is a *different
+accumulator, exactly like `Game.frame`. The view's `render` is called once per
+rendered frame at a variable rate. A rite stepped at the display's refresh rate is a *different
 game* on a 60 Hz panel and on a 144 Hz one, and that is not negotiable.
 
 Corollaries:
@@ -309,22 +415,64 @@ Corollaries:
 
 ## 5. What the host guarantees
 
-- **Five seconds before anything happens.** The host opens in `mode:
-  'countdown'` and announces the rite by name over its own opening position —
-  five, four, three, two, one, *Go* — and only then starts the clock and the
-  first fixed step. Your `init()` has already run, so what is announced over is
-  the field the player is about to be handed; your `update()` has not, so the
-  hunt's animals are not already crossing while the hint is still being read.
-  Nothing about it reaches you: the pre-roll spends no `dt`, no `duration`, and
-  no `rand()`. It is **skippable** by the same commit that plays the rite
-  (Space / Enter / a press on the stage), and that press is **not delivered as
-  a commit** — it starts the game, it does not fire the first shot. A blur
-  during the count suspends it exactly as it suspends play, and Escape (twice)
-  abandons a rite that never began, for nothing.
+- **An intro card before anything happens.** The host opens in `mode:
+  'countdown'` and shows a card over the field: *How to play*, the rite's
+  name, its `rules` (2–4 lines) and its `keys` (keycaps from `ui/uikit.js
+  key()`, the same caps as the rest of the game), and "Space or click to
+  start · starts in 10". It starts on its own after **10 s** (the last three
+  seconds beep), then flashes *Go*. The card shows the rite's name in the
+  shell header only, not twice. **A 3D rite cannot start before its view
+  exists**: a start press or the end of the countdown during the load turns the
+  countdown into "loading the scene…" and the rite starts the moment the view
+  is ready, so no press is ever picked through a missing camera. If the stage
+  cannot be created (no context), the rite is abandoned, unpaid, instead of
+  played blind. Your `init()` has already run and your view
+  is already drawing, so the card sits over the scene the player is about to be
+  handed; your `update()` has not run, so nothing is moving yet. Nothing about
+  it reaches you: no `dt`, no `duration`, no `rand()`. It is **skippable** by
+  the same commit that plays the rite (Space / Enter / a press on the stage),
+  and that press is **not delivered as a commit** — it starts the game, it does
+  not fire the first shot. A blur suspends it exactly as it suspends play, and
+  Escape (twice) abandons a rite that never began, for nothing.
+- **`rules` and `keys` are required, and tested.** `tests/unit/minigames.test.js`
+  holds every registered def to 2–4 non-empty rules of at most 90 characters,
+  and to key labels the host really binds: `↑ ↓ ← →`, `W/Z`, `A/Q`, `S`, `D`
+  (letters are bound by `e.code`, so one physical key is written as its QWERTY
+  and AZERTY glyphs), `Space`, `Enter`, `1`–`6`, `Click`, `Right-click`,
+  `Mouse`. UI text is English, like the rest of the game. Keep a rule to one
+  sentence: if it needs a paragraph, the mechanic is too complicated for a
+  20-second party game.
+- **One 3D stage, and the board stops rendering behind it.** A def with a
+  `view` is drawn through one host-owned `Stage3D`: one WebGL2 context, created
+  lazily on the first 3D rite and reused for every rite after it (never a
+  context per rite). It is a SECOND context next to the board's, for the rest
+  of the session; between rites its drawing buffer is shrunk to 1×1
+  (`stage.release()`). On every open it follows the board's preset
+  (`stage.setQuality`): DPR capped at the smallest of 1.5, the preset's
+  `pixelRatioCap` and the board's live pixel ratio (which carries
+  AdaptiveResolution's verdict), no MSAA on `potato` (fixed when the context is
+  made), one optional shadow map (`stage.shadows`, off on `low`/`potato`), no
+  post chain, a shared PMREM room environment (`stage.environment()`).
+  While it is up, `host.ownsFrame` is true and **the board is not rendered**:
+  `Game.frame` skips its scene updates and `pipeline.render` (the canvas keeps
+  its last frame behind the veil), and main.js stops feeding the resolution
+  controllers, so a rite never reads as "the board got slow". Rendering resumes
+  the frame after close. Measured on this repo's Linux box (GTX 970, 1600×900,
+  `tools/scratch/rite-frametime.mjs`): luckyshot 5.1 ms median against the bare
+  board's 6.4 ms, with 0 board renders during the rite.
+- **No WebGL, no throw.** In jsdom, node, or a browser without WebGL2 the host
+  never imports the stage or the view; the rite's logic, clock and payout run
+  blind. `tests/unit/minigame-host.test.js` holds that.
 - **A veil and a keyboard shield.** Every game key is swallowed at capture on
   `document` while a rite is up. Without it, Space — this overlay's primary verb
   — sends the next wave from behind the veil. That is a real, measured incident
-  in this repo (see `HUD.js` `_onKeyShield`).
+  in this repo (see `HUD.js` `_onKeyShield`). **The shield outlives the
+  overlay by a mash**: the press that closes the result card is the first of
+  several, so `Game.js` asks `host.swallowsCommit()` before Space sends a wave,
+  and the host answers yes within 500 ms of the close or of the last press it
+  swallowed (each one renews it). It is a timestamp, not a listener, so
+  `listenerCount` is still 0 at close. A held Space (`e.repeat`) never sends a
+  wave. `tests/e2e/minigame.spec.js` "mashing Space" holds it.
 - **A click resolves where it was pressed.** §1.1. The queue is also **cleared on
   suspend**: the click that gave the window its focus back is not a shot.
 - **One gold credit, ever.** `#settle` is guarded by `_credited`. Escape spam, a
@@ -339,11 +487,15 @@ Corollaries:
 - **A blur costs nothing.** `blur` / `visibilitychange` / `pagehide` suspend the
   clock and the logic; coming back costs a visible 1.2 s grace and no score. The
   keypress that wakes it is discarded, not counted as a commit.
-- **Resize safety.** The canvas resizes (observed, not polled) and the letterbox
-  is recomputed. Your logic never notices.
+- **Resize safety.** The stage size is checked every frame and a change calls
+  the view's `layout(aspect)`, which reframes the camera. Your logic never
+  notices.
 - **1× speed.** The rite runs from the variable-rate half of `Game.frame`, so
   `state.speed` (1×/2×/3×) does not reach it.
-- **A crash is contained.** An exception from your `update` or `draw` is caught,
+- **A crash is contained.** An exception from your `update`, or any view
+  call (`createView`, `layout`, `render`, `cue`, the pick through its camera),
+  a compile that throws (the view is still disposed), or a view module that
+  fails to load, is caught,
   reported through `console.error`, and the rite is abandoned with zero reward —
   the run continues. Without that wall, a throw propagates into main.js's rAF
   loop and *kills the whole game*. It is caught, not swallowed: the e2e suite
@@ -355,12 +507,12 @@ Corollaries:
 - **No spectating, no networking.** No message crosses the wire for a rite. Each
   player plays their own instance and banks their own gold; fairness is the seed.
   §14 and §15 say what that costs and why it is still the trade.
-- **No `alpha` interpolation for free.** `draw(g, alpha)` gives you the fraction
+- **No `alpha` interpolation for free.** `render(alpha, dt)` gives you the fraction
   into the next step; interpolating with it is your job, and most rites do not
   need to (16.6 ms of positional lag is invisible at these speeds).
-- **No guarantee `draw` is called at all.** A 0×0 canvas (an overlay still
-  transitioning in, a `display:none` ancestor) skips rendering entirely. Never
-  put logic in `draw`.
+- **No guarantee `render` is called at all.** A 0×0 stage (an overlay
+  still transitioning in, a `display:none` ancestor), a view still loading, or
+  no WebGL skips rendering entirely. Never put logic in a view.
 - **No cleanup of your own timers.** Do not create any. Accumulate `dt`.
 
 ---
@@ -465,6 +617,11 @@ one rite and is now true of none.
 
 ## 8. Writing a rite
 
+A rite is **two files**: `XRite.js`, the pure logic (no three, no DOM, node-
+testable, everything below), and `XView.js`, its 3D view (§8.1). The logic
+never imports the view; the def points at it with `view: () =>
+import('./XView.js')`.
+
 **Read `src/minigames/rites/LuckyShotRite.js` first.** It is the reference on
 purpose, and the reasons are the reasons to copy it: it exercises the click queue
 (the one part of the input contract with a sharp edge), it does **not** use
@@ -504,14 +661,6 @@ class VigilRite {
     if (this.t >= DURATION) return true;      // end early rather than wait for the clock
   }
 
-  draw(g) {
-    g.circle(this.cx, this.cy, R, { stroke: '#e5bd79', width: 0.05 });
-    g.save().add();
-    g.halo(this.cx, this.cy, R * 1.8, '229,189,121', 0.06 + 0.14 * this.score().ratio);
-    g.restore();
-    g.text(`${Math.round(this.score().ratio * 100)}%`, 0, -3.6, { size: 0.5, fill: '#a3a9bb' });
-  }
-
   score() {
     const ratio = clamp(this.held / DURATION, 0, 1);
     return {
@@ -529,8 +678,11 @@ export const VIGIL_RITE = {
   id: 'vigil',
   name: 'The Vigil',
   hint: 'Keep the cursor inside the sigil',
+  rules: ['Keep the cursor inside the glowing ring.', 'Every second inside it pays.'],
+  keys: [{ keys: ['Mouse'], action: 'Move the cursor' }],
   duration: DURATION,
   create: () => new VigilRite(),
+  view: () => import('./VigilView.js'),   // §8.1
 };
 
 export { VigilRite, RAND_CALLS, DURATION };
@@ -577,6 +729,88 @@ game's *art* vocabulary (`src/world/env/*`, `TowerDefs.js`, `ProceduralTextures.
 `Inspector.js`). None of those hits are minigames. A blind `sed` breaks the
 rendering.
 
+### 8.1 Writing a 3D view
+
+**Read `src/minigames/rites/LuckyShotView.js` second.** It is the reference
+view, and its docblock lists the five things to copy. The shape:
+
+```js
+// src/minigames/rites/VigilView.js
+import * as THREE from 'three';
+import { RiteView, FRAMES, addStandardLights, Bursts } from '../Stage3D.js';
+
+class VigilView extends RiteView {
+  constructor(stage, rite) {
+    // frame + framing: the field on the XY plane, camera looking slightly down.
+    super(stage, rite, { frame: FRAMES.upright, fov: 40, tilt: -8, background: 0x07090d });
+    this.scene.environment = stage.environment();          // shared; never dispose it
+    addStandardLights(this.scene, { shadow: stage.shadows });
+    // Build EVERYTHING here, once: meshes, materials, textures, pools.
+    this.ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.06, 12, 64),
+      new THREE.MeshStandardMaterial({ color: 0xe5bd79, emissive: 0x3a2a10 }));
+    this.ring.position.copy(this.world(rite.cx, rite.cy));  // field -> world
+    this.sparks = new Bursts({ count: 120 });
+    this.scene.add(this.ring, this.sparks.points);
+  }
+
+  cue(ev) {                                                 // after the host played the sound
+    if (ev.type === 'good') this.sparks.emit(this.world(this.rite.cx, this.rite.cy), 20);
+  }
+
+  render(alpha, dt) {                                       // READ the rite; move your meshes
+    this.ring.material.emissiveIntensity = 0.4 + this.rite.score().ratio;
+    this.ring.rotation.z += dt * 0.5;                       // view-owned state is fine
+    this.sparks.update(dt);
+  }
+}
+
+export function createView(stage, rite) { return new VigilView(stage, rite); }
+```
+
+The rules, each of which the reference view follows and says why:
+
+1. **Read, never write, the rite.** `render` samples the rite's state and pure
+   functions at `t = rite.t + alpha * MINIGAMES.dt`. The view may keep and
+   mutate its OWN presentation state (particles, flash timers, a "hit at"
+   table filled from cues); it may never assign to the instance. Presentation
+   that used to live in the 2D rites' `update` (sparks, pops, flash, recoil)
+   moves to the view and is driven by cues — `luckyshot` emits one cue per
+   round carrying `{ type, x, y, i, value }`.
+2. **Hit tests stay in field units.** Anything the player aims at is placed
+   with `world(x, y)` on the gameplay plane or `placeOnRay` at a depth (§2.1),
+   sized from the same radius the logic tests. A decoration may never cover a
+   target's hit disc (the boards under `luckyshot`'s rails stop at the rail).
+3. **Build once, never allocate per frame, never add a material mid-rite.** A
+   new material is a shader compile on the frame it first appears; the host
+   compiles AND draws what is in the scene at creation, behind the intro card
+   (`stage.compile`), which also uploads its textures and makes the shadow map.
+   So: end the constructor with `this.render(0, 0)` so every mesh is already
+   dressed in the material it will use; give a material that will get a `map`
+   later one at construction (a map appearing is a new program); pre-build
+   every texture a cue swaps in and upload it with
+   `stage.renderer.initTexture(t)`; swap between pre-built materials, toggle
+   `visible`, animate intensity. No template strings or objects in `render`
+   either: compare numbers. `node tools/scratch/rite-gpu.mjs --rite <id>
+   --port <port>` fails if a program or texture appears during play.
+4. **A fixed light count.** `addStandardLights` gives a hemisphere fill and a
+   key; add point lights if you need them but keep them in the scene at
+   intensity 0 when idle — toggling `visible` changes the count and recompiles
+   every lit material (docs/PERF_BUDGET.md, Round 11). At most one shadow
+   caster, and only when `stage.shadows`.
+5. **Dispose what you made.** `RiteView.dispose()` frees everything reachable
+   from the scene, lights included (a shadow-casting light's `dispose()` is the
+   only thing that frees its shadow map); register anything else (a material
+   you swap out, a texture cache) with `this.own(x)`. Never dispose
+   `stage.environment()`. `rite-gpu.mjs` fails if textures or programs after
+   close grow from one cycle to the next.
+6. **Move `this.camera` smoothly or not at all; jolts go in `this.kick`.**
+7. **No new DOM.** HUD text a rite needs goes into the scene (a `CanvasTexture`
+   repainted only when its content changes — see `#paintHud`); the clock, the
+   intro and the result card are the host's.
+8. **Colours.** Read CSS tokens once in the constructor (`getComputedStyle(
+   document.documentElement)`, with literal fallbacks) for anything the chrome
+   also shows; material colours are art and may be literals.
+
 ### Dressing: `data-rite` and the optional def fields
 
 The host puts `data-rite="<theme ?? id>"` on `#rite` when the overlay opens and
@@ -591,7 +825,7 @@ renaming it rerolls every existing run — while a theme is only paint, and two
 rites are allowed to share one. `eyebrow` (default `'Interlude'`, the host
 appends ` · before wave N`), `abandonNote` (default `'You walked away'`) and
 `cursor` (default: the stylesheet's crosshair) are the other three. `heaven` sets
-`cursor: 'none'` because the mote *is* the pointer; `platforms` and `offroad` set
+`cursor: 'none'` because the mote is the avatar and its view draws a ring where it is headed; `platforms` and `offroad` set
 `'default'`, because a crosshair over a car is a promise the controls do not
 keep.
 
@@ -601,8 +835,8 @@ Rites read their palette tokens the way `Lottery.js:722-734` does: one
 
 #### The token a rite reads is `--rite-<id>-<thing>`, on `:root`. Never the generic one.
 
-> **A rite has no DOM.** It is handed a `Painter` and nothing else, so the only
-> element it can call `getComputedStyle` on is `document.documentElement`. The
+> **A rite has no DOM**, and neither does its view, so the only element either
+> can call `getComputedStyle` on is `document.documentElement`. The
 > three generic names above are declared **inside `#rite[data-rite="x"]`**, which
 > a rite never sees — so reading `--rite-accent` from a rite silently misses and
 > the literal fallback is what actually paints. Six rites shipped that way and
@@ -612,8 +846,8 @@ Rites read their palette tokens the way `Lottery.js:722-734` does: one
 > there are six accents. So:
 >
 > - **every flat colour a rite's canvas paints with is declared on `:root`** in
->   `minigames.css` under a prefixed name (`--rite-hunt-canopy-far`,
->   `--rite-fishing-deep`, …);
+>   `minigames.css` under a prefixed name (`--rite-fishing-deep`,
+>   `--rite-fishing-shelf`, …);
 > - the `[data-rite]` block **aliases** what the chrome needs
 >   (`--rite-accent: var(--rite-hunt-accent);`) and declares no colour of its own;
 > - the rite reads the **prefixed** name, with the same value as its literal
@@ -623,14 +857,13 @@ Rites read their palette tokens the way `Lottery.js:722-734` does: one
 > the root moves what the canvas paints, and the value the canvas paints is the
 > value written in the shipped stylesheet.
 >
-> **Two values deliberately stay literal, and both are arguments about kind
+> **Some values deliberately stay literal, and each is an argument about kind
 > rather than convenience.** `HeavenRite`'s two pinks are the KILL RULE, not
 > paint — "pink is the only saturated magenta on the stage" is an accessibility
 > claim, and a value another theme block can redefine is a claim nothing
-> enforces. `LuckyShotRite.BOOTH_INK` tracks the dark end of `--rite-stage-bg`,
-> which is a multi-stop gradient no canvas can resolve. Same for `HuntRite`'s
-> pelt and ember: they are the SUBJECT, and retuning the room must not move the
-> thing you are aiming at.
+> enforces. Same for `HuntRite`'s pelt and ember: they are the SUBJECT, and
+> retuning the room must not move the thing you are aiming at. (A 3D view's
+> material colours are art and are literals; see §8.1 rule 8.)
 
 ### Presentation cues
 
@@ -670,6 +903,14 @@ shake budget on something nobody can see.
 
 ## 9. Testing a rite
 
+**By hand, use the sandbox.** `npm run dev`, then
+http://localhost:5273/rites.html?rite=<id> (also `&wave=`, `&occ=`, `&seed=`,
+`&q=`), or the page without a query for a picker. It runs the real host with a
+stub for the five things it reads off `Game`, so the intro card, the clock, the
+result card and the would-be reward are the shipping ones, minus the board and
+the gold. Replay keeps the seed. Dev only; see docs/STATUS.md.
+`tests/e2e/sandbox.spec.js` covers it.
+
 Unit tests live in `tests/unit` with `environment: 'node'`. **You may not import
 `three` or `src/main.js` there**, which is exactly why the logic is separated
 from the rendering. A rite module imports only `contract.js`, `Rng.js`, `Config.js`
@@ -695,7 +936,7 @@ it('passes assertRiteContract', () => {
 What it guarantees, in order:
 
 0. **The published shape.** `create` is a function, `duration` is positive,
-   `init`/`update`/`draw`/`score` all exist, and `create()` returns a *fresh*
+   `view` is a function, `init`/`update`/`score` all exist, and `create()` returns a *fresh*
    instance each time.
 1. **A fixed rand budget**, checked at waves **3, 28 and 53** against the exact
    number you passed. `randCalls` is required and required to be a literal the
@@ -744,7 +985,7 @@ Add, per rite:
   searches for a real overlap between its front two rows, because "the frontmost
   target wins" is a rule with teeth only if the ranks actually touch. `fishing`
   asserts that the slowest, longest fish still out-swims its own catch ellipse
-  during one sink — if it did not, aiming *at* a fish would work and the rite
+  during one flight of the lure — if it did not, aiming *at* a fish would work and the rite
   would silently collapse back into `hunt`.
 - **The `skilled` strategy**, which is what turns rule 4 into a real claim.
 
@@ -784,6 +1025,38 @@ Every message names the rite, the wave, the measurement and the requirement. Do
 not tune by scaling `score()` — that moves the problem onto the result card,
 where the headline says "Flawless" over a 0.54. Tune the game.
 
+### What a 3D rite adds to its tests
+
+- `assertRiteContract` requires `view` to be a function and never calls it.
+  The logic is what the checklist tests, in node.
+- **The view is not unit-tested.** It imports three and needs WebGL. What the
+  logic owes it is tested instead: `luckyshot` pins "one cue per round, with
+  `x, y, i, value`", because the view starts every effect from it.
+- **Purity is tested in e2e, for every rite with a view.** `rites.spec.js`
+  ("a 3D view never mutates its rite") fires real shots, stubs the host's
+  stepping, calls `render`, `layout` and `cue` by hand, and requires the
+  instance to serialise to the same bytes (typed arrays expanded). A new view
+  is picked up automatically from the registry.
+- **Check the GPU ledger.** `node tools/scratch/rite-gpu.mjs --rite <id>
+  --port <port>` (rule 3 and 5 above) exits 1 on a mid-play compile or upload
+  or a leak across open/close cycles.
+- **Look at it.** `node tools/rite-shots.mjs --rite <id> --port <port> --quick
+  --out <dir>` writes the intro card, a frame on a shot, a mid-play frame, a
+  stage-only close-up and the result card in ~15 s, and prints console errors.
+  Read the PNGs. Run your own dev server on your own port
+  (`npx vite --port 5281 --strictPort`) so parallel agents do not share one.
+- **Measure it.** `node tools/scratch/rite-frametime.mjs --rite <id> --port
+  <port> --q high` prints board vs rite median/p95 frame time on the same page
+  and how many times the board rendered during the rite (must be 0 for a 3D
+  rite).
+- **e2e on your port:** `E2E_PORT=5281 npx playwright test tests/e2e/rites.spec.js`.
+  The config picks ANGLE per platform (Metal on macOS, desktop GL elsewhere;
+  override with `E2E_ANGLE`) — on Linux without it Chromium silently falls
+  back to SwiftShader and a rite renders at a few frames a second.
+  `rites.spec.js` counts `host.renderedFrames` (both paths) and waits for
+  `host.ownsFrame` before measuring a 3D rite; aim through
+  `host.fieldToClient(x, y)`.
+
 The host's own guarantees are covered by `tests/unit/minigame-host.test.js` and
 do not need repeating per rite: the click queue reaching sub-step 1 only, a
 right-click producing `button: 2` without touching `action`, `contextmenu` being
@@ -820,13 +1093,11 @@ outside `DevPanel.js`.
 
 ## 11. Pitfalls
 
-**Never give a Painter field the name of a Painter method.** `this.scale` (the
-letterbox factor) shadowed a newly added `scale(x, y)` method, `g.scale(1, 0.3)`
-became "call the number 1.0", every `draw()` threw, and — because the rAF loop in
-`main.js` has no try/catch — the whole game froze on the rite's first frame. The
-error message points at the method, not the field, which is why it cost twenty
-minutes. The field is now `ppu`, and the host now contains a throwing rite.
-(`docs/PITFALLS.md` §15.)
+**A throw in a frame kills the game unless the host catches it.** In the 2D
+days `Painter`'s `this.scale` field shadowed a newly added `scale(x, y)`
+method, every frame threw, and — because the rAF loop in `main.js` has no
+try/catch — the whole game froze on the rite's first frame. The host now
+contains a throwing rite or view (§5). (`docs/PITFALLS.md` §15.)
 
 **Never keep a `PointerClick`.** §1.1, restated here because this is where people
 look after the fact: the records are pooled and refilled, so a stored one starts
@@ -838,14 +1109,10 @@ later, which reads as a physics bug in your own code.
 of a frame and sub-steps 2..n get an empty array, so any logic of the form "if no
 clicks this step, then…" fires spuriously on a slow frame.
 
-**Do not put gameplay in `draw`.** It is skipped on a zero-sized canvas and
-called a variable number of times per step. Keep particle simulation in
-`update` for exactly this reason, even though particles are purely cosmetic. If
-you need per-frame scratch space, put the buffer at **module** scope, not on
-`this` — `draw` must not mutate the instance, and a test proves it. That is legal
-only because the host draws exactly one rite at a time, on one thread; both
-`luckyshot` and `offroad` say so at the buffer's declaration rather than leaving
-it to be discovered.
+**Do not put gameplay in a view.** `render` is skipped on a zero-sized stage
+and called a variable number of times per step. The view's scratch lives on
+the view, which is not the rite; it must never write to the rite, and an e2e
+test proves it.
 
 **Do not read `input.x/y` when `input.inside` is false.** The host leaves the
 last known position there rather than resetting it, deliberately — a reset to the
@@ -858,8 +1125,8 @@ step of your rite can time out, `duration` must exceed
 `steps × (per-step timeout + resolve hold)`, or a player who does nothing sees
 fewer results than the UI promised. Derive the number rather than feeling it, and
 assert in a unit test that the idle run finishes inside it. `platforms` shows the
-honest version of the other direction: its own schedule wants 25.99 s at wave 3
-and gets 24, so the score's denominator is `runLength`, the *shorter* of the two,
+honest version of the other direction: its own schedule wants about 25.5 s at wave
+3 and gets 24, so the score's denominator is `runLength`, the *shorter* of the two,
 and both cases are scored out of the run the player actually got.
 
 **Escape and the result card race by design.** Never assume `close()` happens
@@ -873,14 +1140,15 @@ If you add a fourth, guard it the same way.
 **Colour is never the only channel.** Hazard and value identity must be carried
 redundantly — position, shape, size, outline, motion — or the rite is unplayable
 for a colour-blind player. `heaven` is the load-bearing case, because "avoid the
-pink" on one colour channel is otherwise a colour test with a timer: every pink
-mass gets a **hard black outline** and a **4 Hz pulse**, the safe route is drawn
-*positively* in the cool accent, chevrons point at the way through, and pink is
-the only saturated magenta anywhere on the stage. `luckyshot` encodes a row's
+pink" on one colour channel is otherwise a colour test with a timer: every strike
+is announced by its **shape on the floor** before it lands (discs for hearts, a
+standing wall for a beam, a crystal for a ring), the way out is drawn
+*positively* in the cool accent (a lane, a wedge, an arrow), and pink is the only
+saturated magenta anywhere on the stage. `luckyshot` encodes a row's
 value three ways at once — height, size and speed — so the back row reads as
 worth more before anyone has read a number. `platforms` gives its crack warning
-four channels: a fuse bar whose *length* is the time left, a colour flip, an
-accelerating shake and widening seams.
+four channels: the tile darkens first, then a tremble, a crack glow and a sink
+that all grow until the drop, and a "!" over your own head.
 
 **A pulse goes on the glow, never on the silhouette.** A shape that breathes is a
 shape whose hitbox appears to breathe, and a hitbox that lies is worse than no
@@ -893,11 +1161,11 @@ host's CSS kick on the stage is the impact channel.
 **Every rite needs an anti-mash rule, and it should come from the fiction.**
 `luckyshot` has a hard ammo cap (24 rounds, spent on a miss too) — that one is
 *the rite*, not tuning, and softening it makes spraying the field optimal.
-`hunt` does it better for its own shape: a shot that hits nothing **spooks the
-animal**, which punishes exactly the behaviour the rite is about resisting and
-says "you scared it off" instead of "you have run out". `fishing` uses the reel
-(1.05 s per empty cycle against 0.65 s for a landed one). `offroad` makes boost
-in the scrub a net loss. `platforms` and `heaven` do not need one: their verb is
+`hunt` prices a miss in time: every shot costs a 0.32 s reload, out of a dash
+that is usually shorter than two of them, so spraying spends the trigger on
+nothing. `fishing` uses the reel
+(1.05 s per empty cycle against 0.75 s for a landed one, at wave 3). `offroad` caps boost at
+three charges and makes one spent off the yellow arrows nearly worthless. `platforms` and `heaven` do not need one: their verb is
 position, and there is nothing to mash.
 
 **Scale one thing with the wave, not two.** A rite's payout already scales with
@@ -935,62 +1203,163 @@ that ignores `occurrence` entirely is completely correct.
 Every one of these files opens with a substantial design docblock. What follows
 is the index, not the argument — go read the file before changing a number in it.
 
-### `heaven` — "escape from gay heaven" · 20 s · 121 draws · no rivals
+### `heaven` — "escape from gay heaven" · 20 s · 121 draws · no rivals · **3D**
 
-A bone-white cloud corridor scrolls right to left; you are a mote of soul-light
-threading through it. **Everything pink kills on contact, instantly.** The name
-is kept verbatim, because it is the name the map used.
+A little winged light floats over a cloud arena at golden hour. Pink strikes are
+aimed at it one after another; each is **telegraphed on the floor first** (pink
+where it will hit, blue where it will not) and then strikes. Every strike that
+passes without touching the mote is a point. The name is kept verbatim, because
+it is the name the map used.
 
+- **The rule, in one sentence.** Dodge everything pink; blue is the way out.
+  Three kinds, one verb:
+  - **Hearts.** Six land around the mote: one on it, five in a ring, and the
+    sixth ring slot is empty. A blue arrow points through the empty slot.
+  - **Beam.** A wall rises at one edge and sweeps across the arena with one gap.
+    The gap's lane glows blue across the floor.
+  - **Ring.** A crystal charges, then a wall expands from it in a circle with one
+    gap. The gap's wedge glows blue on the floor.
+- **Every strike is aimed.** A strike reads the mote's position when its
+  telegraph appears and lays itself out around it, from rolls drawn at `init`.
+  So standing still loses every strike on every wave (idle scores exactly 0),
+  and the move a strike asks for is bounded by its rolls. Two players on one
+  seed get the same sequence, timings and layouts *relative to themselves*. The
+  rand budget is untouched: 30 strikes x 4 rolls + 1 cosmetic seed, all in
+  `init`.
 - **Controls.** The mote **chases** the cursor at a clamped `MOVE_SPEED` of
-  7 u/s rather than *being* the cursor — without the clamp the pointer is a
-  teleport and no dodging game survives an instantaneous actuator. `axis`
-  (arrows / WASD / ZQSD) is normalised to the *same* top speed, so a diagonal is
-  not 1.41× faster and the keyboard path is exactly as good as the pointer — the
-  only honest way to offer two. Held keys win over the pointer. `cursor: 'none'`.
-- **Course.** 30 hazard bands (gates, sweeps, bobbing orb accordions), all drawn
-  on every wave; difficulty compresses the *schedule*, never the count (§3). The
-  **first band is always a sweep**, and a sweep covers the whole column — which
-  is both the idle guarantee (stand anywhere, die in ~2 s) and the tutorial: it
-  says FOLLOW THE GAP in one gesture and no words.
-- **Score.** `ratio = survived / 20`. Detail names the seconds and the bands
-  cleared. Near misses under 0.42 u fire a `tick`, once per band.
-- **Known, accepted edge**, named in the file rather than left for a reviewer:
-  hanging back at the far left buys ~0.7 s of extra lookahead. It makes the rite
-  calmer, not easier — you still have to be at the gap's y when the band arrives
-  — and fixing it needs a scrolling camera or a chasing wall, which is more
-  machinery than a 20-second rite should own.
+  7 u/s rather than *being* the cursor. `axis` (arrows / WASD / ZQSD) is
+  normalised to the same top speed, so the keyboard is as good as the mouse.
+  The last control that moved steers: held keys win, and after a key a pointer
+  resting on the stage is ignored until it moves (the cursor is hidden, so a
+  still mouse pulling the mote back reads as the mote flying off on its own).
+  `cursor: 'none'`; the view draws a blue ring where the mote is headed.
+- **Score.** `ratio = dodged / presented`, where `presented` is how many strikes
+  finish inside the clock, fixed at `init`. A strike that touches the mote is
+  lost and nothing else happens: no lives, no i-frames, the run always lasts
+  20 s. Near misses under 0.4 u fire a `tick`, a dodge fires `gold`, a touch
+  fires `break` (each carries `x, y, i`).
+- **Fairness.** Each kind's warning is long enough for its worst move inside
+  75% of the mote's top speed (`SPEED_BUDGET`); the beam derives its warning
+  from that budget directly, because it can fire from the edge the mote stands
+  on. `heaven-rite.test.js` holds it per wave.
+- **Overlapping strikes agree.** The next strike is aimed while a beam may still
+  be sweeping. Two ways out pointing in different directions is a coin toss, so
+  a strike tries its rolled layout, then up to 11 golden-ratio rotations of the
+  same rolls, and keeps the first that leaves a spot within reach clear of its
+  own telegraph and every live one (`#aim`). Planning reads telegraphs only
+  (`KINDS[k].way`, through `threatAt`): a spot a wall has already swept is safe
+  but behind the wall. A zero-lag bot loses nothing at wave 12 (unit-tested,
+  >= 0.99 over 24 seeds); at wave 53 it scores about 0.96, on purpose.
+- **Curve.** Reference player 0.84 / 0.74 / 0.57 at waves 3 / 28 / 53 (5-seed
+  gate; 30 seeds give 0.89 / 0.73 / 0.56), flawless bot 0.94 at wave 53, idle
+  0.00. A wave-12 course presents 15 to 17 strikes. The calibration brain (`heavenBestXY` in
+  `reference-player.js`) reads the telegraphs through `threatAt` on a polar grid
+  around the mote, and the unit suite plays that same exported function.
+- **The view.** `FRAMES.ground`, camera high behind the near edge, and still:
+  the host re-picks a resting pointer every frame, so a drifting camera would
+  read as pointer motion. Every footprint is drawn on the gameplay plane at its
+  exact hit size (heart discs, wall slabs, ring wedge); height is decoration,
+  and the mote's shadow marks the point the rite tests. Fixed pools of three per
+  kind, warmed for the host's compile draw. A scoreboard over the far edge shows
+  one pip per strike on a dark plate: blue dodged, pink touched. The strike
+  light is warm, never pink: only what can hit is pink.
 
-### `platforms` — Falling Platforms · 24 s · 41 draws · rivals
+### `platforms` — Falling Platforms · 24 s · 41 draws · rivals · **3D**
 
-Twenty-eight stone dalles over a void, 7 × 4. They crack, they shake, they go.
-You and three rivals stand on them and **the only verb is where you stand**.
+Twenty-eight floating tiles over a violet void, 7 × 4. They darken, shake,
+glow along their cracks and tumble into the fog. You and three rivals hop
+between them, and **the only verb is where you hop**.
 
-- **Controls.** `axis` only, continuous at 4.4 u/s, diagonals normalised. **The
-  marker is not snapped to tiles**: a tile-snapped marker turns every decision
-  into a keypress that lands or does not, and all the pressure of a falling-floor
-  game is in the half second where you are committed and not yet across. The cost
-  is named: cell boundaries are invisible mid-move, so the drawn gaps between
-  plates are **paint only** — you fall because the cell under you is gone or off
-  the grid, never because you were over a seam.
-- **Three legibility tiers**, because the warning *is* the game: settled →
-  stressed (desaturated, hairline seam, slow tremble, `STRESS_LEAD` × the warning
-  ahead of it) → cracking (loud, four redundant channels). The warning-to-interval
-  ratio is ~2.8 so about three plates are live at once. A first pass at 1.0 s
-  against a 0.85 s interval was **measured wrong**: with one doomed plate among
-  four neighbours, moving anywhere was correct, and a scripted player who could
-  see nothing beyond the loud tier scored 0.92 — identical to an omniscient one.
-- **Score.** `0.75 × (alive / runLength) + 0.25 × (rivals outlasted / 3)`.
-  `runLength` is the shorter of the clock and the schedule, so both the wave-3
-  case (the floor never quite empties) and the wave-53 case (the floor runs out
-  at ~13.9 s and the rite ends there) are scored out of the run the player got.
+- **Controls.** `axis` only. One arrow is one hop to the next tile, in
+  `HOP` = 0.42 s; holding keeps hopping; two arrows hop diagonally. Nobody
+  presses two keys in the same frame, so a second arrow within
+  `TAKEOFF_GRACE` = 80 ms of takeoff that keeps the hop's direction bends that
+  hop diagonal; without it, "hold two arrows" gave a straight hop plus an extra
+  diagonal one. A press that starts mid-air is queued for the landing and wins
+  over a key held through the hop, so a quick tap is never lost; letting go of
+  one of two keys never overwrites a queued press; a key merely held through a
+  hop is not queued, or one long press would be two hops. **The edge of the floor is a wall**: a hop that would leave the
+  grid drops the off-grid component, and does nothing if none is left. The
+  void you fall into is the holes, which you can see.
+- **Why hops, not the old sliding marker.** The 2D rite steered a free marker
+  across invisible cell boundaries and added a SAG (a cracking tile pulled you
+  back toward its centre, by a per-tile amount) so that leaving late cost
+  something. Both needed a paragraph to explain, and in 3D a body standing half
+  over a gap looks like it should fall. A hop lands on a tile or in a hole, and
+  the eye sees which before it happens. The sag and its per-tile temper are
+  deleted.
+- **The collapse is unchanged** (four seeded swells plus a well under the
+  player, ranked into a permutation, the player's tile first), so neighbours
+  go together and the last ground is a pocket you have to reach early.
+- **Timing.** A tile STARTS to shake on a constant beat in `order`; it shakes
+  for the wave's `warn` × (1 ± 0.35), read off the collapse draws, then drops.
+  `warn` runs 1.5 → 0.85 s and the beat 0.85 → 0.42 s over waves 3 → 53, on a
+  square-root curve so the middle waves already bite. The view darkens a tile
+  `STRESS_LEAD` = 1.3 × its shake before the drop. One shake length for the
+  whole floor made reaction time a cliff (always make it, or never); the
+  spread turns it into a slope, the same lesson the 2D temper taught.
+- **Tiles wear out under you** (`LINGER` = 2.5 s, every wave). Stand on one
+  tile that long and it darkens and drops like any other (`STRESS_LEAD` × its
+  shake later). Rivals see it like any other drop: every rival still up walks
+  its hop list again from where it stands (`#wear`), so none rides a worn
+  tile down (unit-tested). The schedule alone let a player hop once onto a late tile and
+  wait: the reference player stood 12–14 s without a hop at wave 3 and hopped
+  3.4 times a run. With wear it hops 6.2 times and never stands longer than
+  3.6 s (measured over the gate seeds). A faster or accelerating beat was tried
+  first: it shortened the run and moved the curve without fixing the stand,
+  because any schedule has a last pocket worth waiting in.
+- **Rivals.** Ghost hop lists built in `init` from the same schedule, and
+  rebuilt from where each ghost stands whenever the player wears a tile out.
+  Each hops to its longest-lived neighbour `lag` seconds before its tile goes,
+  or `lag` seconds before `LINGER` would wear it, whichever is first: rivals
+  obey the player's rule and never stand longer than 2.4 s (they stood up to
+  16.5 s before; 30 seeds × 3 rivals × waves 3 / 28 / 53). The
+  published `SeededRivals.outAt` is a cap: from `LURE` = 2.2 s before it, a
+  doomed ghost stops reacting and wanders over tiles that outlast the cap
+  toward the nearest hole, then misjudges one hop into it and lands at exactly
+  the cap (or rides its own tile down if that goes first). Before the lure,
+  ~7% of rival deaths were leaps off the floor edge, which the rules call a
+  wall; over 6 000 runs there are now none. 2.5% of deaths now come up to one
+  `HOP` early, riding a tile that drops just before the cap (mean −3 ms). A
+  ghost is never drawn standing on a tile that has gone, and never ends off
+  the floor or on live stone (both unit-tested).
+- **Score.** `0.75 × (alive / runLength) + 0.25 × (rivals outlasted / 3)`,
+  unchanged. Idle dies with the first tile: 0.06–0.12 (40 seeds × 5 waves).
+- **Calibration.** The harness brain no longer reads `gone`: it sees what the
+  floor shows (settled, darkened, shaking with its glow, hole), leaves a tile
+  when it darkens, and picks the neighbour with the most settled ground
+  REACHABLE from it, since every stop now leaves a hole behind and a greedy
+  "most open neighbours" reader walked into dead ends. Gate seeds: 0.802 /
+  0.700 / 0.621 at waves 3 / 28 / 53, every platforms gate green (0.637 at
+  wave 53 before rivals obeyed `LINGER`). On 30
+  held-out seeds the same player reads 0.81 / 0.77 / 0.70, close at wave 3 and
+  about 0.1–0.15 generous later. Five seeds is a small sample for a rite whose
+  runs end in one fall; `LINGER` was picked from a grid (2.0–3.5 s, waves
+  flat or ramped, with or without a horizon) as the simplest setting that
+  passes every gate.
+- **The view.** Ground frame, camera ~52° down at fov 32, fitted to the FLOOR
+  rather than the 16 × 9 field (nothing is picked), drifting toward you. Tiles
+  are beveled slabs on jittered rock cones; the crack glow is an emissive map
+  at intensity 0 when quiet. Bodies are capsules with eyes and party hats,
+  squash on landing, tremble on a shaking tile, tumble when they fall; two on
+  one tile stand side by side. A "!" pops over you when your tile starts to
+  shake. The HUD (tiles left, who is still up, crossed out when they fall) is
+  a CanvasTexture plane parented to the camera, repainted on change only.
 
 ### `luckyshot` — Lucky Shot · 20 s · 24 draws · no rivals · **the reference**
 
-A carnival booth. You do not move. Three rows of creep cut-outs track across at
-different speeds and depths; the back rows are smaller, faster and worth more
-(1 / 2 / 3). One of the eighteen is **golden** (×3, and it stays down nearly
-three times as long, or the optimal line would be to camp its respawn) and one is
-a **bystander** (−1, the only way to lose points).
+A carnival booth, **in 3D**: a striped awning with a string of bulbs, a back
+wall of painted planks, a counter with the rounds standing on it in brass, and
+a rifle that swings to the crosshair and kicks. You do not move. Three rows of
+tin targets ride brass rails at three real depths: **tin ducks** in front (1),
+**rabbits** behind them (2), **clay plates** at the back (3) — smaller, faster
+and worth more as they recede, and the value is also painted on each one. One
+of the eighteen is **golden** (×4 its row, **once**: the prize is spent on the
+first knockdown and it comes back up as an ordinary target) and one is a
+**bystander** — a cardboard figure with its hands up (−1, the only way to lose
+points). A hit target falls back on its rail (a plate shatters) and flips back
+up; a miss leaves a bullet hole in the back wall. The gameplay numbers are the
+2D version's, unchanged, so the calibration curve did not move.
 
 - **Controls.** Aim with the pointer, fire with **left, right or Space** — one
   verb, three inputs (§1.2). It reads `input.clicks` and nothing else, never
@@ -1000,98 +1369,190 @@ a **bystander** (−1, the only way to lose points).
   tuning number: without it the optimal play is to spray the field at 60 clicks a
   second, which is a benchmark of the player's mouse. Do not soften it, do not
   refund a miss, do not top it up on a streak.
-- **Score.** `ratio = points / PAR`, `PAR = 38` — nineteen hits at the average
-  value of 2, i.e. 79 % accuracy on moving targets. A good run, not a perfect
-  one: a ceiling nobody reaches is decoration. PAR does **not** move with the
-  wave (§12); the wave speeds up the rows and the reward already scales.
+- **A 0.5 s rack after every round** (`RACK`). A press while the rifle racks is
+  dropped, not spent, and the crosshair fades to show it. Rounds alone did not
+  stop a mash: 24 presses emptied the gun in about two seconds and the rite was
+  over before it began. With the rack the fastest possible run is 12 s, and a
+  player has half a second to pick the next target.
+- **Score.** `ratio = points / PAR`, `PAR = AMMO × 2.5 = 60`: every round on a
+  rabbit or better, with plates and the golden in the mix. It was 38 before the
+  rack; a player who has time to pick picks better (reference player 30.2 →
+  48.8 points at wave 3, perfect player 74.6), so the bar moved with it to keep
+  the calibration curve. A good run, not a perfect one: a ceiling nobody
+  reaches is decoration. PAR does **not** move with the wave (§12); the wave
+  speeds up the rows and the reward already scales.
 - The front two rows deliberately **overlap** (gap 1.35 against summed radii
   1.50), which is what makes "the frontmost target wins" a rule with teeth; the
   targets array is built front-first so the hit test is two lines and not a sort.
 
-### `offroad` — Offroad Racing · 26 s · 58 draws · rivals · **the two-button rite**
+### `offroad` — Offroad Racing · 26 s · 58 draws · rivals · **3D**
 
-Twelve gates, thirty nuggets, three boosts, two bombs, one dirt track. The
-longest clock of the six, because a race under 20 s is not a race.
+A rally stage seen from behind the car, **in 3D** (`OffroadView.js`): a dirt
+road with worn ruts winding through green hills, pines, rocks and hay bales,
+red-and-white marker poles down both edges, mountains on the horizon. Twelve
+gate arches, thirty spinning gold nuggets, three boosts, three rival cars, a
+START and a FINISH arch. The longest clock of the six, because a race under
+20 s is not a race.
 
-- **Top-down, not pseudo-3D**, and that is a decision rather than a shortcut.
-  This Painter has no perspective texture mapping and no path primitive, so an
-  Out Run road would be flat-shaded quads whose seams pop as they scroll — it
-  reads as a rendering bug, not as a road receding. The speed comes from the
-  ground rushing past, which top-down gets for free.
-- **Controls.** `axis.x` steers, or the pointer's x if no key is held (keys win —
-  mixing the two produces a car that fights itself). The throttle is automatic.
-  **Primary = boost** ×3 (`action`, so Space/Enter too), **secondary = bomb** ×2
-  (`altAction` *or* Digit1). The car does not self-centre: understeer pushes you
-  *outward* from the racing line and every corner slides you to its outside, so
-  holding the line is continuous work — and, measured, that is also what makes
-  the idle score a property of the *rite* rather than of the seed. Without those
-  two terms an unattended car drove dead straight and one seed in twenty paid
-  over 0.15.
-- **The bomb is the only write in the whole rival interface.** A mine dropped
-  2 u behind the car calls `applyPenalty(id, 1.5)` and shifts that rival's entire
-  future — every position, every claim — with nothing re-simulated. That is what
-  makes "block your opponents" mean something. (Denominated in *rival* seconds,
-  so ≈1.3 s of wall clock at this rite's `RIVAL_CLOCK` of 0.87.)
+- **Two verbs: steer and boost.** `axis.x` steers (arrows, A/Q, D), and
+  nothing else does. Pointer steering was cut after review: under the chase
+  camera a mouse resting on the stage kept picking the centreline, so a
+  hands-off run scored ~0.5, and pointing exactly at a nugget scored worse than
+  the arrows. A test pins that a parked or waved pointer is an idle car to the
+  bit. The throttle is automatic. **Boost** is `action` (Space,
+  Enter, left click), three charges. The bomb from the original description
+  (secondary button or Digit1, a mine that called `applyPenalty` on a rival)
+  was **cut in the 3D rework**: it needed its own button and a paragraph on the
+  intro card, it was worth 0.02–0.03 of ratio to an expert bot, and the
+  calibration player scored identically with and without it. `altAction` and
+  `slots` are ignored, and a test pins that.
+- **The boost is a decision, shown on the road.** A charge lit on a *fast
+  stretch* (the yellow arrows painted on the road, where the track stays
+  straight for the next 12 units) runs at ×1.85; anywhere else at ×1.15, and the
+  charge is gone either way. The HUD's boost panel turns gold and reads
+  `BOOST NOW` while the car is on the arrows with a charge in hand. Reading the
+  road beats mashing, and mashing still beats never pressing (pinned in the
+  suite).
+- **Holding the line is continuous work.** The car does not self-centre:
+  understeer pushes you outward from the racing line and every corner slides
+  you to its outside. That is also what makes the idle score a property of the
+  rite rather than of the seed (an unattended car is in the grass within
+  seconds, at 0.52 of the speed).
+- **Gates credit only from inside.** A gate run wide costs the credit and
+  0.5–1.1 s of drag; the arch turns red for the rest of the race and the HUD
+  counts the misses. The next gate pulses yellow; a clean pass turns it green
+  with confetti.
+- **The race is contested.** You start last on a staggered grid (rival `id`
+  is `GRID_GAP × (id + 1)` units up the road), and the field's clock
+  (`RIVAL_CLOCK`, 1.08 at wave 3 to 1.26 at wave 53) is tuned so a clean
+  driver who never boosts beats 1.65 / 1.35 / 0.95 of 3 at waves 3 / 28 / 53
+  and one who boosts on the arrows 2.85 / 2.50 / 1.75 (20 seeds,
+  `tools/scratch/offroad-law.mjs`). Every overtake is a cue (`what: 'pass'`,
+  sound `tick`; `what: 'passed'`, sound `claim`) with one car length of
+  hysteresis, and the view shows `PASSED KAVI` or `KAVI PASSED YOU`.
 - **Score.** `0.45 × gates + 0.35 × gold + 0.20 × rivals beaten`, and the result
-  card **itemises the blend** (`9/12 gates · 21 gold · 2nd of 4`) — a blended
-  ratio with an unitemised card is an opaque score.
+  card **itemises the blend** (`9/12 gates · 21 gold · 2nd of 4`).
+- **The view.** The world is the track itself: world X is the rite's `x`, world
+  −Z is the distance `s`, so terrain, road, arrows, gates and gold are meshed
+  once in the constructor and only the camera moves. The field frame rides
+  with the car only so the host's pick stays defined; the pointer aims nothing.
+  Rivals are ghosts: they fade out when level with you or behind, so they never
+  park between the camera and your car. The HUD (gates, gold, position, boost,
+  a progress bar with every car on it, the overtake callout) is parented to the
+  camera, sits over the sky except the boost panel, and has a floor in CSS
+  pixels so a phone held sideways can read it; its canvases repaint only when
+  their content changes. Every effect starts from a cue, which carries
+  `{ type, what: 'gate' | 'coin' | 'boost' | 'flag' | 'pass' | 'passed', i, x }`.
 
-### `hunt` — Game Hunt · 20 s · 69 draws · rivals
+### `hunt` — Game Hunt · 20 s · 69 draws · rivals · **3D**
 
-A forest clearing at dusk. An animal steps out, freezes for a beat, and bolts.
-Fourteen of them over the round.
+A forest clearing at dusk, **in 3D**, seen from a hunting blind: a log sill
+along the bottom with the tally on it (ten slots that fill gold, then "+n"), a
+scoped rifle low in the corner that swings to the crosshair and cycles its bolt
+on the reload, kept short and below the lanes so it never covers a runner. Fourteen animals (deer, boar,
+hare) burst from one bush and dash for the next, on three lanes at three real
+depths. Three rival hunters sit in stands at the treeline, each with a lantern in
+their colour and a name plate with a running tally. On a second visit in a run it
+is night (moon, fireflies, colder light); no number changes.
 
-- **"First to click wins", stated plainly.** There is no network (§15). Every
-  animal instead carries a **pre-drawn deadline with a name on it**: land a valid
-  hit at `t < claimAt` and it is yours, otherwise Kavi's name flashes over it and
-  it is gone. Strictly `<`, so a tie is not a state this rite can be in. Both
-  players in a room face the same three rivals with the same names and the same
-  deadlines. It is not a duel; it is a duel's arithmetic, played by both people
-  separately.
-- **Controls.** Left, right and Space are one verb; it reads `input.clicks`.
-  Unlimited ammo, but **0.45 s of recoil** after every shot and **a shot that
-  hits nothing spooks the live animal** — it bolts immediately. That second brake
-  is the anti-mash rule and it is better than an ammo cap here, because it
-  punishes precisely the behaviour the rite is about resisting: panic-clicking at
-  an animal you have not acquired.
-- **The reaction window is derived, not typed.** It reads `claimTime(0)` once and
-  maps it through a gain of 0.55 onto a window clamped to [0.34, 1.25] s. The
-  compression is the point: `claimTime(0)` swings ~0.9 s across plausible rosters,
-  which is wider than the band a reaction game can live in, and an unlucky roster
-  at wave 53 would otherwise publish a deadline no human can reach.
-- **Score.** `ratio = taken / 8` (60 % of the field). A denominator of 14 would
-  put a good player at 0.7 and a great one at 0.95, compressing every human into
-  the top third of the curve.
+- **The verb.** Aim, click. Left, right and Space are one verb (§1.2); it reads
+  `input.clicks`. The shot is **hitscan**: it resolves where the animal is on the
+  step of the press, so you shoot at the runner, never ahead of it. That is the
+  split with `fishing`, whose hook sinks while the fish swims.
+- **The run is the clock.** An animal is live for exactly its dash, at constant
+  speed from one bush's edge to the next one's (always two neighbouring bushes,
+  so no cover ever stands inside a run). Land a hit at `t < claimAt` and it is
+  yours; when it reaches cover its rival fires (muzzle flash and tracer from that
+  stand, the rival's name over the animal) and it is theirs. Strict `<`, aged
+  before the step's shots, so a tie cannot happen. The bush it is about to leave
+  shakes and throws a puff of leaves 0.28 s first: a fair tell, so you watch
+  the cover, not the field. Bushes are green only, so anything brown is a target.
+- **One brake, the reload.** Unlimited rounds, 0.32 s dead trigger after every
+  shot. A miss costs time out of a window that is usually shorter than two
+  reloads; nothing else. The old second brake (a miss spooked the animal, with a
+  graze band to soften it) is gone: it needed a paragraph, and the reload already
+  prices the miss. A random sprayer still scores under 0.2.
+- **Up to two runners at once.** Windows run up to 2.4 s against the rivals'
+  1.35 s spacing, so the next animal often breaks while the last is still in the
+  open: a real choice of target. A shot into two overlapping animals takes the
+  front lane's.
+- **You hit what you see.** The hit shape is three discs per species: the body,
+  the head (antlers, snout, long ears) and the striding forelegs, fitted to the
+  view's models and mirrored with the run (`SPECIES.parts`, `HuntRite#covers`).
+  `tools/scratch/hunt-silhouette.mjs` raycasts the real meshes through the real
+  pick: 97-99% of the visible animal takes it (the rest is thin leg and antler
+  tips), and it fails if the rifle ever enters a lane.
+- **Dealt, not rolled.** Species (6 deer, 4 boar, 4 hare), lanes and dash
+  windows are each dealt from a fixed ladder by ranking a draw, so every seed has
+  the same mix and the seed only decides which animal gets which. The window
+  ladder runs from sprinters to stragglers and the wave squeezes it (eased,
+  `1 - 0.75 * waveT^1.5`); a straggler floor (`0.3 + 2.1 * u^4` s) ignores the
+  wave so a clumsy hand still has something to catch at wave 53. Later waves also
+  push animals toward the far lanes. Consecutive animals break within 4 units of
+  the last, so a round is a reaction test, not a mouse journey.
+- **Depth without moving the hit test.** Each lane's depth is chosen in `layout`
+  so its field scale is one world size further away (`0.75 / scale`), and the
+  camera looks down steeply enough (tilt -24) that the three foot lines sit on one
+  gently rising ground, which the terrain is bent through.
+- **Score.** `ratio = taken / 10`. Fourteen animals, so a flawless round clamps
+  well before the last one and a good one still pays in full. Calibration (5
+  seeds, reference player): 0.86 / 0.74 / 0.62 at waves 3 / 28 / 53; a clumsy
+  player 0.44 / 0.18 / 0.22.
 
-### `fishing` — Fishing · 20 s · 94 draws · rivals
+### `fishing` — Fishing · 20 s · 94 draws · rivals · **3D**
 
-A lake at dawn, seen side-on, four anglers on one water, sixteen fish. Same
-competitive rule as `hunt`, same clock, **deliberately not the same game**.
+A lake at dawn, **in 3D**, seen from the end of a pier: pines on the shore,
+reeds along the sides, three rival anglers in rowboats at the far end, sixteen
+fish swimming under translucent water at different depths. Your rod rests in
+the bottom-right corner. Same competitive rule as `hunt`, same clock,
+**deliberately not the same game**.
 
 - **The verb is the whole design.** `hunt` is a *reaction* shot; `fishing` is a
-  *leading* shot. A click drops a hook at the pointer, it sinks for **0.35 s**,
-  and it catches whatever it overlaps **at the moment it lands** — not on the way
-  down. The fish never stop moving, so the question is not "where is it" but
-  "where will it be". Without this split, two of the eleven rites in a run are one
-  game with different sprites, which was the single largest design risk in the
-  batch. **Nothing in that file may drift toward reaction, and nothing in `hunt`
+  *leading* shot. A click casts: the lure flies in an arc from the rod tip and
+  splashes down **0.45 s** later (`FLIGHT`) exactly where you clicked, and it
+  catches whatever it overlaps **at the splash**, never what it flew over. The
+  fish never stop, so the question is "where will it be when the lure lands".
+  **Nothing in that file may drift toward reaction, and nothing in `hunt`
   toward prediction.**
-- The lead is made **visible**, because a lead you cannot see is a coin flip with
-  extra steps: every fish trails a wake exactly as long as the distance it covers
-  in one sink ("cast one wake ahead of the nose"), and the fish nearest the
-  pointer shows a dashed ghost where it will be when the hook arrives.
-- **The sink is a constant, not a function of depth.** Physically wrong, and
-  right: a per-lane lead could never be *learned*, and the rite would reward
-  arithmetic instead of reading the water. Depth is spent on legibility instead
-  (deep fish are dimmer).
-- **Controls.** Left, right and Space are one verb; **exactly one cast per step**
-  however many clicks arrive, and the extras are not queued for later. Reeling is
-  0.7 s after an empty cast against 0.3 s after a catch — the anti-mash rule,
-  expressed in the fiction instead of in a counter.
-- **Score.** `ratio = points / PAR`, `PAR = 0.55 × (15 + 3) = 9.9` — the golden
-  fish is worth 3 and is confined to indices 4..11, because the index also sets
-  the deadline and a golden fish at 0 is gone before the player has read the
-  water.
+- **The field is the water surface** (`FRAMES.ground`, field y runs out from
+  the pier). Each fish is drawn on the camera ray through its field point at
+  its own cosmetic depth (`placeOnRay`), so deep fish look deep and still
+  cover the pixels of their catch ellipse. The depth never reaches the rite.
+- **The lead is drawn, on every cast.** A dashed ring marks where the lure
+  must land to catch the fish nearest the pointer (`nearestFish`), and every
+  fish trails a wake exactly as long as the distance it swims during one
+  flight. The ring used to show for the first three casts only, as a lesson
+  ("aim one wake ahead of the fish"), and the rules spent two of their four
+  lines explaining it; a 20-second party game cannot afford a lesson, so the
+  answer is now always drawn and the rules are three short lines. The skill
+  left is the hand's: the ring moves as fast as its fish, which fish to take
+  matters (gold, the rivals' deadlines), and a miss costs the long reel. The
+  calibration gate is unchanged by this: its reference player always aimed
+  at the lead. The speed band is 3× wide and stratified, so no memorised
+  offset plays the rite: the unit suite searches for the best constant and
+  requires it to lose.
+- **The rivals are visible.** In the last 1.5 s before a rival's deadline its
+  float bobs over the fish, on a line from its boat; at the deadline the fish
+  is yanked out of the water to that boat and the name tag's tally ticks up.
+  Your catches leap out of the water into the creel on the pier.
+- **Controls.** Aim with the pointer, cast with **left, right or Space**.
+  **Exactly one cast per step** however many clicks arrive, and the extras are
+  not queued. Reeling is 0.6 s after an empty cast against 0.3 s after a catch
+  (both ×1.45 by wave 53): the anti-mash rule, expressed in the fiction. The
+  reticle on the water shows the reel as a filling dial.
+- **Score.** `ratio = points / PAR`, `PAR = 0.66 × (15 + 3) = 11.88`. The golden
+  fish is worth 3, swims fast and shallow, and is confined to indices 4..11,
+  because the index also sets the deadline.
+- **What changed from the side-on version.** The view moved from a side-on
+  cutaway (hook dropped at the pointer, sinking for 0.45 s) to a pier over a
+  lake (lure cast in an arc), because "it sinks, so it does not catch on the
+  way down" needed a sentence and "it is in the air" does not. Lanes now span
+  the lake (±3.2 across the field's 9 units), so the catch ellipse is wider
+  across a fish's path (`RY_K` 0.6) and the reels and squeeze were retuned
+  against the calibration gate: reference player 0.89 / 0.62 / 0.52 at waves
+  3 / 28 / 53, clumsy player 0.15 at wave 53 (floor 0.10), flawless 1.0 at
+  wave 53. The ratio moves in steps of about 0.017 (one point on one of five
+  seeds), so a margin under two steps is not a margin.
 
 ---
 
@@ -1156,8 +1617,9 @@ Everything falls out of that:
 
 A ghost **never bluffs**, never camps a spot because you are near it, never
 changes plan because you took the lead or because you showed up at all. The one
-exception is `offroad`'s bomb — the single write in the interface — and it is
-deterministic: seconds added to that rival's entire future.
+exception was `offroad`'s bomb, the single write in the interface
+(`applyPenalty`: seconds added to that rival's entire future). The bomb was cut,
+so today no rite calls it; the method and its tests in `rivals.test.js` remain.
 
 Beating "Kavi" is beating a number. **"The first one who clicks wins" has become
 "beat a deadline that has a name on it."** That is a real loss and it is worth

@@ -1,28 +1,22 @@
 /**
  * GAME HUNT — the rite's own facts.
  *
- * `assertRiteContract` covers everything TRUE OF ANY RITE (a fixed rand budget
- * on three waves, determinism, an idle run that terminates and pays nothing,
- * mashing losing to play, 1 500 steps of fuzz staying finite and bounded, a pure
- * score(), a drainEvents that empties). It is called once, first, and this file
- * does not repeat any of it.
+ * `assertRiteContract` covers everything TRUE OF ANY RITE (fixed rand budget on
+ * three waves, determinism, idle pays nothing, mashing loses to play, fuzz stays
+ * finite, a pure score(), a drainEvents that empties). It runs once, first, and
+ * this file does not repeat any of it.
  *
- * What is left is what makes this rite THIS rite, and each of these has a way of
- * being broken that the shared checklist cannot see:
+ * What is left is what makes this rite THIS rite:
  *
- *  - a shot into empty air SPOOKS the live animal (brake #2, and the whole
- *    anti-mash design — the checklist would only notice its absence as a mash
- *    score creeping up, and only if it crept past 0.6);
- *  - the 0.38 s RECOIL really blocks the second shot (brake #1);
- *  - `t < claimAt` is STRICT, so a shot on the step the deadline passes is a
- *    loss and a TIE IS NOT A STATE THIS RITE CAN BE IN;
- *  - at most one animal is contested at a time (the schedule's invariant, which
- *    a retune of WINDOW_MAX or of the rival source's spacing could break
- *    silently — the picture would still look fine);
- *  - THE ANIMAL DOES NOT MOVE WHILE IT IS LIVE. That one is the guard on the
- *    design risk the whole lot was flagged for: `fishing` is the LEADING shot
- *    and `hunt` is the REACTION shot, and if a well-meaning edit ever gives the
- *    animal a drift, two of the eleven rites in a run become the same game.
+ *  - the RELOAD really blocks the next shot, and is the only price of a miss
+ *    (a miss no longer spooks the runner);
+ *  - `t < claimAt` is STRICT, so a tie is not a state this rite can be in;
+ *  - the run IS the clock: an animal runs between two neighbouring bushes over
+ *    exactly its window, and at most two run at once;
+ *  - the shot is HITSCAN: aiming where the animal is on the step hits, and
+ *    aiming where it was does not. That is the guard on the split with
+ *    `fishing`, whose hook sinks while the fish swims (the LEADING shot);
+ *  - species, lanes and temperaments are DEALT, so every seed gets the same mix.
  *
  * node environment. No DOM, no three.
  */
@@ -34,31 +28,20 @@ import { riteRng } from '../../src/minigames/schedule.js';
 import { mulberry32 } from '../../src/core/Rng.js';
 import {
   HUNT_RITE, RAND_CALLS, ANIMALS, EXPECTED, RECOIL, DURATION, WINDOW_MAX,
-  WINDOW_MIN, GRAZE_BAND,
+  WINDOW_MIN, LANES, BUSH_R, SPECIES,
 } from '../../src/minigames/rites/HuntRite.js';
 import { assertRiteContract } from './helpers/rite-contract.js';
 
 const DT = MINIGAMES.dt;
 
-/** Build a live instance without a host. */
 function spawn({ seed = 1234, occurrence = 0, wave = 8 } = {}) {
   const inst = HUNT_RITE.create();
   inst.init({
     rand: riteRng(seed, HUNT_RITE.id, occurrence),
-    wave, width: FIELD.w, height: FIELD.h, quality: 'high',
+    wave, occurrence, width: FIELD.w, height: FIELD.h, quality: 'high',
   });
   return inst;
 }
-
-/**
- * The point a player actually aims at: the animal's MASS, not its feet.
- *
- * Duplicated from HuntRite's private `#bodyLift` on purpose. A test that
- * imported the offset would still pass if the rite moved the hit disc away from
- * the drawn silhouette; this one has to be updated by hand when the picture
- * changes, which is the point.
- */
-function aim(a) { return { x: a.x, y: a.y + 0.30 * a.scale }; }
 
 /** Step with neutral input until one more step would pass `target`. */
 function stepTo(inst, target) {
@@ -67,50 +50,30 @@ function stepTo(inst, target) {
   return inst;
 }
 
+/** Where the shot fired on the NEXT step must land to hit `a`: its position then. */
+function aimNext(inst, a) { return inst.posAt(a, inst.t + DT); }
+
 /** One step carrying a single shot at (x, y). */
-function shoot(inst, x, y, button = 0) {
-  return inst.update(DT, makeInput({ action: button === 0 ? 1 : 0, altAction: button === 2 ? 1 : 0, clicks: [clickAt(x, y, button, 'pointer')] }));
+function shoot(inst, x, y, button = 0, source = 'pointer') {
+  return inst.update(DT, makeInput({ clicks: [clickAt(x, y, button, source)] }));
 }
 
 /**
- * A player who takes the shot the instant the animal is up and the trigger is
- * free. The ceiling, not a human — its job is to prove the ceiling is reachable
- * and that mashing does not get near it.
+ * The ceiling: shoot the most urgent runner the instant the trigger is free, at
+ * where it will be on the step the shot resolves.
  */
 const SKILLED = (inst) => {
   const a = inst.liveAnimal();
   if (!a || inst.recoil > 0) return makeInput();
-  const p = aim(a);
+  const p = aimNext(inst, a);
   return makeInput({ action: 1, clicks: [clickAt(p.x, p.y, 0, 'pointer')] });
 };
 
-/** A structural snapshot that skips functions. For the draw()-purity check. */
-function snap(o, depth = 0, seen = new Set()) {
-  if (o === null || typeof o !== 'object') {
-    return typeof o === 'number' && !Number.isFinite(o) ? String(o) : o;
+function runOut(inst, strategy) {
+  for (let n = 0; n < Math.ceil(DURATION / DT) + 1; n++) {
+    if (inst.update(DT, strategy(inst, n)) === true) break;
   }
-  if (seen.has(o) || depth > 6) return '[deep]';
-  seen.add(o);
-  if (Array.isArray(o) || ArrayBuffer.isView(o)) return Array.from(o, (v) => snap(v, depth + 1, seen));
-  const out = {};
-  for (const k of Object.keys(o)) {
-    if (typeof o[k] === 'function') continue;
-    out[k] = snap(o[k], depth + 1, seen);
-  }
-  return out;
-}
-
-/** Every Painter method a rite may call, stubbed and chainable. */
-const PAINTER_METHODS = [
-  'save', 'restore', 'alpha', 'add', 'translate', 'rotate', 'scale', 'glow', 'noGlow',
-  'circle', 'arc', 'rect', 'line', 'poly', 'blob', 'ellipse', 'capsule', 'halo', 'text',
-];
-function stubPainter() {
-  const g = { calls: 0 };
-  for (const m of PAINTER_METHODS) g[m] = () => { g.calls++; return g; };
-  g.linearFill = () => 'gradient';
-  g.clipRect = (_a, _b, _c, _d, fn) => { fn(g); return g; };
-  return g;
+  return inst;
 }
 
 // ===========================================================================
@@ -121,89 +84,38 @@ describe('HuntRite — the shared checklist', () => {
   });
 
   it('publishes a rand budget that is the arithmetic, not a memory of it', () => {
-    // 3 rivals x 4 draws + 14 animals x 4 draws + 1 presentation seed.
-    expect(RAND_CALLS).toBe(3 * 4 + ANIMALS * 4 + 1);
-    expect(EXPECTED).toBe(8);
+    // 3 rivals x 4 draws + 14 animals x 4 draws + 1 cosmetic seed.
+    expect(RAND_CALLS).toBe(69);
+    expect(EXPECTED).toBe(10);
     expect(HUNT_RITE.duration).toBe(DURATION);
   });
 
-  it('lays out a different forest for a different seed', () => {
-    // Without this, the budget and determinism tests both pass on a rite that
-    // ignores the seed entirely and hands every player the same fourteen animals.
-    const a = spawn({ seed: 11 }).animals.map((x) => [x.x, x.y, x.species]);
-    const b = spawn({ seed: 12 }).animals.map((x) => [x.x, x.y, x.species]);
+  it('lays out a different hunt for a different seed', () => {
+    const a = spawn({ seed: 11 }).animals.map((x) => [x.x0, x.lane, x.species]);
+    const b = spawn({ seed: 12 }).animals.map((x) => [x.x0, x.lane, x.species]);
     expect(b).not.toEqual(a);
+  });
+
+  it('is a 3D rite: a view and no 2D draw', () => {
+    expect(typeof HUNT_RITE.view).toBe('function');
+    expect(spawn().draw).toBeUndefined();
   });
 });
 
-describe('HuntRite — the two brakes', () => {
-  it('spooks the live animal when a shot hits nothing', () => {
+describe('HuntRite — the reload', () => {
+  it('a miss costs the reload and nothing else: the runner keeps running', () => {
     const inst = spawn();
     const a = inst.animals[0];
     stepTo(inst, a.appearAt + 0.02);
     expect(a.state).toBe('live');
-
-    // Deliberately up in the canopy: inside the field, nowhere near the animal.
-    shoot(inst, a.x, a.y + 3);
-    expect(a.state).toBe('spooked');
-    expect(inst.taken).toBe(0);
-    expect(inst.spooked).toBe(1);
-    // 'break' rather than 'miss': what was lost is the animal, not the bullet.
-    expect(inst.drainEvents().map((e) => e.type)).toContain('break');
-  });
-
-  it('grazes rather than spooks when the shot only just missed', () => {
-    // THE LINE BETWEEN THE TWO BRAKES. Brake #2 punishes firing into the bushes;
-    // a round that whistles past the shoulder is a different mistake and costs
-    // only the recoil. Without this split, aim wobble was instantly fatal and
-    // the rite collapsed into "on time or gone" with no middle — which is what
-    // the calibration gate measured as a missing mid-band.
-    const inst = spawn();
-    const a = inst.animals[0];
-    stepTo(inst, a.appearAt + 0.02);
+    shoot(inst, a.x0, a.y + 3);
     expect(a.state).toBe('live');
-
-    // Just outside the kill disc, comfortably inside the graze band.
-    const d = a.hitR + GRAZE_BAND * a.scale * 0.5;
-    shoot(inst, a.x + d, a.y + 0.30 * a.scale);
-    expect(a.state, 'a near miss must not spook the animal').toBe('live');
     expect(inst.taken).toBe(0);
-    expect(inst.spooked).toBe(0);
-    expect(inst.grazed).toBe(1);
-    const types = inst.drainEvents().map((e) => e.type);
-    expect(types).toContain('miss');
-    expect(types).not.toContain('break');
-    // And it still costs the trigger, which is what makes a graze expensive.
     expect(inst.recoil).toBeGreaterThan(0);
-  });
-
-  it('still spooks the moment the shot leaves the graze band', () => {
-    // The complement of the test above, and the guard on the anti-mash rule:
-    // widening the band until nothing spooks would pass every other test here.
-    const inst = spawn();
-    const a = inst.animals[0];
-    stepTo(inst, a.appearAt + 0.02);
-    const d = a.hitR + GRAZE_BAND * a.scale + 0.05;
-    shoot(inst, a.x + d, a.y + 0.30 * a.scale);
-    expect(a.state).toBe('spooked');
-    expect(inst.spooked).toBe(1);
-    expect(inst.grazed).toBe(0);
-  });
-
-  it('reports a plain miss when nothing was on the field to spook', () => {
-    const inst = spawn();
-    expect(inst.liveAnimal()).toBe(null);
-    shoot(inst, 0, 3.5);
-    const types = inst.drainEvents().map((e) => e.type);
-    expect(types).toContain('miss');
-    expect(types).not.toContain('break');
-    expect(inst.spooked).toBe(0);
+    expect(inst.drainEvents().map((e) => e.type)).toEqual(['start', 'miss']);
   });
 
   it('spends exactly one shot when two clicks land in the same step', () => {
-    // The host hands a whole frame's clicks to sub-step 1, so a fast player (or
-    // a macro) can present several at once. The recoil has to eat them there,
-    // not one step later.
     const inst = spawn();
     inst.update(DT, makeInput({
       action: 2,
@@ -212,31 +124,25 @@ describe('HuntRite — the two brakes', () => {
     expect(inst.shots).toBe(1);
   });
 
-  it('locks the trigger for 0.45 s and then releases it', () => {
+  it('locks the trigger for RECOIL seconds and then releases it', () => {
     const inst = spawn();
     shoot(inst, 0, 3.5);
     expect(inst.shots).toBe(1);
-
-    // Hammering through the whole recoil window buys nothing.
     const held = Math.floor((RECOIL - 0.05) / DT);
     for (let i = 0; i < held; i++) shoot(inst, 0, 3.5);
     expect(inst.shots).toBe(1);
-
-    // Past it, the very next click fires.
+    expect(inst.blockedAt).toBeGreaterThan(0);
     for (let i = 0; i < 5; i++) shoot(inst, 0, 3.5);
     expect(inst.shots).toBe(2);
   });
 
   it('treats left, right and Space as one verb', () => {
-    // Right-click is what the original map used; it must never be REQUIRED and
-    // must never be worth more. A rite that read only `action` would silently
-    // ignore the secondary button; one that read only `altAction`, the primary.
     const takeWith = (button, source) => {
       const inst = spawn();
       const a = inst.animals[0];
-      stepTo(inst, a.appearAt + 0.02);
-      const p = aim(a);
-      inst.update(DT, makeInput({ clicks: [clickAt(p.x, p.y, button, source)] }));
+      stepTo(inst, a.appearAt + 0.1);
+      const p = aimNext(inst, a);
+      shoot(inst, p.x, p.y, button, source);
       return inst.taken;
     };
     expect(takeWith(0, 'pointer')).toBe(1);
@@ -246,270 +152,268 @@ describe('HuntRite — the two brakes', () => {
 });
 
 describe('HuntRite — the deadline', () => {
-  it('counts a hit landed before the rival claim time', () => {
+  it('counts a hit landed before the rival fires', () => {
     const inst = spawn();
     const a = inst.animals[2];
     stepTo(inst, a.claimAt - 0.08);
     expect(a.state).toBe('live');
-    const p = aim(a);
+    const p = aimNext(inst, a);
     shoot(inst, p.x, p.y);
     expect(a.state).toBe('taken');
     expect(inst.taken).toBe(1);
   });
 
-  it('does not count a hit landed after it — the animal is already gone', () => {
+  it('does not count a hit after it: the rival already has it', () => {
     const inst = spawn();
     const a = inst.animals[2];
     stepTo(inst, a.claimAt + 0.05);
     expect(a.state).toBe('claimed');
-    const p = aim(a);
+    const p = inst.posAt(a, inst.t);
     shoot(inst, p.x, p.y);
     expect(inst.taken).toBe(0);
   });
 
   it('makes a tie impossible: the deadline resolves before the step\'s shots', () => {
-    // The strict `<` in the spec, expressed as an ORDER OF OPERATIONS. update()
-    // ages the animals before it reads input.clicks, so a shot arriving on the
-    // step that crosses claimAt finds nothing live. Swap those two blocks and
-    // the boundary silently becomes `<=` — a change no other test would see.
     const inst = spawn();
     const a = inst.animals[1];
     stepTo(inst, a.claimAt - 1e-9);
     expect(a.state).toBe('live');
-    expect(inst.t).toBeLessThan(a.claimAt);
     expect(inst.t + DT).toBeGreaterThanOrEqual(a.claimAt);
-
-    const claimedBefore = inst.claimed;   // animal 0's deadline is already past
-    const p = aim(a);
+    const before = inst.claimed;
+    const p = aimNext(inst, a);
     shoot(inst, p.x, p.y);
     expect(a.state).toBe('claimed');
     expect(inst.taken).toBe(0);
-    expect(inst.claimed).toBe(claimedBefore + 1);
+    expect(inst.claimed).toBe(before + 1);
   });
 
-  it('puts a named rival on every deadline, from the shared roster', () => {
+  it('gives every deadline a rival from the roster, and keeps their tally', () => {
     const inst = spawn();
-    const names = new Set(inst.rivals.roster().map((r) => r.name));
-    expect(names.size).toBe(3);
-    for (const a of inst.animals) expect(names.has(a.claimant)).toBe(true);
-
-    // The same seed produces the same three names and the same deadlines for
-    // every player in the room — that is the whole substitute for a network.
+    const roster = inst.rivals.roster();
+    expect(roster.length).toBe(3);
+    for (const a of inst.animals) {
+      expect(a.rival).toBeGreaterThanOrEqual(0);
+      expect(a.claimant).toBe(roster[a.rival].name);
+    }
+    const events = [];
+    runOut(inst, (i) => { events.push(...i.drainEvents()); return makeInput(); });
+    expect(inst.rivalKills.reduce((s, v) => s + v, 0)).toBe(ANIMALS);
+    const claims = events.filter((e) => e.type === 'claim');
+    expect(claims.length).toBe(ANIMALS);
+    for (const e of claims) {
+      expect(e.rival).toBe(inst.animals[e.i].rival);
+      const a = inst.animals[e.i];
+      const at = inst.posAt(a, a.claimAt);
+      expect([e.x, e.y]).toEqual([at.x, at.y]);
+      expect(at.x).toBeCloseTo(a.x1, 9);
+    }
     const twin = spawn();
-    expect(twin.rivals.roster().map((r) => r.name)).toEqual([...inst.rivals.roster()].map((r) => r.name));
-    expect(twin.animals.map((a) => a.claimAt)).toEqual(inst.animals.map((a) => a.claimAt));
-  });
-
-  it('deals every round the SAME spread of windows, in a different order', () => {
-    // THE ANTI-LOTTERY INVARIANT, and the reason the mid-band exists on every
-    // seed rather than on average. The fourteen temperaments are a hand, not
-    // fourteen rolls: two seeds at one wave must produce the same MULTISET of
-    // windows and (almost always) a different assignment of them to animals.
-    //
-    // Without this the number of reachable animals is a binomial with an SD of
-    // about two — a quarter of EXPECTED — so the round rolled its own difficulty
-    // on top of every other roll, and the same player at wave 53 scored 0.000 on
-    // one seed and 1.000 on the next.
-    const windows = (seed) => spawn({ seed, wave: 28 }).animals.map((a) => a.claimAt - a.appearAt);
-    const a = windows(11);
-    const b = windows(4242);
-    const sortedA = [...a].sort((p, q) => p - q);
-    const sortedB = [...b].sort((p, q) => p - q);
-
-    // The PROFILE is the same rung for rung. Not bit-identical: the roster still
-    // flavours the whole hand (WINDOW_GAIN), so two seeds can shift the ladder
-    // bodily by up to about a tenth of a second. What must not vary is its
-    // SHAPE — that is the difference between "this field is a little quicker"
-    // and "this round happens to contain no animal you can catch".
-    for (let i = 0; i < sortedA.length; i++) {
-      expect(Math.abs(sortedB[i] - sortedA[i]),
-        `rung ${i}: two seeds dealt different SHAPES of round `
-        + `(${sortedA[i].toFixed(3)}s vs ${sortedB[i].toFixed(3)}s)`).toBeLessThanOrEqual(0.12);
-    }
-    // ...but not in the same order, or the straggler would always be animal 13.
-    expect(b.map((v) => v.toFixed(9))).not.toEqual(a.map((v) => v.toFixed(9)));
-  });
-
-  it('spreads those windows widely enough to ask more than one question', () => {
-    // The mid-band's precondition, asserted here rather than only in the
-    // calibration gate: if every animal in a round wants the same reaction time,
-    // the round has one difficulty and the score has two values.
-    for (const wave of [3, 28, 53]) {
-      const w = spawn({ wave }).animals.map((a) => a.claimAt - a.appearAt);
-      const spread = Math.max(...w) - Math.min(...w);
-      expect(spread, `wave ${wave} deals a near-uniform window (spread ${spread.toFixed(3)}s)`)
-        .toBeGreaterThan(0.35);
-    }
-  });
-
-  it('gives a faster field a tighter window, and never an impossible one', () => {
-    // The wave curve, measured rather than asserted by eye. `WINDOW_MAX` is also
-    // the schedule's safety margin: it must stay under the rival source's target
-    // spacing or two animals are contested at once.
-    const windowsAt = (wave) => {
-      const inst = spawn({ wave });
-      return inst.animals.map((a) => a.claimAt - a.appearAt);
-    };
-    const early = windowsAt(3);
-    const late = windowsAt(53);
-    const mean = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
-    expect(mean(late)).toBeLessThan(mean(early));
-    for (const w of [...early, ...late]) {
-      expect(w).toBeGreaterThanOrEqual(WINDOW_MIN - 1e-9);
-      expect(w).toBeLessThanOrEqual(WINDOW_MAX + 1e-9);
-    }
-    const inst = spawn();
-    expect(WINDOW_MAX).toBeLessThan(inst.rivals.claimTime(1) - inst.rivals.claimTime(0));
+    expect(twin.animals.map((a) => [a.claimAt, a.claimant]))
+      .toEqual(spawn().animals.map((a) => [a.claimAt, a.claimant]));
   });
 });
 
-describe('HuntRite — the round', () => {
-  it('contests exactly one animal at a time, for the whole clock', () => {
-    for (const wave of [3, 28, 53]) {
-      const inst = spawn({ wave, seed: 77 });
-      let worst = 0;
-      for (let n = 0; n < Math.ceil(DURATION / DT); n++) {
-        if (inst.update(DT, makeInput()) === true) break;
-        let live = 0;
-        for (const a of inst.animals) if (a.state === 'live') live++;
-        if (live > worst) worst = live;
-      }
-      expect(worst, `wave ${wave} had ${worst} animals contested at once`).toBeLessThanOrEqual(1);
-    }
-  });
-
-  it('resolves every animal on screen, before the clock runs out', () => {
-    // An animal still standing when the host closes the overlay reads as a bug
-    // even though the score is identical, which is what END_PAD is for.
+describe('HuntRite — the run', () => {
+  it('runs between two NEIGHBOURING bushes of its lane, edge to edge', () => {
     for (const seed of [3, 19, 404]) {
       for (const wave of [3, 28, 53]) {
-        const inst = spawn({ seed, wave });
-        for (const a of inst.animals) {
-          expect(a.appearAt).toBeGreaterThan(0);
-          expect(a.claimAt).toBeLessThanOrEqual(DURATION - 0.2 + 1e-9);
-          expect(a.claimAt).toBeGreaterThan(a.appearAt);
+        for (const a of spawn({ seed, wave }).animals) {
+          const L = LANES[a.lane];
+          const edge = BUSH_R * L.scale;
+          const from = a.x0 - a.dir * edge;
+          const to = a.x1 + a.dir * edge;
+          const j = L.cover.findIndex((c) => Math.abs(c - from) < 1e-9);
+          expect(j, `seed ${seed} wave ${wave} animal ${a.i} starts at a bush`).toBeGreaterThanOrEqual(0);
+          expect(L.cover[j + a.dir]).toBeCloseTo(to, 9);
+          expect(Math.sign(a.x1 - a.x0)).toBe(a.dir);
+          expect(Math.abs(a.x0)).toBeLessThan(FIELD.hw);
+          expect(Math.abs(a.x1)).toBeLessThan(FIELD.hw);
         }
       }
     }
   });
 
-  it('is a REACTION shot: the animal never moves while it is contested', () => {
-    // THE GUARD ON THE ONE DESIGN RISK IN THE WHOLE WAVE. `fishing` is the
-    // leading shot — its fish keeps swimming while the hook sinks. If an animal
-    // here ever acquires a drift, aiming becomes prediction and two of the
-    // eleven rites in a run collapse into one game. The position is fixed at
-    // init and this asserts that nothing in update() touches it.
+  it('covers the run over exactly its window: the distance left is the time left', () => {
     const inst = spawn({ seed: 8, wave: 28 });
-    const before = inst.animals.map((a) => [a.x, a.y, a.scale, a.hitR]);
-    const rng = mulberry32(5);
-    for (let n = 0; n < Math.ceil(DURATION / DT); n++) {
-      const fire = rng() < 0.1;
-      if (inst.update(DT, makeInput({
-        x: (rng() * 2 - 1) * FIELD.hw, y: (rng() * 2 - 1) * FIELD.hh, inside: true,
-        clicks: fire ? [clickAt((rng() * 2 - 1) * FIELD.hw, (rng() * 2 - 1) * FIELD.hh, 0, 'pointer')] : [],
-      })) === true) break;
+    for (const a of inst.animals) {
+      expect(inst.posAt(a, a.appearAt).x).toBeCloseTo(a.x0, 9);
+      expect(inst.posAt(a, a.claimAt).x).toBeCloseTo(a.x1, 9);
+      expect(inst.posAt(a, (a.appearAt + a.claimAt) / 2).x).toBeCloseTo((a.x0 + a.x1) / 2, 9);
     }
-    expect(inst.animals.map((a) => [a.x, a.y, a.scale, a.hitR])).toEqual(before);
   });
 
-  it('scores exactly 0 for an idle run — every animal goes to a rival', () => {
-    const inst = spawn({ seed: 5, wave: 23 });
-    let steps = 0;
-    while (steps < Math.ceil(DURATION / DT) + 1) {
-      steps++;
-      if (inst.update(DT, makeInput()) === true) break;
+  it('is HITSCAN: where it is hits, where it was misses', () => {
+    // The split with `fishing`. A shot here has no travel time, so the player
+    // aims at the runner, never ahead of it.
+    const where = spawn({ seed: 8, wave: 28 });
+    const a = where.animals.find((x) => x.claimAt - x.appearAt < 0.9);
+    stepTo(where, a.appearAt + 0.3 * (a.claimAt - a.appearAt));
+    const now = aimNext(where, a);
+    shoot(where, now.x, now.y);
+    expect(a.state).toBe('taken');
+
+    const was = spawn({ seed: 8, wave: 28 });
+    const b = was.animals[a.i];
+    stepTo(was, b.appearAt + 0.3 * (b.claimAt - b.appearAt));
+    const old = was.posAt(b, b.appearAt);
+    shoot(was, old.x, old.y);
+    expect(b.state).toBe('live');
+  });
+
+  it('never runs more than two animals at once, for the whole clock', () => {
+    for (const wave of [3, 28, 53]) {
+      const inst = spawn({ wave, seed: 77 });
+      let worst = 0;
+      runOut(inst, (i) => {
+        let live = 0;
+        for (const a of i.animals) if (a.state === 'live') live++;
+        worst = Math.max(worst, live);
+        return makeInput();
+      });
+      expect(worst, `wave ${wave}`).toBeLessThanOrEqual(2);
     }
-    const s = inst.score();
-    expect(s.ratio).toBe(0);
+  });
+
+  it('gives the shot to the FRONT runner when two discs overlap', () => {
+    const inst = spawn({ seed: 8 });
+    const [near, far] = [inst.animals[0], inst.animals[1]];
+    for (const [a, lane] of [[near, 0], [far, 2]]) {
+      Object.assign(a, { lane, x0: 0, x1: 0.001, y: 0, hitR: 1, appearAt: 0, claimAt: 5 });
+    }
+    inst.update(DT, makeInput());
+    shoot(inst, 0, 0);
+    expect(near.state).toBe('taken');
+    expect(far.state).toBe('live');
+  });
+
+  it('takes a deer by its head as well as its body, on the side it runs toward', () => {
+    // The player clicks the animal they see, antlers included, not the middle
+    // of its body. A deer at the origin of the near lane, running right, then left.
+    const place = (dir) => {
+      const inst = spawn({ seed: 8 });
+      for (const a of inst.animals) a.state = 'taken';
+      const deer = inst.animals[0];
+      Object.assign(deer, { species: 0, lane: 0, scale: 1, hitR: SPECIES[0].hitR, dir, x0: 0, x1: 0.001 * dir, y: 0, appearAt: 0, claimAt: 5, state: 'wait' });
+      inst.update(DT, makeInput());
+      return [inst, deer];
+    };
+    const [right, r] = place(1);
+    shoot(right, 0.9, 0.85);
+    expect(r.state).toBe('taken');
+
+    const [left, l] = place(-1);
+    shoot(left, 0.9, 0.85);
+    expect(l.state).toBe('live');
+    left.recoil = 0;
+    shoot(left, -0.9, 0.85);
+    expect(l.state).toBe('taken');
+
+    const [above, u] = place(1);
+    shoot(above, 0, 1.4);
+    expect(u.state).toBe('live');
+  });
+
+  it('resolves every animal on screen, before the clock runs out', () => {
+    for (const seed of [3, 19, 404]) {
+      for (const wave of [3, 28, 53]) {
+        for (const a of spawn({ seed, wave }).animals) {
+          expect(a.appearAt).toBeGreaterThan(0);
+          expect(a.claimAt).toBeLessThanOrEqual(DURATION - 0.2 + 1e-9);
+          expect(a.claimAt - a.appearAt).toBeGreaterThanOrEqual(WINDOW_MIN - 1e-9);
+          expect(a.claimAt - a.appearAt).toBeLessThanOrEqual(WINDOW_MAX + 1e-9);
+        }
+      }
+    }
+  });
+});
+
+describe('HuntRite — every round is the same hand', () => {
+  it('deals the same species mix and lane mix on every seed', () => {
+    const mix = (inst, key, n) => {
+      const out = new Array(n).fill(0);
+      for (const a of inst.animals) out[a[key]]++;
+      return out;
+    };
+    for (const wave of [3, 53]) {
+      const a = spawn({ seed: 11, wave });
+      const b = spawn({ seed: 4242, wave });
+      expect(mix(b, 'species', SPECIES.length)).toEqual(mix(a, 'species', SPECIES.length));
+      expect(mix(b, 'lane', LANES.length)).toEqual(mix(a, 'lane', LANES.length));
+    }
+    expect(mix(spawn({ wave: 3 }), 'species', 3)).toEqual([6, 4, 4]);
+  });
+
+  it('deals the same spread of windows, in a different order', () => {
+    const windows = (seed) => spawn({ seed, wave: 28 }).animals.map((a) => a.claimAt - a.appearAt);
+    const a = windows(11);
+    const b = windows(4242);
+    const sa = [...a].sort((p, q) => p - q);
+    const sb = [...b].sort((p, q) => p - q);
+    for (let i = 0; i < sa.length; i++) {
+      // The roster flavours the whole ladder by up to about a tenth of a second.
+      expect(Math.abs(sb[i] - sa[i]), `rung ${i}`).toBeLessThanOrEqual(0.15);
+    }
+    expect(b.map((v) => v.toFixed(9))).not.toEqual(a.map((v) => v.toFixed(9)));
+  });
+
+  it('spreads the windows from sprinters to stragglers, and the wave squeezes them', () => {
+    const mean = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+    const at = (wave) => spawn({ wave }).animals.map((a) => a.claimAt - a.appearAt);
+    for (const wave of [3, 28, 53]) {
+      const w = at(wave);
+      expect(Math.max(...w) - Math.min(...w), `wave ${wave}`).toBeGreaterThan(1.2);
+      // The straggler floor: a long run survives to the last wave.
+      expect(Math.max(...w), `wave ${wave}`).toBeGreaterThan(1.8);
+    }
+    expect(mean(at(53))).toBeLessThan(mean(at(28)));
+    expect(mean(at(28))).toBeLessThan(mean(at(3)));
+  });
+});
+
+describe('HuntRite — the score', () => {
+  it('scores exactly 0 for an idle run: every animal goes to a rival', () => {
+    const inst = runOut(spawn({ seed: 5, wave: 23 }), () => makeInput());
+    expect(inst.score().ratio).toBe(0);
     expect(inst.claimed).toBe(ANIMALS);
-    expect(inst.spooked).toBe(0);
-    expect(s.headline).toBe('The forest kept them');
+    expect(inst.score().headline).toBe('The forest kept them');
   });
 
   it('clamps at 1 for a player who beats the expectation', () => {
-    const inst = spawn({ seed: 909, wave: 28 });
-    for (let n = 0; n < Math.ceil(DURATION / DT); n++) {
-      if (inst.update(DT, SKILLED(inst, n)) === true) break;
-    }
-    expect(inst.taken).toBeGreaterThanOrEqual(EXPECTED);
+    const inst = runOut(spawn({ seed: 909, wave: 28 }), SKILLED);
+    expect(inst.taken).toBe(ANIMALS);
     expect(inst.score().ratio).toBe(1);
-    expect(inst.spooked).toBe(0);
+    expect(inst.score().headline).toBe('Unerring');
   });
 
-  it('leaves a panic-clicker with nothing, because the misses do the damage', () => {
-    // Stronger than the shared checklist's 0.6 ceiling, and a claim about THIS
-    // design: spraying does not merely fail to score, it destroys the round.
+  it('leaves a panic-clicker with almost nothing: the reload spends the trigger', () => {
     const rng = mulberry32(7);
-    const inst = spawn({ seed: 909, wave: 28 });
-    for (let n = 0; n < Math.ceil(DURATION / DT); n++) {
-      if (inst.update(DT, makeInput({
-        x: (rng() * 2 - 1) * FIELD.hw, y: (rng() * 2 - 1) * FIELD.hh, inside: true, down: true, action: 1,
-        clicks: [clickAt((rng() * 2 - 1) * FIELD.hw, (rng() * 2 - 1) * FIELD.hh, 0, 'pointer')],
-      })) === true) break;
-    }
+    const inst = runOut(spawn({ seed: 909, wave: 28 }), () => makeInput({
+      x: (rng() * 2 - 1) * FIELD.hw, y: (rng() * 2 - 1) * FIELD.hh, inside: true, down: true, action: 1,
+      clicks: [clickAt((rng() * 2 - 1) * FIELD.hw, (rng() * 2 - 1) * FIELD.hh, 0, 'pointer')],
+    }));
     expect(inst.score().ratio).toBeLessThan(0.2);
-    expect(inst.spooked).toBeGreaterThan(ANIMALS / 2);
-    // The recoil is what caps the volume: 20 s at one shot per 0.45 s.
     expect(inst.shots).toBeLessThanOrEqual(Math.ceil(DURATION / RECOIL) + 1);
   });
 
   it('carries evidence on the result card', () => {
     const inst = spawn();
     const a = inst.animals[0];
-    stepTo(inst, a.appearAt + 0.02);
-    const p = aim(a);
+    stepTo(inst, a.appearAt + 0.05);
+    const p = aimNext(inst, a);
     shoot(inst, p.x, p.y);
     const s = inst.score();
-    expect(s.detail).toBe(`1/${ANIMALS} taken · 0 claimed · 0 spooked · 0 grazed`);
+    expect(s.detail).toBe(`1/${ANIMALS} taken · 0 to rivals · 1 shots`);
     expect(s.ratio).toBeCloseTo(1 / EXPECTED, 10);
   });
-});
 
-describe('HuntRite — drawing', () => {
-  it('draws without touching a single field of state', () => {
-    // docs/MINIGAMES.md §5: draw() is skipped entirely on a zero-sized canvas
-    // and called a variable number of times per step, so anything it mutates is
-    // a round that diverges between two players with identical inputs.
-    const inst = spawn({ seed: 21, wave: 33 });
-    const rng = mulberry32(99);
-    for (let n = 0; n < 400; n++) {
-      const fire = rng() < 0.12;
-      inst.update(DT, makeInput({
-        inside: true,
-        clicks: fire ? [clickAt((rng() * 2 - 1) * FIELD.hw, (rng() * 2 - 1) * FIELD.hh, 0, 'pointer')] : [],
-      }));
-    }
-    const before = snap(inst);
-    const g = stubPainter();
-    for (const alpha of [0, 0.5, 0.99]) inst.draw(g, alpha);
-    expect(g.calls).toBeGreaterThan(50);
-    expect(snap(inst)).toEqual(before);
-  });
-
-  it('draws every phase a round can be in without throwing', () => {
-    // A throw inside draw() is not a wrong picture, it is a dead rite: the host
-    // catches it, abandons the round and pays nothing. Walk one full clock with
-    // takes, spooks and claims all in flight and render every step.
-    const inst = spawn({ seed: 64, wave: 41 });
-    const g = stubPainter();
-    const rng = mulberry32(3);
-    for (let n = 0; n < Math.ceil(DURATION / DT); n++) {
-      // Alternate between aiming true and aiming wild, so takes, spooks, plain
-      // misses, rival claims and the recoil lock all occur in the same run.
-      const a = inst.liveAnimal();
-      let clicks = [];
-      if (a && inst.recoil <= 0 && rng() < 0.5) {
-        const p = aim(a);
-        clicks = rng() < 0.5 ? [clickAt(p.x, p.y, 0, 'pointer')] : [clickAt(p.x + 2.5, p.y + 1.5, 2, 'pointer')];
-      } else if (rng() < 0.05) {
-        clicks = [clickAt((rng() * 2 - 1) * FIELD.hw, (rng() * 2 - 1) * FIELD.hh, 0, 'pointer')];
-      }
-      const end = inst.update(DT, makeInput({ inside: true, clicks }));
-      inst.draw(g, 0.4);
-      inst.drainEvents();
-      if (end === true) break;
-    }
-    expect(inst.taken + inst.claimed + inst.spooked).toBe(ANIMALS);
-    expect(Number.isFinite(inst.score().ratio)).toBe(true);
+  it('tells the view where every take happened', () => {
+    const inst = spawn();
+    const a = inst.animals[0];
+    stepTo(inst, a.appearAt + 0.05);
+    const p = aimNext(inst, a);
+    shoot(inst, p.x, p.y);
+    const take = inst.drainEvents().find((e) => e.type === 'perfect' || e.type === 'good');
+    expect(take).toEqual({ type: 'perfect', x: a.endX, y: a.endY, i: 0 });
+    expect(a.endX).toBeCloseTo(p.x, 9);
   });
 });

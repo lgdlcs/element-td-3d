@@ -22,7 +22,7 @@
  *     host reports `isOpen`, and the phase is 'minigame'.
  *  2. IT RUNS. `instance.t` — the rite's own clock, advanced only from inside its
  *     `update` — is strictly greater after a bounded run of frames than it was
- *     before, and `draw()` was reached (counted through a wrapper) without the
+ *     before, and frames were drawn (the host's `renderedFrames`) without the
  *     host's `#guard` catching anything.
  *  3. IT SCORES. `score()` returns a `ratio` inside [0, 1] with a non-empty
  *     `headline`, the host settled on that same ratio, and both the headline and
@@ -67,7 +67,7 @@
 import { test, expect } from '@playwright/test';
 import { startRun } from './helpers.js';
 // THE POINT OF THE FILE. Imported, not transcribed — see the docblock.
-import { MINIGAME_IDS } from '../../src/minigames/registry.js';
+import { MINIGAME_IDS, riteDef } from '../../src/minigames/registry.js';
 
 /**
  * The wave the rite stands in front of. 20 rather than 3 so the reward formula
@@ -96,7 +96,7 @@ async function openRite(page, id) {
     [id, WAVE, OCCURRENCE],
   );
   await page.waitForSelector('#rite.open', { timeout: 15000 });
-  // The five-second pre-roll (MinigameHost COUNTDOWN) runs before the rite is
+  // The intro card (MinigameHost COUNTDOWN) runs before the rite is
   // stepped at all, so everything below — draws, the rite's own clock, the
   // payout — is measured from the moment the field actually goes live. Skipped
   // rather than waited out: the host hands over on a commit, which is what a
@@ -108,16 +108,22 @@ async function openRite(page, id) {
     }));
   });
   await page.waitForFunction(() => window.__game.minigames.mode === 'play', null, { timeout: 15000 });
+  // A 3D rite's view arrives through a dynamic import; until it has, nothing is
+  // drawn. Waited for here so "it runs" below measures the rite, not the load.
+  await page.waitForFunction(() => {
+    const h = window.__game.minigames;
+    return !h.def?.view || h.ownsFrame || !h.isOpen;
+  }, null, { timeout: 15000 });
   return opened;
 }
 
 /**
- * Count `draw` calls, count credits, and take the gold baseline.
+ * Count drawn frames, count credits, and take the gold baseline.
  *
  * WHY `addGold` AND NOT `score`. The obvious instrument for "settled once" is a
  * counter on `score()`, and it is wrong: `score()` is documented PURE and rites
- * are free to call it themselves — FishingRite.#drawHud calls it on every frame
- * to draw the creel bar, and measured, that is 16 calls in a one-second session.
+ * are free to call it themselves — the 2D fishing rite's HUD once called it on
+ * every frame to draw its creel bar, 16 calls in a one-second session.
  * A counter there would be asserting a private drawing habit rather than the
  * host's lifecycle. `Game.addGold` is the other end of the same claim and is
  * unambiguous: `#settle` is the only caller with reason 'minigame', and it is
@@ -132,14 +138,15 @@ async function instrument(page) {
     const g = window.__game;
     const inst = g.minigames.instance;
     window.__rite = {
-      draws: 0,
+      // Frames the host actually drew through the rite's 3D view. A throw is
+      // caught by #guard and would stop this counter; the console assertion
+      // catches it.
+      frames0: g.minigames.renderedFrames,
       credits: [],
       t0: inst.t,
       ledger0: g.state.goldEarned.minigame ?? 0,
       purse0: g.state.gold,
     };
-    const draw = inst.draw.bind(inst);
-    inst.draw = (painter, alpha) => { window.__rite.draws++; return draw(painter, alpha); };
     const addGold = g.addGold.bind(g);
     g.addGold = (amount, reason) => {
       window.__rite.credits.push({ amount, reason });
@@ -270,16 +277,16 @@ test.describe('rites — every minigame opens, runs, scores, pays once and close
         .toBeLessThan(MAX_RUN_FRAMES);
       const midway = await page.evaluate(() => ({
         t: window.__game.minigames.instance?.t ?? null,
-        draws: window.__rite.draws,
+        draws: window.__game.minigames.renderedFrames - window.__rite.frames0,
         remaining: window.__game.minigames._remaining,
         t0: window.__rite.t0,
       }));
       expect(midway.t, `${id}: instance.t did not advance`)
         .toBeGreaterThan(midway.t0);
-      // draw() runs inside #guard, so a throw would be swallowed into
+      // The view's render() runs inside #guard, so a throw would be swallowed into
       // console.error and the counter would stop climbing. Both halves are
       // asserted: it was reached, and (below) nothing was logged.
-      expect(midway.draws, `${id}: draw() was never reached`).toBeGreaterThan(0);
+      expect(midway.draws, `${id}: no frame of the rite was ever drawn`).toBeGreaterThan(0);
       // The host's clock moved too, which is what makes the cut below a cut
       // rather than the only thing that ever touched _remaining.
       expect(midway.remaining).toBeLessThan(opened.remaining);
@@ -418,6 +425,49 @@ test.describe('rites — every minigame opens, runs, scores, pays once and close
       expect(errors, `${id}: console errors during the session`).toEqual([]);
       expect(warnings.slice(warnBefore), `${id}: console warnings during the session`)
         .toEqual([]);
+    });
+  }
+});
+
+/**
+ * A VIEW READS THE RITE AND NEVER WRITES IT (docs/MINIGAMES.md §8.1 rule 1).
+ *
+ * Nothing in node can hold a view to that, because a view needs WebGL. Here the
+ * host's stepping is stubbed out after a few real shots, every view entry point
+ * is called by hand — render, layout at two aspects, a cue of each shape — and
+ * the instance must serialise to the same bytes before and after. Typed arrays
+ * are expanded, so a write into one is caught too.
+ */
+test.describe('rites — a 3D view never mutates its rite', () => {
+  for (const id of MINIGAME_IDS.filter((i) => riteDef(i)?.view)) {
+    test(`${id}: render, layout and cue leave the instance byte-identical`, async ({ page }) => {
+      const { errors } = await startRun(page, { freeze: true });
+      await openRite(page, id);
+      await page.waitForFunction(() => window.__game.minigames.ownsFrame, null, { timeout: 15000 });
+      for (const [x, y] of [[0, -2], [3, -0.6], [-4, 1], [6, -2]]) {
+        const c = await page.evaluate(([fx, fy]) => window.__game.minigames.fieldToClient(fx, fy), [x, y]);
+        await page.mouse.click(c.x, c.y);
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      }
+      const same = await page.evaluate(() => {
+        const h = window.__game.minigames;
+        const inst = h.instance;
+        const view = h._view;
+        h.update = () => {};
+        const snap = () => JSON.stringify(inst, (k, v) => (ArrayBuffer.isView(v) ? Array.from(v) : v));
+        const before = snap();
+        for (let i = 0; i < 20; i++) view.render(i / 20, 1 / 60);
+        view.layout(4 / 3);
+        view.layout(16 / 9);
+        view.cue({ type: 'good', x: 0, y: 0, i: 0, value: 1 });
+        view.cue({ type: 'miss', x: 1, y: 1, i: -1, value: 0 });
+        view.cue({ type: 'start' });
+        for (let i = 0; i < 5; i++) view.render(0.5, 1 / 60);
+        return { equal: snap() === before, size: before.length };
+      });
+      expect(same.size, `${id}: snapshot is empty`).toBeGreaterThan(100);
+      expect(same.equal, `${id}: the view wrote to the rite`).toBe(true);
+      expect(errors).toEqual([]);
     });
   }
 });

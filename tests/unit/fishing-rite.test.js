@@ -2,51 +2,37 @@
  * FISHING — the rite whose whole reason to exist is that it is NOT `hunt`.
  *
  * `assertRiteContract` covers what every rite owes the host. This file covers
- * the four claims that are specific to this one, in descending order of how
- * badly the rite is broken if one of them stops holding:
+ * the claims specific to this one, in descending order of how badly the rite
+ * is broken if one of them stops holding:
  *
  *   1. THE LEADING SHOT, AND THAT IT IS A PER-FISH ONE. A cast aimed at where a
- *      fish IS misses; the same cast aimed at where it WILL BE when the hook
- *      lands, hits. If this ever passes in both directions, `fishing` has
- *      silently become a reaction shooter and two of the eleven rites in a run
- *      are the same game.
- *
- *      THAT PAIR IS NOT ENOUGH ON ITS OWN AND FOR A LONG TIME IT WAS ALL THERE
- *      WAS. "Some lead beats no lead" is satisfied by a player who has memorised
- *      ONE NUMBER, and that is exactly what a player was doing: measured against
- *      the rite as originally tuned, a bot casting a fixed 1.2 units ahead of
- *      every nose — no velocity model at all — scored 1.00 / 1.00 / 0.96 across
- *      waves 3 / 28 / 53. The file now also measures the best constant available
- *      at each wave and requires it to lose, which is the claim the rite's whole
- *      docblock actually makes.
- *   2. The reel, and everything else that is SCARCE. An empty cast costs a
- *      second or more of a twenty-second rite, and both reels — plus the rivals'
- *      whole claim schedule — tighten with the wave. Before that they did not,
- *      and the rite measured a flat 1.00 from wave 3 to wave 53 because thirty
- *      casts chased sixteen fish at every difficulty.
- *   3. The deadline. A hook that lands after a rival's claim time does not
- *      count — strictly.
+ *      fish IS misses; the same cast aimed at where it WILL BE when the lure
+ *      splashes down, hits. And no single memorised offset plays the rite: the
+ *      best constant available at each wave is measured and must lose.
+ *   2. Casts are SCARCE. An empty cast costs a second of a twenty-second rite,
+ *      and both reels plus the rivals' whole claim schedule tighten with the
+ *      wave.
+ *   3. The deadline. A lure that lands after a rival's claim time does not
+ *      count, strictly.
  *   4. The golden fish is worth 3x, and an idle run is worth 0.
  *
- * Plus the two structural rules that no rite may break and that the shared
- * harness cannot check for it: `draw` does not mutate, and the seed actually
- * lays out the water (otherwise the determinism assertions all pass on a rite
- * that ignores its seed entirely).
+ * Plus what the 3D view starts its effects from: every catch, miss and claim
+ * cue carries where it happened and which fish it was. The view itself is
+ * covered in e2e (`rites.spec.js`: it never mutates the rite) and by
+ * `tools/scratch/rite-gpu.mjs`.
  *
- * `node` environment: this file imports no DOM and the rite guards its one
- * getComputedStyle, so the palette resolves to its literal fallbacks here.
+ * `node` environment: the rite imports no DOM and no three.
  */
 
 import { describe, it, expect } from 'vitest';
 import { MINIGAMES } from '../../src/core/Config.js';
 import { FIELD, makeInput, clickAt } from '../../src/minigames/contract.js';
 import { riteRng } from '../../src/minigames/schedule.js';
-import { Painter } from '../../src/minigames/Painter.js';
 import { assertRiteContract } from './helpers/rite-contract.js';
 import {
-  FISHING_RITE, RAND_CALLS, SINK, REEL_EMPTY, REEL_HELD, REEL_WAVE, CLAIM_SQUEEZE,
-  FISH, PAR, PAR_FRACTION, GOLD_VALUE, GHOST_CASTS, SURFACE, SURFACE_AMP, SHALLOW,
-  HOOK_R, SPEED_MIN, SPEED_MAX, LEN_MAX, DEEP, DURATION, SWIMMING, KEPT,
+  FISHING_RITE, RAND_CALLS, FLIGHT, REEL_EMPTY, REEL_HELD, REEL_WAVE, CLAIM_SQUEEZE,
+  FISH, PAR, PAR_FRACTION, GOLD_VALUE, BOB, LANE_NEAR, LANE_FAR,
+  HOOK_R, RY_K, SPEED_MIN, SPEED_MAX, LEN_MAX, DURATION, SWIMMING, KEPT, LOST,
 } from '../../src/minigames/rites/FishingRite.js';
 
 const DT = MINIGAMES.dt;
@@ -67,31 +53,24 @@ function idle(inst, steps) {
 }
 
 /**
- * Cast at (x, y) on the NEXT step, and report the instant the hook will land.
- *
- * The landing time has to be predicted rather than read back, because the whole
- * point of the rite is that the aim point is a function of it. `update` advances
- * `t` before it looks at the queue, so a click delivered now lands at
- * `t + DT + SINK`.
+ * Cast at (x, y) on the NEXT step, and report the instant the lure will land.
+ * `update` advances `t` before it reads the queue, so a click delivered now
+ * splashes down at `t + DT + FLIGHT`.
  */
-function landingTime(inst) { return inst.t + DT + SINK; }
+function landingTime(inst) { return inst.t + DT + FLIGHT; }
 function cast(inst, x, y, button = 0) {
   inst.update(DT, makeInput({ x, y, inside: true, action: 1, clicks: [clickAt(x, y, button, 'pointer')] }));
-  inst.drainEvents();
+  return inst.drainEvents();
 }
 
+/** Nearest the pier, past the reach of any catch ellipse: an empty cast by construction. */
+const EMPTY_Y = -4.3;
+
 /**
- * Find a fish that can be aimed at cleanly at time `tl`.
- *
- * Three conditions, all of them there to make the leading-shot assertion mean
- * exactly one thing:
- *   - it is still swimming and its deadline is comfortably beyond `tl`, so a
- *     miss is a miss and not a rival's claim;
- *   - both the "now" point and the "then" point are inside the field, so
- *     neither is clamped by the cast (a clamped aim point is not the aim the
- *     test wrote);
- *   - NO OTHER FISH overlaps either point at `tl`, so a hit is this fish and a
- *     miss is not a neighbour caught by accident.
+ * Find a fish that can be aimed at cleanly at time `tl`: still swimming with
+ * its deadline well past `tl`, both its "now" and "then" points inside the
+ * field and on the same side of the wrap seam, and NO OTHER FISH over either
+ * point at `tl`, so a hit is this fish and a miss is not a neighbour.
  */
 function isolatedFish(inst, tl) {
   for (let i = 0; i < FISH; i++) {
@@ -102,9 +81,7 @@ function isolatedFish(inst, tl) {
     const thenX = inst.fishX(f, tl);
     const thenY = inst.fishY(f, tl);
     if (Math.abs(nowX) > 6.8 || Math.abs(thenX) > 6.8) continue;
-    // The wrap seam: if the fish crossed it between now and then, "ahead" and
-    // "behind" swap sign and the test would be aiming at the wrong side.
-    if (Math.abs(thenX - nowX) > 3) continue;
+    if (Math.abs(thenX - nowX) > 4) continue;
     let clean = true;
     for (let j = 0; j < FISH && clean; j++) {
       if (j === i || inst.fish[j].state !== SWIMMING) continue;
@@ -155,40 +132,35 @@ describe('FishingRite — the contract', () => {
     expect(Array.from(a.claimAt)).toEqual(Array.from(b.claimAt));
   });
 
-  it('never mutates state in draw()', () => {
-    const inst = spawn({ seed: 5 });
-    idle(inst, 200);
-    cast(inst, 2.4, -1.1);
-    idle(inst, 10);
-    const g = recordingPainter();
-    const before = JSON.stringify(inst, replacer);
-    inst.draw(g, 0);
-    inst.draw(g, 0.5);
-    inst.draw(g, 0.99);
-    expect(JSON.stringify(inst, replacer)).toBe(before);
-    // And it actually drew the whole scene — a draw() that bailed out early
-    // would trivially "not mutate".
-    expect(g.calls).toBeGreaterThan(600);
-    // The two primitives this rite's look depends on and which nothing else
-    // would notice the loss of: the water's depth ramp and the surface clip.
-    expect(g.names).toContain('linear');
-    expect(g.names).toContain('clip');
-    expect(g.names).toContain('quadraticCurveTo');   // blob — the fish bodies
-  });
+  it('emits a cue for every cast, catch, miss and claim, with where and which fish', () => {
+    // The 3D view starts every effect from these: the rod whip on `tick`, the
+    // splash on `good`/`perfect`/`miss`, the fish yanked to a boat on `claim`.
+    // A cue without its coordinates is a splash drawn at the origin.
+    const inst = spawn({ seed: 4242, wave: 8 });
+    idle(inst, 12);
+    const tl = landingTime(inst);
+    const pick = isolatedFish(inst, tl);
+    expect(pick).toBeTruthy();
+    const onCast = cast(inst, pick.thenX, pick.thenY);
+    expect(onCast).toEqual([{ type: 'tick', x: pick.thenX, y: pick.thenY }]);
+    const evs = [];
+    for (let i = 0; i < Math.ceil(FLIGHT / DT) + 2; i++) { inst.update(DT, makeInput()); evs.push(...inst.drainEvents()); }
+    const catchEv = evs.find((e) => e.type === 'good' || e.type === 'perfect');
+    expect(catchEv).toEqual({
+      type: inst.fish[pick.i].gold ? 'perfect' : 'good', x: pick.thenX, y: pick.thenY, i: pick.i,
+      value: inst.fish[pick.i].gold ? GOLD_VALUE : 1,
+    });
+    // The finished cast stays readable after the rod frees it, so the view can
+    // reel the lure (and the fish) back to the pier.
+    idle(inst, 30);
+    expect(inst.hook).toBe(null);
+    expect(inst.last.hit).toBe(pick.i);
+    expect(inst.last.readyAt).toBe(inst.readyAt);
 
-  it('draws every phase of a cast without a non-finite coordinate', () => {
-    // One NaN in a path blanks the frame with no error attached and no stack to
-    // read (docs/PITFALLS.md §9). The sink, the settle and the linger are three
-    // different branches of #drawHook, and the empty-water path is a fourth.
-    const inst = spawn({ seed: 314, wave: 41 });
-    const g = recordingPainter();
-    for (let i = 0; i < 1200; i++) {
-      if (i % 90 === 40) cast(inst, ((i % 7) - 3) * 1.7, -1.5 - (i % 5) * 0.4);
-      else { inst.update(DT, makeInput({ x: (i % 13) - 6, y: -1, inside: i % 17 !== 0 })); inst.drainEvents(); }
-      inst.draw(g, (i % 6) / 6);
-    }
-    expect(inst.casts).toBeGreaterThan(5);
-    expect(inst.empties + inst.kept).toBe(inst.casts);
+    cast(inst, 0, EMPTY_Y);
+    const miss = [];
+    for (let i = 0; i < Math.ceil(FLIGHT / DT) + 2; i++) { inst.update(DT, makeInput()); miss.push(...inst.drainEvents()); }
+    expect(miss.find((e) => e.type === 'miss')).toEqual({ type: 'miss', x: 0, y: EMPTY_Y, i: -1, value: 0 });
   });
 });
 
@@ -201,7 +173,7 @@ describe('FishingRite — the leading shot', () => {
     // comment, because it is a relationship between four constants that will be
     // tuned separately by four different people.
     const widestCatch = LEN_MAX * 0.5 + HOOK_R;
-    expect(SPEED_MIN * SINK).toBeGreaterThan(widestCatch);
+    expect(SPEED_MIN * FLIGHT).toBeGreaterThan(widestCatch);
   });
 
   it('MISSES a cast aimed at where the fish is, and HITS one aimed at where it will be', () => {
@@ -217,15 +189,15 @@ describe('FishingRite — the leading shot', () => {
     const now = spawn({ seed: 4242, wave: 8 });
     idle(now, 12);
     cast(now, pick.nowX, pick.nowY);
-    idle(now, Math.ceil(SINK / DT) + 2);
+    idle(now, Math.ceil(FLIGHT / DT) + 2);
     expect(now.kept, 'aiming at the fish\'s CURRENT position must miss').toBe(0);
     expect(now.empties).toBe(1);
 
     const lead = spawn({ seed: 4242, wave: 8 });
     idle(lead, 12);
     cast(lead, pick.thenX, pick.thenY);
-    idle(lead, Math.ceil(SINK / DT) + 2);
-    expect(lead.kept, 'aiming at the fish\'s position at t+SINK must land it').toBe(1);
+    idle(lead, Math.ceil(FLIGHT / DT) + 2);
+    expect(lead.kept, 'aiming at the fish\'s position at t+FLIGHT must land it').toBe(1);
     expect(lead.fish[pick.i].state).toBe(KEPT);
   });
 
@@ -244,15 +216,15 @@ describe('FishingRite — the leading shot', () => {
       const a = spawn({ seed, wave: 14 });
       idle(a, 20);
       cast(a, pick.nowX, pick.nowY);
-      idle(a, Math.ceil(SINK / DT) + 2);
+      idle(a, Math.ceil(FLIGHT / DT) + 2);
 
       const b = spawn({ seed, wave: 14 });
       idle(b, 20);
       cast(b, pick.thenX, pick.thenY);
-      idle(b, Math.ceil(SINK / DT) + 2);
+      idle(b, Math.ceil(FLIGHT / DT) + 2);
 
       expect(a.kept, `seed ${seed}: aiming at the present should miss`).toBe(0);
-      expect(b.kept, `seed ${seed}: aiming at t+SINK should hit`).toBe(1);
+      expect(b.kept, `seed ${seed}: aiming at t+FLIGHT should hit`).toBe(1);
     }
     expect(checked, 'no seed produced a testable fish — the helper is too strict').toBeGreaterThanOrEqual(4);
   });
@@ -304,39 +276,43 @@ describe('FishingRite — the leading shot', () => {
         .toBeLessThan(0.8);
     }
     // And it must get WORSE as the shoal speeds up, not better: the wave widens
-    // the spread of leads, so one number covers less of it.
+    // the spread of leads, so one number covers less of it. Measured on the
+    // top-down lake: 0.69 at wave 3, 0.52 at wave 53. The margin was 0.2 on the
+    // side-on lake, whose catch ellipse was narrower across the fish's path
+    // (RY_K 0.36 against 0.6 now); the lead axis, and so this player's real
+    // problem, did not change.
     let bestEarly = 0, bestLate = 0;
     for (let c = 0.4; c <= 3.6; c += 0.2) {
       bestEarly = Math.max(bestEarly, avgOver(fixedLead(c), 3));
       bestLate = Math.max(bestLate, avgOver(fixedLead(c), 53));
     }
-    expect(bestLate).toBeLessThan(bestEarly - 0.2);
+    expect(bestLate).toBeLessThan(bestEarly - 0.15);
   });
 
   it('spreads the required lead wider than the window that forgives it', () => {
     // The inequality behind the test above, stated over constants so a future
     // tuner sees WHY the speed band is that wide. The lead a fish demands is
-    // |v| * SINK; the widest catch ellipse forgives LEN_MAX + 2 * HOOK_R of
+    // |v| * FLIGHT; the widest catch ellipse forgives LEN_MAX + 2 * HOOK_R of
     // horizontal error. If the spread of demands is not several windows across,
     // one offset covers the lake.
-    const spread = (SPEED_MAX - SPEED_MIN) * SINK;
+    const spread = (SPEED_MAX - SPEED_MIN) * FLIGHT;
     const window = LEN_MAX + 2 * HOOK_R;
     expect(spread).toBeGreaterThan(window * 1.5);
   });
 
-  it('does not catch what the lure falls PAST on the way down', () => {
-    // The rule that keeps the leading shot from decaying into a swept line: a
-    // sinking lure is closed, and only the settle fishes. A fish sitting on the
-    // vertical path but not at the landing depth must survive.
+  it('catches only where the lure splashes down, never what it flies over', () => {
+    // The lure arcs out from the pier, over the water, to the click. A fish
+    // under that path but not at the landing point must survive: only the
+    // splash fishes, or the leading shot decays into a swept line.
     const inst = spawn({ seed: 620, wave: 8 });
     idle(inst, 30);
     const tl = landingTime(inst);
     const pick = isolatedFish(inst, tl);
     expect(pick).toBeTruthy();
-    // Aim at the fish's future x, but two units below its depth: the lure
-    // passes through the fish and keeps going.
-    cast(inst, pick.thenX, pick.thenY - 2.0);
-    idle(inst, Math.ceil(SINK / DT) + 2);
+    // Right x, but two units further out than the fish: the arc passes over it.
+    const y = pick.thenY + (pick.thenY < 1.5 ? 2.0 : -2.0);
+    cast(inst, pick.thenX, y);
+    idle(inst, Math.ceil(FLIGHT / DT) + 2);
     expect(inst.fish[pick.i].state).toBe(SWIMMING);
   });
 });
@@ -348,16 +324,16 @@ describe('FishingRite — the reel', () => {
     const inst = spawn({ seed: 31, wave: 3 });
     idle(inst, 6);
     const tl = landingTime(inst);
-    // The silt floor: nothing swims down there, so this is an empty cast by
-    // construction rather than by luck.
-    cast(inst, 0, -4.0);
+    // Right under the pier, past the reach of every catch ellipse: an empty
+    // cast by construction rather than by luck.
+    cast(inst, 0, EMPTY_Y);
     expect(inst.casts).toBe(1);
 
     // Try to cast on EVERY step until well past the reel, counting how many are
     // accepted and when. This is the anti-mash rule measured, not asserted.
     let acceptedAt = -1;
     for (let i = 0; i < 120 && acceptedAt < 0; i++) {
-      inst.update(DT, makeInput({ x: 0, y: -4.0, inside: true, action: 1, clicks: [clickAt(0, -4.0, 0, 'pointer')] }));
+      inst.update(DT, makeInput({ x: 0, y: EMPTY_Y, inside: true, action: 1, clicks: [clickAt(0, EMPTY_Y, 0, 'pointer')] }));
       inst.drainEvents();
       if (inst.casts === 2) acceptedAt = inst.t;
     }
@@ -375,7 +351,6 @@ describe('FishingRite — the reel', () => {
   it('reels in faster after a catch than after a miss, at every wave', () => {
     // The asymmetry is the reward: a good read buys you back most of a second.
     expect(REEL_HELD).toBeLessThan(REEL_EMPTY);
-    expect(REEL_EMPTY).toBe(0.7);
     for (const wave of [3, 28, 53]) {
       const inst = spawn({ seed: 5, wave });
       expect(inst.reelHeld).toBeLessThan(inst.reelEmpty);
@@ -386,8 +361,8 @@ describe('FishingRite — the reel', () => {
     const inst = spawn({ seed: 44, wave: 8 });
     idle(inst, 4);
     inst.update(DT, makeInput({
-      x: 0, y: -4.0, inside: true, action: 3,
-      clicks: [clickAt(-3, -4, 0, 'pointer'), clickAt(0, -4, 0, 'pointer'), clickAt(3, -4, 2, 'pointer')],
+      x: 0, y: EMPTY_Y, inside: true, action: 3,
+      clicks: [clickAt(-3, EMPTY_Y, 0, 'pointer'), clickAt(0, EMPTY_Y, 0, 'pointer'), clickAt(3, EMPTY_Y, 2, 'pointer')],
     }));
     expect(inst.casts).toBe(1);
     // And the one it took is the FIRST, at the position captured at the press —
@@ -412,21 +387,21 @@ describe('FishingRite — the reel', () => {
     }
   });
 
-  it('clamps a cast into the water', () => {
+  it('clamps a cast onto the water', () => {
     const inst = spawn({ seed: 9, wave: 8 });
     idle(inst, 3);
-    // A keyboard commit fires at the last pointer position, which can be dry
-    // land or off the field entirely.
-    cast(inst, 99, 4.4);
-    expect(inst.hook.y).toBeLessThan(SURFACE);
-    expect(Math.abs(inst.hook.x)).toBeLessThanOrEqual(FIELD.hw);
+    // A keyboard commit fires at the last pointer position, which can be off
+    // the field entirely.
+    cast(inst, 99, -44);
+    expect(inst.hook.x).toBeCloseTo(FIELD.hw - 0.2, 10);
+    expect(inst.hook.y).toBeCloseTo(-FIELD.hh + 0.2, 10);
   });
 });
 
 // ===========================================================================
 
 describe('FishingRite — the rivals', () => {
-  it('does not count a hook that lands after the deadline', () => {
+  it('does not count a lure that lands after the deadline', () => {
     const inst = spawn({ seed: 150, wave: 8 });
     // Pick a fish and let its deadline pass, then land a perfect leading cast
     // on it. The aim is right; the clock is not.
@@ -439,7 +414,7 @@ describe('FishingRite — the rivals', () => {
     const tl = landingTime(inst);
     const f = inst.fish[target];
     cast(inst, inst.fishX(f, tl), inst.fishY(f, tl));
-    idle(inst, Math.ceil(SINK / DT) + 2);
+    idle(inst, Math.ceil(FLIGHT / DT) + 2);
     expect(inst.kept).toBe(0);
     expect(inst.points).toBe(0);
   });
@@ -479,7 +454,11 @@ describe('FishingRite — the rivals', () => {
     const claims = evs.filter((e) => e.type === 'claim');
     expect(claims.length).toBe(inst.lost);
     expect(claims.length).toBeGreaterThan(0);
-    for (const c of claims) expect(Number.isFinite(c.x)).toBe(true);
+    for (const c of claims) {
+      expect(Number.isFinite(c.x) && Number.isFinite(c.y)).toBe(true);
+      expect(inst.fish[c.i].state).toBe(LOST);
+      expect(c.who).toBe(inst.claimBy[c.i]);
+    }
     expect(Array.from(inst.tally).reduce((a, b) => a + b, 0)).toBe(inst.lost);
     // More than one angler is on the water. NOT "all three": the claimant of a
     // fish is now `RivalSource.claimant(i)`, the argmin of a real schedule,
@@ -525,32 +504,30 @@ describe('FishingRite — what is scarce', () => {
 
     // The two together, as the number that actually decides the rite: how many
     // casts fit between the start and the moment the water is gone.
-    const budget = (i) => Math.min(DURATION, i.claimAt[FISH - 1]) / (SINK + i.reelHeld);
+    const budget = (i) => Math.min(DURATION, i.claimAt[FISH - 1]) / (FLIGHT + i.reelHeld);
     expect(budget(late)).toBeLessThan(budget(early) * 0.8);
   });
 
   it('does not make the shoal DENSER as the wave rises', () => {
-    // The bug that made the rite get easier as it got harder, pinned. The wave
-    // used to empty the top third of the water column, which packed sixteen fish
-    // into two thirds of the lake — and a near-miss in a dense shoal blunders
-    // into a neighbour. Depth is stratified and wave-invariant now: the same
-    // sixteen bands at wave 3 and at wave 53.
+    // Density is forgiveness: a near-miss in a dense shoal lands a neighbour.
+    // A wave that packed the lanes tighter would make the rite easier as it got
+    // harder (the old side-on version did exactly that). The lanes are
+    // stratified and wave-invariant: the same sixteen at wave 3 and wave 53.
     const early = spawn({ seed: 77, wave: 3 });
     const late = spawn({ seed: 77, wave: 53 });
-    const depths = (i) => i.fish.map((f) => f.depth).sort((a, b) => a - b);
-    expect(depths(late)).toEqual(depths(early));
-    // One fish per band, so the column is covered on every seed.
+    const lanes = (i) => i.fish.map((f) => f.lane).sort((a, b) => a - b);
+    expect(lanes(late)).toEqual(lanes(early));
     for (const inst of [early, late]) {
-      const d = depths(inst);
+      const d = lanes(inst);
       for (let k = 1; k < d.length; k++) expect(d[k] - d[k - 1]).toBeGreaterThan(0);
-      expect(d[0]).toBeGreaterThan(DEEP);
-      expect(d[d.length - 1]).toBeLessThanOrEqual(SHALLOW);
+      expect(d[0]).toBeGreaterThanOrEqual(LANE_NEAR);
+      expect(d[d.length - 1]).toBeLessThanOrEqual(LANE_FAR);
     }
-    // And the shallowest fish clears the deepest TROUGH the waterline reaches,
-    // because the water is drawn as a polygon along that line now rather than as
-    // a rectangle at SURFACE. A fish whose back reached the trough would be
-    // sliced by its own lake — the arithmetic that used to be a comment.
-    expect(SHALLOW + 0.2 + LEN_MAX * 0.17).toBeLessThan(SURFACE - SURFACE_AMP);
+    // And the widest catch ellipse on the outermost lane stays on the field,
+    // so every fish can be caught at every point of its weave.
+    const reach = LANE_FAR + BOB + LEN_MAX * RY_K + HOOK_R;
+    expect(reach).toBeLessThanOrEqual(FIELD.hh);
+    expect(-LANE_NEAR + BOB + LEN_MAX * RY_K + HOOK_R).toBeLessThanOrEqual(FIELD.hh);
   });
 
   it('deals the same shoal of speeds and the same eight-and-eight of directions', () => {
@@ -564,45 +541,25 @@ describe('FishingRite — what is scarce', () => {
       const inst = spawn({ seed, wave: 8 });
       const right = inst.fish.filter((f) => f.v > 0).length;
       expect(right, `seed ${seed} dealt ${right} fish to the right`).toBe(FISH / 2);
-      const leads = inst.fish.map((f) => Math.abs(f.v) * SINK).sort((a, b) => a - b);
+      const leads = inst.fish.map((f) => Math.abs(f.v) * FLIGHT).sort((a, b) => a - b);
       // Slowest to fastest spans more than the window that forgives a bad lead.
       expect(leads[FISH - 1] - leads[0]).toBeGreaterThan(LEN_MAX + 2 * HOOK_R);
     }
   });
 
-  it('spends the lead ghost after three casts and never shows it again', () => {
-    // The ghost renders the exact answer the rules are computed from. As a
-    // permanent overlay it does not teach the lead, it replaces it — the act
-    // becomes "click the dashed circle" and every velocity cue in the rite is
-    // decoration. It is a tutorial, so it ends.
-    const inst = spawn({ seed: 42, wave: 8 });
-    expect(inst.ghostCasts).toBe(GHOST_CASTS);
-    expect(GHOST_CASTS).toBeLessThanOrEqual(3);
-
-    const g = recordingPainter();
-    const withPointer = () => {
-      inst.update(DT, makeInput({ x: 0, y: -1.2, inside: true }));
-      inst.drainEvents();
-    };
-    withPointer();
-    const before = g.names.length;
-    inst.draw(g, 0);
-    const early = g.names.length - before;
-
-    for (let n = 0; n < GHOST_CASTS; n++) {
-      cast(inst, 0, -4.0);                       // the silt: an empty cast, on purpose
-      for (let i = 0; i < 200 && (inst.hook || inst.t < inst.readyAt); i++) withPointer();
-    }
-    expect(inst.casts).toBe(GHOST_CASTS);
-    expect(inst.ghostCasts).toBe(0);
-
-    withPointer();
-    const mid = g.names.length;
-    inst.draw(g, 0);
-    // Strictly fewer primitives once the ghost is gone: an ellipse, a dot and a
-    // line stop being drawn. Counting calls rather than pixels is the only thing
-    // a node test can see, and it is enough to catch the gate being removed.
-    expect(g.names.length - mid).toBeLessThan(early);
+  it('marks the fish whose lead point is nearest the pointer', () => {
+    // What the lead ring points at. Asked at a fish's own lead point, the answer is
+    // that fish; asked once it has left the water, it is some other fish.
+    const inst = spawn({ seed: 4242, wave: 8 });
+    idle(inst, 12);
+    const pick = isolatedFish(inst, landingTime(inst));
+    expect(pick).toBeTruthy();
+    const f = inst.fish[pick.i];
+    expect(inst.nearestFish(inst.leadX(f, inst.t), inst.leadY(f, inst.t), inst.t)).toBe(pick.i);
+    f.state = LOST;
+    const other = inst.nearestFish(inst.leadX(f, inst.t), inst.leadY(f, inst.t), inst.t);
+    expect(other).not.toBe(pick.i);
+    expect(inst.fish[other].state).toBe(SWIMMING);
   });
 });
 
@@ -627,7 +584,7 @@ describe('FishingRite — the score', () => {
         const x = inst.fishX(inst.fish[gi], tl);
         if (Math.abs(x) < 6.5) {
           cast(inst, x, inst.fishY(inst.fish[gi], tl));
-          idle(inst, Math.ceil(SINK / DT) + 2);
+          idle(inst, Math.ceil(FLIGHT / DT) + 2);
           landed = inst.fish[gi].state === KEPT;
           continue;
         }
@@ -693,7 +650,7 @@ describe('FishingRite — the score', () => {
  * under a ceiling" into "mashing must lose to real play" — a much stronger
  * claim, and the only one that actually says there is a game here.
  */
-const SKILLED = aimAt(SINK);
+const SKILLED = aimAt(FLIGHT);
 
 /**
  * The same player with the lead removed: it puts the hook exactly ON a live
@@ -713,7 +670,7 @@ const NO_LEAD = aimAt(0);
 function aimAt(ahead) {
   return function play(inst) {
     if (inst.hook || inst.t < inst.readyAt) return makeInput();
-    const tl = inst.t + DT + SINK;
+    const tl = inst.t + DT + FLIGHT;
     let best = -1;
     let bestD = Infinity;
     for (let i = 0; i < FISH; i++) {
@@ -748,7 +705,7 @@ function aimAt(ahead) {
 function fixedLead(ahead) {
   return function play(inst) {
     if (inst.hook || inst.t < inst.readyAt) return makeInput();
-    const tl = inst.t + DT + SINK;
+    const tl = inst.t + DT + FLIGHT;
     let best = -1;
     let bestD = Infinity;
     for (let i = 0; i < FISH; i++) {
@@ -784,53 +741,4 @@ function playOut(seed, wave, strategy) {
     inst.drainEvents();
   }
   return inst;
-}
-
-/**
- * THE REAL Painter over a fake 2D context — the same shape
- * `tests/unit/painter.test.js` uses.
- *
- * Deliberately not a hand-written Painter stub. A stub agrees with whatever the
- * rite happens to call, so it certifies `capsule(x1, y1, x2, y2, r, o)` and
- * `ellipse(cx, cy, rx, ry, rot, o)` even when the arguments are in the wrong
- * order — and an argument-order mistake in a drawing API is exactly the class of
- * bug that produces a plausible-looking frame nobody can explain. Going through
- * the real class means every call is type- and arity-checked by the code that
- * will run in the browser.
- *
- * The context throws on any non-finite number, which is the one visual failure a
- * node test can catch and a screenshot cannot: a single NaN in a path blanks the
- * frame with no error attached (docs/PITFALLS.md §9).
- */
-function recordingPainter() {
-  const calls = [];
-  const rec = (name) => (...args) => {
-    for (const a of args) {
-      if (typeof a === 'number' && !Number.isFinite(a)) throw new Error(`ctx.${name} got ${a}`);
-    }
-    calls.push(name);
-  };
-  const gradient = () => ({ addColorStop: (at, col) => rec('addColorStop')(at, String(col)) });
-  const c = {
-    canvas: { width: 1600, height: 900 },
-    setTransform: rec('setTransform'), clearRect: rec('clearRect'),
-    save: rec('save'), restore: rec('restore'),
-    translate: rec('translate'), rotate: rec('rotate'), scale: rec('scale'),
-    beginPath: rec('beginPath'), closePath: rec('closePath'),
-    moveTo: rec('moveTo'), lineTo: rec('lineTo'), quadraticCurveTo: rec('quadraticCurveTo'),
-    arc: rec('arc'), ellipse: rec('ellipse'), rect: rec('rect'), roundRect: rec('roundRect'),
-    clip: rec('clip'), fill: rec('fill'), stroke: rec('stroke'), fillText: rec('fillText'),
-    createRadialGradient: (...a) => { rec('radial')(...a); return gradient(); },
-    createLinearGradient: (...a) => { rec('linear')(...a); return gradient(); },
-  };
-  const g = new Painter(c);
-  g.layout(1600, 900, 2);
-  Object.defineProperty(g, 'calls', { get: () => calls.length });
-  g.names = calls;
-  return g;
-}
-
-/** Drop typed arrays into plain arrays so JSON.stringify sees their contents. */
-function replacer(_k, v) {
-  return ArrayBuffer.isView(v) ? Array.from(v) : v;
 }

@@ -205,6 +205,33 @@ test.describe('the lottery', () => {
     expect(errors).toEqual([]);
   });
 
+  test('mashing Space through the draw does not send the next wave', async ({ page }) => {
+    const { errors } = await startRun(page, { gold: 20000, freeze: false });
+    await prep(page, { wave: 30, gold: 20000 });
+    await host(page, () => window.__game.lottery.devOpen(30));
+    await page.waitForSelector('#lotdraw.open');
+
+    const after = await host(page, () => {
+      const fire = (type, repeat = false) => document.dispatchEvent(
+        new KeyboardEvent(type, { code: 'Space', key: ' ', repeat, bubbles: true, cancelable: true }));
+      for (let i = 0; i < 6; i++) { fire('keydown'); fire('keyup'); }
+      fire('keydown');
+      for (let i = 0; i < 10; i++) fire('keydown', true);
+      fire('keyup');
+      const g = window.__game;
+      return { open: g.lottery.isOpen, phase: g.state.phase, wave: g.state.wave };
+    });
+    expect(after.open).toBe(false);
+    expect(after.phase, 'the mash leaked into the board and sent a wave').toBe('prep');
+
+    await page.waitForTimeout(600);
+    await page.keyboard.press('Space');
+    const sent = await host(page, () => window.__game.state);
+    expect(sent.phase, 'a deliberate Space after the draw still sends the wave').toBe('combat');
+    expect(sent.wave).toBe(after.wave + 1);
+    expect(errors).toEqual([]);
+  });
+
   test('Escape resolves immediately and pays exactly what the seed decided', async ({ page }) => {
     const { errors } = await startRun(page, { gold: 20000 });
     const gold0 = await host(page, () => window.__game.state.gold);

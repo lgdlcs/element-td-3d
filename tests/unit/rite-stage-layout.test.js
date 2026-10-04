@@ -2,9 +2,14 @@
  * THE STAGE IS THE FIELD — A LAYOUT INVARIANT, TESTED.
  * ===========================================================================
  *
+ * The rites are drawn in 3D now and the 2D Painter named below is gone, but
+ * the invariant still matters: every view frames the 16x9 FIELD with
+ * `frameField`, so a stage that is not 16:9 spends its slack on scenery beyond
+ * the field instead of on a bigger field. The history is kept as written.
+ *
  * WHAT WENT WRONG, AND WHY NOTHING CAUGHT IT.
  *
- * `Painter.layout` letterboxes contract.js's fixed 16x9 FIELD into the canvas:
+ * `Painter.layout` letterboxed contract.js's fixed 16x9 FIELD into the canvas:
  * `ppu = min(cssW / 16, cssH / 9)`. That is correct code and it was doing its
  * job perfectly. The defect was one rule above it: `.rite-stage` declared
  * `aspect-ratio: 16 / 9` AND `width: 100%` AND `max-height: 56vh`. Those three
@@ -165,19 +170,19 @@ const RULES = parseRules(CSS);
 /**
  * Does a `@media` prelude apply at this viewport?
  *
- * Only `max-width` is evaluated. `prefers-reduced-motion` is a USER setting
+ * Only `max-width` and `max-height` are evaluated. `prefers-reduced-motion` is a USER setting
  * rather than a viewport, and the block it guards sets animations only — it
  * cannot move a box — so it is treated as not applying rather than throwing.
  * Anything else throws by name: a media query this cannot read would otherwise
  * be silently ignored, and a silently ignored rule is how the defect this file
  * exists for got in.
  */
-function mediaApplies(media, vw) {
+function mediaApplies(media, vw, vh) {
   if (!media) return true;
   if (/prefers-reduced-motion/.test(media)) return false;
-  const m = media.match(/\(\s*max-width\s*:\s*([\d.]+)px\s*\)/);
+  const m = media.match(/^\(\s*max-(width|height)\s*:\s*([\d.]+)px\s*\)$/);
   if (!m) throw new Error(`unsupported media query: ${media}`);
-  return vw <= Number(m[1]);
+  return (m[1] === 'width' ? vw : vh) <= Number(m[2]);
 }
 
 /**
@@ -185,11 +190,11 @@ function mediaApplies(media, vw) {
  * Last matching declaration wins, which is right here because every rule in
  * this sheet that touches these properties has the same specificity.
  */
-function declared(selector, prop, vw) {
+function declared(selector, prop, vw, vh) {
   let v;
   for (const r of RULES) {
     if (r.selector !== selector) continue;
-    if (!mediaApplies(r.media, vw)) continue;
+    if (!mediaApplies(r.media, vw, vh)) continue;
     if (r.decls[prop] !== undefined) v = r.decls[prop];
   }
   return v;
@@ -334,17 +339,17 @@ function stageBox(vw, vh) {
   // from it, which is the structural half of the fix: one number, two users.
   const budgetVars = {};
   for (const r of RULES) {
-    if (r.selector !== '#rite' || !mediaApplies(r.media, vw)) continue;
+    if (r.selector !== '#rite' || !mediaApplies(r.media, vw, vh)) continue;
     for (const [k, v] of Object.entries(r.decls)) if (k.startsWith('--')) budgetVars[k] = v;
   }
   require_(budgetVars['--rite-stage-h'], '--rite-stage-h on #rite');
 
   // --- the shell, which is the stage's containing block ---
   const shellW = evalLength(
-    require_(declared('.rite-shell', 'width', vw), '.rite-shell width'),
+    require_(declared('.rite-shell', 'width', vw, vh), '.rite-shell width'),
     { vw, vh, vars: budgetVars });
-  const shellPad = padX(require_(declared('.rite-shell', 'padding', vw), '.rite-shell padding'));
-  const shellBorder = parseFloat(require_(declared('.rite-shell', 'border', vw), '.rite-shell border'));
+  const shellPad = padX(require_(declared('.rite-shell', 'padding', vw, vh), '.rite-shell padding'));
+  const shellBorder = parseFloat(require_(declared('.rite-shell', 'border', vw, vh), '.rite-shell border'));
   // border-box (global reset): the declared width includes border and padding.
   const inner = shellW - 2 * shellBorder
     - evalLength(shellPad.left, { vw, vh }) - evalLength(shellPad.right, { vw, vh });
@@ -352,23 +357,23 @@ function stageBox(vw, vh) {
   // --- the stage ---
   const vars = { ...budgetVars };
   for (const r of RULES) {
-    if (r.selector !== '.rite-stage' || !mediaApplies(r.media, vw)) continue;
+    if (r.selector !== '.rite-stage' || !mediaApplies(r.media, vw, vh)) continue;
     for (const [k, v] of Object.entries(r.decls)) if (k.startsWith('--')) vars[k] = v;
   }
-  const border = parseFloat(require_(declared('.rite-stage', 'border', vw), '.rite-stage border'));
-  const contentBox = declared('.rite-stage', 'box-sizing', vw) === 'content-box';
+  const border = parseFloat(require_(declared('.rite-stage', 'border', vw, vh), '.rite-stage border'));
+  const contentBox = declared('.rite-stage', 'box-sizing', vw, vh) === 'content-box';
   // The percentage base for a child's width is the containing block's CONTENT
   // width, whatever box-sizing the child itself uses.
   const ctx = { vw, vh, pct: inner, vars };
 
-  const ratio = require_(declared('.rite-stage', 'aspect-ratio', vw), '.rite-stage aspect-ratio')
+  const ratio = require_(declared('.rite-stage', 'aspect-ratio', vw, vh), '.rite-stage aspect-ratio')
     .split('/').map(Number);
 
   const chrome = contentBox ? 0 : 2 * border;
-  let w = evalLength(require_(declared('.rite-stage', 'width', vw), '.rite-stage width'), ctx) - chrome;
+  let w = evalLength(require_(declared('.rite-stage', 'width', vw, vh), '.rite-stage width'), ctx) - chrome;
   let h = w * (ratio[1] / ratio[0]);
 
-  const maxH = declared('.rite-stage', 'max-height', vw);
+  const maxH = declared('.rite-stage', 'max-height', vw, vh);
   if (maxH !== undefined) {
     // max-height applies to the same box aspect-ratio does, so it is compared
     // in the same terms and then converted back to a content height.
@@ -378,7 +383,7 @@ function stageBox(vw, vh) {
   return { w, h, shellW, inner, budget: evalLength(budgetVars['--rite-stage-h'], { vw, vh }) };
 }
 
-/** What Painter.layout would do with that box. */
+/** The largest FIELD-shaped rectangle that fits in that box. */
 function letterbox(box) {
   const ppu = Math.min(box.w / FIELD.w, box.h / FIELD.h);
   return { ppu, fieldW: ppu * FIELD.w, fieldH: ppu * FIELD.h };
@@ -401,6 +406,7 @@ const VIEWPORTS = [
   { w: 900, h: 900 },
   { w: 700, h: 900 },
   { w: 2560, h: 1000 },
+  { w: 844, h: 390 },
 ];
 
 function report(vp, box, lb) {
@@ -428,9 +434,9 @@ describe('the rite stage is the field', () => {
         failures.push(report(vp, box, lb));
       }
     }
-    expect(failures, `Painter.layout letterboxes contract.js FIELD (${FIELD.w}x${FIELD.h}) `
-      + `into the stage, so any stage that is not ${FIELD.w}:${FIELD.h} is surface no rite `
-      + `can paint into. Dead bars found:\n  ` + failures.join('\n  ')).toEqual([]);
+    expect(failures, `Every view frames contract.js FIELD (${FIELD.w}x${FIELD.h}) into the `
+      + `stage, so any stage that is not ${FIELD.w}:${FIELD.h} is surface the field does not `
+      + `fill. Dead bars found:\n  ` + failures.join('\n  ')).toEqual([]);
   });
 
   it('the stage box is 16:9 to within a rounding error, everywhere', () => {
@@ -449,8 +455,8 @@ describe('the rite stage is the field', () => {
   it('the stage never overflows the shell or the height budget', () => {
     for (const vp of VIEWPORTS) {
       const box = stageBox(vp.w, vp.h);
-      const border = parseFloat(declared('.rite-stage', 'border', vp.w));
-      const contentBox = declared('.rite-stage', 'box-sizing', vp.w) === 'content-box';
+      const border = parseFloat(declared('.rite-stage', 'border', vp.w, vp.h));
+      const contentBox = declared('.rite-stage', 'box-sizing', vp.w, vp.h) === 'content-box';
       const outerW = box.w + (contentBox ? 2 * border : 0);
       const outerH = box.h + (contentBox ? 2 * border : 0);
       expect(outerW, `${vp.w}x${vp.h}: stage ${outerW.toFixed(1)}px wide overflows the `
@@ -472,7 +478,7 @@ describe('the rite stage is the field', () => {
     // cannot refer to them, so the arithmetic is checked here instead.
     for (const vp of VIEWPORTS) {
       const box = stageBox(vp.w, vp.h);
-      const border = parseFloat(declared('.rite-stage', 'border', vp.w));
+      const border = parseFloat(declared('.rite-stage', 'border', vp.w, vp.h));
       const outerW = box.w + 2 * border;
       const slack = box.inner - outerW;
       expect(slack, `${vp.w}x${vp.h}: ${slack.toFixed(1)}px of empty shell either side of `
@@ -491,8 +497,8 @@ describe('the rite stage is the field', () => {
     // width is computed from it. If someone re-introduces a literal width or a
     // literal max-height, they have re-introduced the ability to disagree even
     // if today's numbers happen to line up.
-    const width = require_(declared('.rite-stage', 'width', 1600), '.rite-stage width');
-    const maxH = declared('.rite-stage', 'max-height', 1600);
+    const width = require_(declared('.rite-stage', 'width', 1600, 900), '.rite-stage width');
+    const maxH = declared('.rite-stage', 'max-height', 1600, 900);
     expect(width, 'the stage width must be capped by the height budget, not stated '
       + 'independently of it').toMatch(/var\(--rite-stage-h\)/);
     expect(maxH, 'max-height must reference the same budget the width is derived from')
@@ -519,7 +525,7 @@ describe('the rite stage is the field', () => {
     // comes out (16:9 minus 2px) by (16:9 minus 2px) — not 16:9. Sub-pixel,
     // silent, and the same bug.
     expect(
-      declared('.rite-stage', 'box-sizing', 1600),
+      declared('.rite-stage', 'box-sizing', 1600, 900),
       'the stage must be content-box so that aspect-ratio shapes the CONTENT '
       + 'area, which is exactly the canvas',
     ).toBe('content-box');

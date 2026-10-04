@@ -227,6 +227,7 @@ export class DevPanel {
         <select id="dev-rite">${MINIGAME_IDS.map((id) =>
           `<option value="${id}">${RITES[id].name}</option>`).join('')}</select>
         <button data-act="rite">Lancer</button>
+        <button data-act="sandbox" title="rites.html, sans le plateau">Bac à sable</button>
       </div>
 
       <div class="dev-row">
@@ -366,6 +367,7 @@ export class DevPanel {
       case 'wavego':     this.jumpToWave(Number(this.$wave.value)); break;
       case 'killall':    this.killAll(); break;
       case 'rite':       this.rite(this.$rite.value, Number(this.$wave.value)); break;
+      case 'sandbox':    this.sandbox(this.$rite.value, Number(this.$wave.value)); break;
       case 'lottery':    this.lottery(Number(this.$wave.value)); break;
       default: break;
     }
@@ -468,6 +470,12 @@ export class DevPanel {
     const wave = Math.max(1, Math.min(TOTAL_WAVES, Math.round(n) || 1));
     const ok = this.game.startMinigame(id, wave, Math.max(0, riteOccurrence(wave - 1)));
     this.#status(ok ? `rite « ${id} » — vague ${wave}` : `rite « ${id} » refusé`);
+  }
+
+  /** The same rite, wave and seed in the board-free sandbox (src/dev/RiteSandbox.js), in a new tab. */
+  sandbox(id, n) {
+    const wave = Math.max(1, Math.min(TOTAL_WAVES, Math.round(n) || 1));
+    window.open(`/rites.html?rite=${id}&wave=${wave}&seed=${this.game.seed}`, '_blank');
   }
 
   /**

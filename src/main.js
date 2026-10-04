@@ -253,12 +253,16 @@ async function start() {
     // the REAL wall-clock interval between presented frames — the same quantity
     // the player experiences — not a simulation step that may be clamped or
     // sub-stepped.
-    game.pipeline.adaptive?.update(dt);
+    // Not while a 3D rite owns the frame: the board is not rendering, so the
+    // frame time measures the rite's stage, and reading it as evidence about
+    // the board would move the board's resolution for nothing.
+    const boardRendered = !game.minigames.ownsFrame;
+    if (boardRendered) game.pipeline.adaptive?.update(dt);
     // AFTER the resolution controller, and fed the same real wall-clock
     // interval: the governor's first question is whether resolution has already
     // been spent, and asking that before the controller has had its turn on
     // this frame reads a stale answer.
-    governor.update(dt);
+    if (boardRendered) governor.update(dt);
     if (settings.open) settingsTick(now);
     // NetClient throttles this to ~2 Hz internally and no-ops when offline, which
     // is exactly why it is safe to call from here: the frame loop should not have

@@ -4,7 +4,7 @@
  *
  * Wave 0 put each rite's palette in `src/ui/minigames.css` as
  * `#rite[data-rite="x"] { --rite-accent: … }`. A rite has NO DOM by design — it
- * is handed a Painter and nothing else — so every rite read its colours with the
+ * was then handed a 2D Painter and nothing else — so every rite read its colours with the
  * `Lottery.js#readPalette` pattern, off `document.documentElement`. Those
  * properties are scoped to the `#rite` element, so every one of those lookups
  * missed and the literal fallback in the JS is what actually painted. Four of
@@ -40,10 +40,8 @@ import { resolve } from 'node:path';
 import { FIELD } from '../../src/minigames/contract.js';
 import { riteRng } from '../../src/minigames/schedule.js';
 import { HEAVEN_RITE } from '../../src/minigames/rites/HeavenRite.js';
-import { PLATFORMS_RITE } from '../../src/minigames/rites/PlatformsRite.js';
-import { OFFROAD_RITE } from '../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../src/minigames/rites/HuntRite.js';
-import { FISHING_RITE } from '../../src/minigames/rites/FishingRite.js';
+import { readPalette as readHuntPalette } from '../../src/minigames/rites/HuntPalette.js';
 
 /**
  * Paths are resolved from the project root, not from `import.meta.url`: this
@@ -61,12 +59,6 @@ function spawn(def, { wave = 8, seed = 5 } = {}) {
     wave, width: FIELD.w, height: FIELD.h, quality: 'high',
   });
   return inst;
-}
-
-/** `#rrggbb` -> `'r,g,b'`, matching what the rites hand to Painter.halo. */
-function chan(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 }
 
 /**
@@ -90,6 +82,10 @@ function declared(name) {
  * Deliberately a data table rather than five near-identical tests: the point is
  * that all six rites obey ONE rule, and a table makes a rite that quietly opts
  * out show up as a missing row rather than as a test nobody wrote.
+ *
+ * A rite drawn by a 3D view has no row: its logic paints nothing, and the view
+ * that reads the token imports three.js, which this file cannot load
+ * (docs/MINIGAMES.md §8.1 rule 8). `luckyshot` never had one.
  */
 const CASES = [
   {
@@ -99,55 +95,12 @@ const CASES = [
     read: (i) => i._palette.accent,
   },
   {
-    def: PLATFORMS_RITE,
-    token: '--rite-platforms-accent',
-    probe: '#234567',
-    read: (i) => i.palette.accent,
-  },
-  {
-    def: OFFROAD_RITE,
-    token: '--rite-offroad-accent',
-    probe: '#345678',
-    read: (i) => i._pal.c.accent,
-  },
-  {
+    // The 3D hunt's VIEW paints (the logic paints nothing). It reads its
+    // colours through HuntPalette.js, the three-free reader this row calls.
     def: HUNT_RITE,
     token: '--rite-hunt-accent',
     probe: '#456789',
-    read: (i) => i.forest.rim,
-  },
-  {
-    def: HUNT_RITE,
-    token: '--rite-hunt-canopy-far',
-    probe: '#0a0b0c',
-    read: (i) => i.forest.canopyFar,
-  },
-  {
-    def: HUNT_RITE,
-    token: '--rite-hunt-floor',
-    probe: '#0d0e0f',
-    read: (i) => i.forest.floor,
-  },
-  {
-    def: FISHING_RITE,
-    token: '--rite-fishing-accent',
-    probe: '#56789a',
-    read: (i) => i.pal.rAccent,
-    map: chan,
-  },
-  {
-    def: FISHING_RITE,
-    token: '--rite-fishing-deep',
-    probe: '#010203',
-    read: (i) => i.pal.rDeep,
-    map: chan,
-  },
-  {
-    def: FISHING_RITE,
-    token: '--rite-fishing-shelf',
-    probe: '#040506',
-    read: (i) => i.pal.rShelf,
-    map: chan,
+    read: () => readHuntPalette().accent,
   },
 ];
 
@@ -170,10 +123,7 @@ describe('per-rite theme tokens resolve on :root', () => {
     // stage in it. Poisoning the name at the root must move nothing.
     document.documentElement.style.setProperty('--rite-accent', '#ff00ff');
     expect(spawn(HEAVEN_RITE)._palette.accent).not.toBe('#ff00ff');
-    expect(spawn(PLATFORMS_RITE).palette.accent).not.toBe('#ff00ff');
-    expect(spawn(OFFROAD_RITE)._pal.c.accent).not.toBe('#ff00ff');
-    expect(spawn(HUNT_RITE).forest.rim).not.toBe('#ff00ff');
-    expect(spawn(FISHING_RITE).pal.rAccent).not.toBe(chan('#ff00ff'));
+    expect(readHuntPalette().accent).not.toBe('#ff00ff');
   });
 });
 
@@ -237,13 +187,4 @@ describe('the values that deliberately stay literal', () => {
     expect(spawn(HEAVEN_RITE)._palette.accent).toBe('#ff4fd8');
   });
 
-  it("luckyshot's booth ink has no token because a gradient stop is not one", () => {
-    // The stage backdrop is `--rite-stage-bg`, a multi-stop gradient on `#rite`.
-    // A canvas cannot resolve a gradient, so the dark end of it is tracked by
-    // hand in the rite. Named rather than scattered, which is what keeps it one
-    // exception instead of four literals.
-    const js = src('src/minigames/rites/LuckyShotRite.js');
-    expect(js).toContain("const BOOTH_INK = '#0b0806';");
-    expect(CSS).toContain('#0a0806');   // the gradient stop it tracks, still there
-  });
 });

@@ -46,7 +46,7 @@ import {
   outcomeBands, payoutFor, potContribution, resolveLottery, stakeFor, wagerBlock, waveGross,
 } from '../game/lottery.js';
 import { Painter } from '../minigames/Painter.js';
-import { isTypingTarget } from '../util/dom.js';
+import { CommitSettle, isTypingTarget } from '../util/dom.js';
 import { key, num } from './uikit.js';
 
 const html = String.raw;
@@ -158,6 +158,7 @@ export class Lottery {
     this._railTop = 0;
     /** @type {Array<() => void>} Disposers for everything bound while open. */
     this._disposers = [];
+    this._mashGuard = new CommitSettle();
 
     const bands = outcomeBands();
 
@@ -503,6 +504,9 @@ export class Lottery {
     }
   }
 
+  /** The board asks this before it acts on a commit key. See CommitSettle. */
+  swallowsCommit() { return this._mashGuard.swallows(); }
+
   /** Escape, Enter, Space, or a click: reveal if spinning, close if revealed. */
   #dismiss() {
     if (this.mode === 'result') this.close();
@@ -521,6 +525,7 @@ export class Lottery {
     if (!this.isOpen) return;
     this.#settle();
     this.isOpen = false;
+    this._mashGuard.arm();
     for (const dispose of this._disposers) dispose();
     this._disposers.length = 0;
 
