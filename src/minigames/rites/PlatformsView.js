@@ -368,7 +368,7 @@ class PlatformsView extends RiteView {
       this.scene.add(tag);
 
       this.bodies.push({
-        root, yawG, squash, mat, shadow, tag, yaw: 0, land: 0, air: false,
+        root, yawG, squash, mat, shadow, tag, tagShift: 0, yaw: 0, land: 0, air: false,
         lx: 0, ly: 0, at: { x: 0, y: 0, h: 0 }, out: Infinity, cell: -1, slot: 0, ox: 0,
       });
     }
@@ -383,36 +383,44 @@ class PlatformsView extends RiteView {
 
   /**
    * Tags draw over everything, so a tag hovering over someone a row behind
-   * hides that body. Fade it while it sits on another body's silhouette.
+   * hides that body. Fading it was not enough: a 40 % "YOU" still sat on the
+   * rival's face. The tag slides sideways, away from the body it covers, until
+   * it clears that silhouette, and eases back once the way is clear.
    */
-  #dimTagsOverBodies() {
+  #clearTagsOffBodies(dt) {
     const cam = this.camera;
     const tp = this._tp ??= new THREE.Vector3();
     const bp = this._bp ??= new THREE.Vector3();
+    const k = this._tagK;
+    const r = 0.4 * BODY_SCALE;
     for (const a of this.bodies) {
-      if (!a.tag.visible) continue;
-      tp.copy(a.tag.position).project(cam);
-      const near = cam.position.distanceToSquared(a.root.position);
-      let hit = false;
-      for (const b of this.bodies) {
-        if (b === a || !b.root.visible) continue;
-        if (cam.position.distanceToSquared(b.root.position) <= near) continue;
-        // NDC per world unit at b, from a one-unit vertical step.
-        bp.copy(b.root.position);
-        bp.y += 1 + 0.5 * BODY_SCALE;
-        bp.project(cam);
-        const top = bp.y;
-        bp.copy(b.root.position);
-        bp.y += 0.5 * BODY_SCALE;
-        bp.project(cam);
-        const u = top - bp.y;
-        const r = 0.4 * BODY_SCALE;
-        const k = this._tagK;
-        // x in NDC is stretched by the inverse aspect relative to y.
-        if (Math.abs(tp.x - bp.x) < u * (r + 0.6 * k) / cam.aspect
-          && Math.abs(tp.y - bp.y) < u * (r + 0.2 * k)) { hit = true; break; }
+      let goal = 0;
+      if (a.tag.visible) {
+        tp.copy(a.tag.position).project(cam);
+        const near = cam.position.distanceToSquared(a.root.position);
+        for (const b of this.bodies) {
+          if (b === a || !b.root.visible) continue;
+          if (cam.position.distanceToSquared(b.root.position) <= near) continue;
+          // NDC per world unit at b, from a one-unit vertical step.
+          bp.copy(b.root.position);
+          bp.y += 1 + 0.5 * BODY_SCALE;
+          bp.project(cam);
+          const top = bp.y;
+          bp.copy(b.root.position);
+          bp.y += 0.5 * BODY_SCALE;
+          bp.project(cam);
+          const u = top - bp.y;
+          // x in NDC is stretched by the inverse aspect relative to y.
+          if (Math.abs(tp.x - bp.x) < u * (r + 0.75 * k) / cam.aspect
+            && Math.abs(tp.y - bp.y) < u * (0.9 * BODY_SCALE + 0.25 * k)) {
+            const side = tp.x >= bp.x ? 1 : -1;
+            goal = b.root.position.x + side * (r + 0.8 * k) - a.root.position.x;
+            break;
+          }
+        }
       }
-      if (hit) a.tag.material.opacity *= 0.4;
+      a.tagShift += (goal - a.tagShift) * Math.min(1, dt * 14);
+      a.tag.position.x += a.tagShift;
     }
   }
 
@@ -747,7 +755,7 @@ class PlatformsView extends RiteView {
       tag.position.y += 1.62 * BODY_SCALE;
       tag.material.opacity = fallen ? Math.max(0, 1 - f * 1.5) : 1;
     }
-    this.#dimTagsOverBodies();
+    this.#clearTagsOffBodies(dt);
 
     // The "!" over your head when your own tile starts shaking.
     const me = this.bodies[0];
