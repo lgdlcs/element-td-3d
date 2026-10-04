@@ -44,6 +44,8 @@ const CORNER = 0.2;
 const SINK = 0.16;
 /** Characters are modelled about a metre tall; this is how big they stand on a 1.72 tile. */
 const BODY_SCALE = 1.3;
+/** How far a tag that slid off a body behind drops: from over the head to beside the eyes. */
+const TAG_DROP = 0.75 * BODY_SCALE;
 /** How far the camera drifts toward the player at the floor's edge, world units. */
 const DRIFT = 0.9;
 /**
@@ -359,7 +361,8 @@ class PlatformsView extends RiteView {
       this.scene.add(shadow);
 
       const name = k === 0 ? 'YOU' : this.rite.rivals.roster()[k - 1]?.name ?? '?';
-      const tagTex = this.own(this.#tagTexture(name, BODY_HEX[k], k === 0));
+      const { tex: tagTex, pill } = this.#tagTexture(name, BODY_HEX[k], k === 0);
+      this.own(tagTex);
       const tag = new THREE.Sprite(new THREE.SpriteMaterial({
         map: tagTex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false,
       }));
@@ -368,7 +371,7 @@ class PlatformsView extends RiteView {
       this.scene.add(tag);
 
       this.bodies.push({
-        root, yawG, squash, mat, shadow, tag, tagShift: 0, yaw: 0, land: 0, air: false,
+        root, yawG, squash, mat, shadow, tag, pill, tagShift: 0, tagDrop: 0, yaw: 0, land: 0, air: false,
         lx: 0, ly: 0, at: { x: 0, y: 0, h: 0 }, out: Infinity, cell: -1, slot: 0, ox: 0,
       });
     }
@@ -384,8 +387,12 @@ class PlatformsView extends RiteView {
   /**
    * Tags draw over everything, so a tag hovering over someone a row behind
    * hides that body. Fading it was not enough: a 40 % "YOU" still sat on the
-   * rival's face. The tag slides sideways, away from the body it covers, until
-   * it clears that silhouette, and eases back once the way is clear.
+   * rival's face. The tag slides sideways, away from the body it covers, just
+   * far enough that its pill clears that silhouette, and eases back once the
+   * way is clear. Sliding by the whole sprite moved "YOU" a tile away, over
+   * nobody, and left the player's own body under the rival's name. A slid tag
+   * also drops to its owner's eye line (TAG_DROP), so it sits beside the face
+   * it names and not beside the face behind.
    */
   #clearTagsOffBodies(dt) {
     const cam = this.camera;
@@ -395,6 +402,7 @@ class PlatformsView extends RiteView {
     const r = 0.4 * BODY_SCALE;
     for (const a of this.bodies) {
       let goal = 0;
+      const half = 0.75 * k * a.pill;
       if (a.tag.visible) {
         tp.copy(a.tag.position).project(cam);
         const near = cam.position.distanceToSquared(a.root.position);
@@ -411,30 +419,37 @@ class PlatformsView extends RiteView {
           bp.project(cam);
           const u = top - bp.y;
           // x in NDC is stretched by the inverse aspect relative to y.
-          if (Math.abs(tp.x - bp.x) < u * (r + 0.75 * k) / cam.aspect
+          if (Math.abs(tp.x - bp.x) < u * (r + half) / cam.aspect
             && Math.abs(tp.y - bp.y) < u * (0.9 * BODY_SCALE + 0.25 * k)) {
             const side = tp.x >= bp.x ? 1 : -1;
-            goal = b.root.position.x + side * (r + 0.8 * k) - a.root.position.x;
+            goal = b.root.position.x + side * (r + half) - a.root.position.x;
             break;
           }
         }
       }
-      a.tagShift += (goal - a.tagShift) * Math.min(1, dt * 14);
+      const ease = Math.min(1, dt * 14);
+      a.tagShift += (goal - a.tagShift) * ease;
+      a.tagDrop += ((goal ? TAG_DROP : 0) - a.tagDrop) * ease;
       a.tag.position.x += a.tagShift;
+      a.tag.position.y -= a.tagDrop;
     }
   }
 
+  /** The tag texture, and how much of its width the drawn pill takes (0..1). */
   #tagTexture(label, hex, you) {
-    return canvasTexture(256, 80, (g, w, h) => {
+    let pill = 1;
+    const tex = canvasTexture(256, 80, (g, w, h) => {
       g.font = `800 ${you ? 46 : 40}px system-ui, -apple-system, Segoe UI, sans-serif`;
       g.textAlign = 'center'; g.textBaseline = 'middle';
       const tw = Math.min(w - 8, g.measureText(label).width + 36);
+      pill = tw / w;
       g.fillStyle = 'rgba(12,8,24,0.72)';
       g.beginPath(); g.roundRect((w - tw) / 2, 12, tw, h - 24, 18); g.fill();
       g.strokeStyle = hex; g.lineWidth = 4; g.stroke();
       g.fillStyle = you ? '#fff4d6' : '#f2eefa';
       g.fillText(label, w / 2, h / 2 + 2);
     });
+    return { tex, pill };
   }
 
   #buildHud() {
