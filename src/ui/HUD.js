@@ -86,7 +86,11 @@ export class HUD {
       b.addEventListener('click', () => this.game.setSpeed(Number(b.dataset.speed)));
     });
     this.nodes.pause.addEventListener('click', () => this.game.togglePause());
-    this.$('#restart-btn').addEventListener('click', () => window.location.reload());
+    // One stray click on ⟳ used to throw the whole run away (and, online, the
+    // room seat with it).
+    this.$('#restart-btn').addEventListener('click', () => {
+      if (window.confirm('Restart? This run will be lost.')) window.location.reload();
+    });
 
     // ---- key sheet ------------------------------------------------------
     this.nodes.help.innerHTML = HELP_TEMPLATE;
@@ -697,7 +701,7 @@ const TEMPLATE = /* html */`
       </div>
       <div class="stat">
         <span class="stat-k">Wave</span>
-        <b class="stat-v"><span id="stat-wave">1</span><em id="stat-wave-total">/ 50</em></b>
+        <b class="stat-v"><span id="stat-wave">1</span><em id="stat-wave-total">/ ${TOTAL_WAVES}</em></b>
       </div>
       <div class="stat">
         <span class="stat-k">Score</span>
