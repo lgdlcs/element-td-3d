@@ -177,7 +177,9 @@ class LuckyShotView extends RiteView {
     this._built = true;
     this.layout(16 / 9);
     this.render(0, 0);
-    for (const t of this.popTex.values()) stage.renderer.initTexture(t);
+    // A badge can first appear mid-play (a claimed golden turns into its row's
+    // badge), so every one is uploaded now, like the pops.
+    for (const t of [...this.popTex.values(), ...Object.values(this.badgeTex)]) stage.renderer.initTexture(t);
   }
 
   // ---- construction -------------------------------------------------------
