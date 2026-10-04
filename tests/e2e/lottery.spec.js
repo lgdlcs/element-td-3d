@@ -34,6 +34,13 @@ const host = (page, fn, arg) => page.evaluate(fn, arg);
 const closed = (page, timeout = 10000) => page.waitForFunction(
   () => !document.getElementById('lotdraw').classList.contains('open'), null, { timeout });
 
+/**
+ * Wait for the seal's slide to finish. A fixed 500 ms was not enough under GPU
+ * load, where frames are slow and the --t-slow transition runs late.
+ */
+const parked = (page) => page.waitForFunction(
+  () => document.getElementById('lot').getAnimations().length === 0, null, { timeout: 10000 });
+
 /** Put the run into a prep the lottery will accept, with money in the bank. */
 async function prep(page, { wave = 30, gold = 5000 } = {}) {
   await page.evaluate(({ wave, gold }) => {
@@ -47,7 +54,7 @@ async function prep(page, { wave = 30, gold = 5000 } = {}) {
   await page.waitForSelector('#lot.up', { timeout: 5000 });
   // The class is on; the card is still sliding in for --t-slow. Every geometry
   // assertion below has to wait that out or it measures a card in flight.
-  await settle(page, 500);
+  await parked(page);
 }
 
 test.describe('the lottery', () => {
@@ -79,7 +86,7 @@ test.describe('the lottery', () => {
     // The class comes off instantly, the card takes --t-slow to leave. Reading
     // the rect on the same tick catches it mid-flight at x=+58, which is a real
     // measurement of a real transition and not a bug — so wait it out.
-    await settle(page, 500);
+    await parked(page);
     // It really is off the rail, not merely faded: the transform takes it out.
     const off = await host(page, () => document.getElementById('lot').getBoundingClientRect().right);
     expect(off).toBeLessThanOrEqual(0);
