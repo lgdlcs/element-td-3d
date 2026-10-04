@@ -138,9 +138,9 @@ async function instrument(page) {
     const g = window.__game;
     const inst = g.minigames.instance;
     window.__rite = {
-      // Frames the host actually drew, through whichever path the rite uses
-      // (a 3D view or the legacy Painter). A throw in either is caught by
-      // #guard and would stop this counter; the console assertion catches it.
+      // Frames the host actually drew through the rite's 3D view. A throw is
+      // caught by #guard and would stop this counter; the console assertion
+      // catches it.
       frames0: g.minigames.renderedFrames,
       credits: [],
       t0: inst.t,

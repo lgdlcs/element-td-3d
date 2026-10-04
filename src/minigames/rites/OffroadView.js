@@ -640,8 +640,10 @@ class OffroadView extends RiteView {
       this.scene.add(g);
       return g;
     };
-    arch(4.5, this.startTex);
-    this.finishArch = arch(FLAG_AT, this.finishTex);
+    this.arches = [
+      { s: 4.5, group: arch(4.5, this.startTex) },
+      { s: FLAG_AT, group: arch(FLAG_AT, this.finishTex) },
+    ];
   }
 
   #buildGold() {
@@ -1003,6 +1005,9 @@ class OffroadView extends RiteView {
     // ---- gates
     const next = R.nextGate;
     const camS = -this.camPos.z;
+    // The arches' posts stand at the road's edge, where the camera rides when
+    // the car is roped wide: they go the same way as the gates.
+    for (const A of this.arches) A.group.visible = A.s > camS + 2.0;
     for (let i = 0; i < GATE_COUNT; i++) {
       const G = this.gateMeshes[i];
       // Gone once the camera reaches it, so a car run wide never drags the
