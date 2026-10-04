@@ -248,7 +248,6 @@ async function start() {
   function loop(now) {
     const dt = (now - last) / 1000;
     last = now;
-    game.frame(dt);
     // Fed from here rather than from inside Game.frame() because it must see
     // the REAL wall-clock interval between presented frames — the same quantity
     // the player experiences — not a simulation step that may be clamped or
@@ -256,6 +255,11 @@ async function start() {
     // Not while a 3D rite owns the frame: the board is not rendering, so the
     // frame time measures the rite's stage, and reading it as evidence about
     // the board would move the board's resolution for nothing.
+    //
+    // BEFORE game.frame(), never after. A resolution step resizes the canvas,
+    // and resizing a canvas clears its drawing buffer; after the render, that
+    // cleared buffer is what the browser presented — one black board frame per
+    // step (screen recording 2026-10-04, tools/scratch/vsync-flicker.mjs).
     const boardRendered = !game.minigames.ownsFrame;
     if (boardRendered) game.pipeline.adaptive?.update(dt);
     // AFTER the resolution controller, and fed the same real wall-clock
@@ -263,6 +267,7 @@ async function start() {
     // been spent, and asking that before the controller has had its turn on
     // this frame reads a stale answer.
     if (boardRendered) governor.update(dt);
+    game.frame(dt);
     if (settings.open) settingsTick(now);
     // NetClient throttles this to ~2 Hz internally and no-ops when offline, which
     // is exactly why it is safe to call from here: the frame loop should not have
