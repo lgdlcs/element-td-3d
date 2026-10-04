@@ -77,9 +77,10 @@ const HOP = 0.42;
  * The schedule alone let a player stand still: hop once onto a tile that goes
  * late and wait. The reference player stood up to 12-14 s without a hop at
  * wave 3 and hopped 3.4 times a run. A worn tile darkens and shakes like any
- * other (STRESS_LEAD x its shake) and drops for everyone, rivals standing on it
- * included. With it: 6.2 hops at wave 3 and no stand longer than 3.6 s.
- * Constant across waves: the schedule already carries the wave.
+ * other (STRESS_LEAD x its shake) and drops. Rivals obey it too and step off a
+ * worn tile (#walkGhost, #wear). With it: 6.2 hops at wave 3 and no stand
+ * longer than 3.6 s. Constant across waves: the schedule already carries the
+ * wave.
  */
 const LINGER = 2.5;
 
@@ -300,7 +301,10 @@ class PlatformsRite {
     // ---- the ghosts ------------------------------------------------------
     this.paths = [];
     this.rivalOut = new Float64Array(RIVAL_COUNT);
-    for (let id = 0; id < RIVAL_COUNT; id++) this.paths.push(this.#walkGhost(id));
+    for (let id = 0; id < RIVAL_COUNT; id++) {
+      const c = RIVAL_STARTS[id];
+      this.paths.push(this.#walkGhost(id, [0], [cellX(c)], [cellY(c)], 0));
+    }
     this._outEmitted = new Uint8Array(RIVAL_COUNT);
 
     // ---- the player ------------------------------------------------------
@@ -334,20 +338,23 @@ class PlatformsRite {
   }
 
   /**
-   * Build a rival's hop list, once, in init.
+   * Build a rival's hop list from its last knot on, at `now`.
    *
    * A ghost hops to whichever neighbour lasts longest, `lag` seconds before its
-   * own tile goes; a better rival has a shorter lag. It is read off the same
-   * schedule the player sees, so it looks alive because it is reacting to the
-   * same floor. Returned as knots (t, x, y): equal positions are a stand, a
-   * change of position is a hop, so a position at any time is one lerp.
+   * own tile goes, and never stands long enough to wear a tile out: it obeys
+   * the player's LINGER too, leaving `lag` before it would. A better rival has
+   * a shorter lag. It is read off the same schedule the player sees, so it
+   * looks alive because it is reacting to the same floor. Returned as knots
+   * (t, x, y): equal positions are a stand, a change of position is a hop, so a
+   * position at any time is one lerp. init walks every ghost from its spawn;
+   * a tile the player wears out walks them again from where they are (#wear).
    *
    * `SeededRivals.outAt(id)` is the published elimination time and is honoured
    * as a cap: a ghost still standing when it comes misjudges a hop into the
    * void and lands at exactly that time. Whichever comes first, the trap or the
    * cap, is `rivalOut`, and that is what the score reads and the view shows.
    */
-  #walkGhost(id) {
+  #walkGhost(id, t, xs, ys, now) {
     const r = this.rivals.roster()[id];
     const skill = r ? r.skill : 0.5;
     const lag = 0.34 + (1 - skill) * 0.62;
@@ -359,24 +366,22 @@ class PlatformsRite {
     const lureAt = slipAt - LURE;
     const holeBy = slipAt + HOP;
 
-    let cell = RIVAL_STARTS[id];
-    const t = [0];
-    const xs = [cellX(cell)];
-    const ys = [cellY(cell)];
+    let cell = cellAt(xs[xs.length - 1], ys[ys.length - 1]);
+    let landed = t[t.length - 1];
     const hop = (t0, x, y) => {
       t.push(t0, t0 + HOP);
       xs.push(xs[xs.length - 1], x);
       ys.push(ys[ys.length - 1], y);
     };
     const nb = new Int32Array(8);
-    let now = 0;
     let out = Infinity;
 
-    for (let k = 0; k < MAX_HOPS; k++) {
+    while (t.length < 2 * MAX_HOPS) {
       const g = this.gone[cell];
-      let depart = Math.max(now, g - lag);
-      const luring = Math.max(now, lureAt) < depart && this.#holeDist(cell, holeBy) > 1;
-      if (luring) depart = Math.max(now, lureAt);
+      let depart = Math.max(now, Math.min(g - lag, landed + LINGER - lag));
+      // A lured ghost next to a hole keeps to tiles next to one, at its usual pace.
+      const luring = Math.max(now, lureAt) < depart;
+      if (luring && this.#holeDist(cell, holeBy) > 1) depart = Math.max(now, lureAt);
       if (depart + HOP > slipAt) {
         // The cap comes before the next hop would finish. Ride the tile down if
         // it goes first, else misjudge one hop into the void at the cap.
@@ -388,7 +393,7 @@ class PlatformsRite {
         out = t[t.length - 1];
         break;
       }
-      if (g > this.runLength && !luring) break;                  // outlasts the run
+      if (depart > this.runLength) break;                        // outlasts the run
       if (depart >= g) { out = g; break; }
 
       let best = -1, bestGone = -Infinity, bestDist = Infinity;
@@ -406,6 +411,7 @@ class PlatformsRite {
       const land = depart + HOP;
       if (bestGone <= land) { out = land; break; }                // hopped into a hole
       now = land;
+      landed = land;
       cell = best;
     }
 
@@ -590,27 +596,22 @@ class PlatformsRite {
     }
   }
 
-  /** Tile `c` darkens now and drops STRESS_LEAD shakes later. A rival standing on it then goes with it. */
+  /** Tile `c` darkens now and drops STRESS_LEAD shakes later. Every rival still up sees it and walks again from where it is. */
   #wear(c, t) {
-    const drop = t + this.shake[c] * STRESS_LEAD;
-    this.gone[c] = drop;
+    this.gone[c] = t + this.shake[c] * STRESS_LEAD;
     for (let id = 0; id < RIVAL_COUNT; id++) {
       if (this.rivalOut[id] <= t) continue;
-      this.rivalOut[id] = Math.min(this.rivalOut[id], this.#ghostOn(id, c, drop));
+      const p = this.paths[id];
+      let n = 1;
+      while (n < p.t.length && p.t[n] <= t) n++;
+      // Mid-hop, the hop is finished first: a body in the air lands where it was going.
+      if (n < p.t.length && (p.x[n] !== p.x[n - 1] || p.y[n] !== p.y[n - 1])) n++;
+      // Already on its last move to an elimination: nothing left to decide.
+      if (n === p.t.length && this.rivalOut[id] < Infinity) continue;
+      this.paths[id] = this.#walkGhost(id,
+        Array.from(p.t.subarray(0, n)), Array.from(p.x.subarray(0, n)), Array.from(p.y.subarray(0, n)),
+        Math.max(t, p.t[n - 1]));
     }
-  }
-
-  /** The first time at or after `from` that ghost `id` stands on tile `c`; Infinity if never. */
-  #ghostOn(id, c, from) {
-    const p = this.paths[id];
-    const x = cellX(c), y = cellY(c);
-    const n = p.t.length;
-    for (let k = 1; k < n; k++) {
-      if (p.t[k] > from && p.x[k] === x && p.y[k] === y && p.x[k - 1] === x && p.y[k - 1] === y) {
-        return Math.max(p.t[k - 1], from);
-      }
-    }
-    return p.x[n - 1] === x && p.y[n - 1] === y ? Math.max(p.t[n - 1], from) : Infinity;
   }
 
   #fall(t) {

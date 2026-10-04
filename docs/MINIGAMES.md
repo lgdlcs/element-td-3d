@@ -1300,15 +1300,20 @@ between them, and **the only verb is where you hop**.
   spread turns it into a slope, the same lesson the 2D temper taught.
 - **Tiles wear out under you** (`LINGER` = 2.5 s, every wave). Stand on one
   tile that long and it darkens and drops like any other (`STRESS_LEAD` × its
-  shake later), for everyone: a rival on it then goes with it (`#wear`,
-  `#ghostOn`). The schedule alone let a player hop once onto a late tile and
+  shake later). Rivals see it like any other drop: every rival still up walks
+  its hop list again from where it stands (`#wear`), so none rides a worn
+  tile down (unit-tested). The schedule alone let a player hop once onto a late tile and
   wait: the reference player stood 12–14 s without a hop at wave 3 and hopped
   3.4 times a run. With wear it hops 6.2 times and never stands longer than
   3.6 s (measured over the gate seeds). A faster or accelerating beat was tried
   first: it shortened the run and moved the curve without fixing the stand,
   because any schedule has a last pocket worth waiting in.
-- **Rivals.** Ghost hop lists built in `init` from the same schedule: each
-  hops to its longest-lived neighbour `lag` seconds before its tile goes. The
+- **Rivals.** Ghost hop lists built in `init` from the same schedule, and
+  rebuilt from where each ghost stands whenever the player wears a tile out.
+  Each hops to its longest-lived neighbour `lag` seconds before its tile goes,
+  or `lag` seconds before `LINGER` would wear it, whichever is first: rivals
+  obey the player's rule and never stand longer than 2.4 s (they stood up to
+  16.5 s before; 30 seeds × 3 rivals × waves 3 / 28 / 53). The
   published `SeededRivals.outAt` is a cap: from `LURE` = 2.2 s before it, a
   doomed ghost stops reacting and wanders over tiles that outlast the cap
   toward the nearest hole, then misjudges one hop into it and lands at exactly
@@ -1325,7 +1330,8 @@ between them, and **the only verb is where you hop**.
   when it darkens, and picks the neighbour with the most settled ground
   REACHABLE from it, since every stop now leaves a hole behind and a greedy
   "most open neighbours" reader walked into dead ends. Gate seeds: 0.802 /
-  0.700 / 0.637 at waves 3 / 28 / 53, every platforms gate green. On 30
+  0.700 / 0.621 at waves 3 / 28 / 53, every platforms gate green (0.637 at
+  wave 53 before rivals obeyed `LINGER`). On 30
   held-out seeds the same player reads 0.81 / 0.77 / 0.70, close at wave 3 and
   about 0.1–0.15 generous later. Five seeds is a small sample for a rite whose
   runs end in one fall; `LINGER` was picked from a grid (2.0–3.5 s, waves
