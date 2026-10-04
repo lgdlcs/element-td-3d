@@ -87,7 +87,7 @@ const CUES = Object.freeze({
 });
 import { riteDef } from './registry.js';
 import { riteRng } from './schedule.js';
-import { isTypingTarget } from '../util/dom.js';
+import { CommitSettle, isTypingTarget } from '../util/dom.js';
 import { key as keycap } from '../ui/uikit.js';
 
 /**
@@ -108,15 +108,6 @@ const AXIS_KEYS = {
 /** Keys that mean "now". */
 const COMMIT_KEYS = new Set(['Space', 'Enter', 'NumpadEnter']);
 
-/**
- * Milliseconds of quiet the board waits for, after a close, before it acts on a
- * commit key again. A player mashing Space through the result card closes it on
- * one press and, with no window, sends the next wave on the next one. Each
- * press inside the window renews it, because a measured mash (6 presses through
- * Playwright) lasts over a second. A window and not a listener, so
- * `listenerCount` is still 0 the moment the overlay shuts.
- */
-const SETTLE_MS = 500;
 
 /**
  * Keys that mean "that one" — the six discrete choices of contract.js SLOT_COUNT.
@@ -352,23 +343,14 @@ export class MinigameHost {
     /** Seconds of "Go" left AFTER the rite has started. Presentation only. */
     this._goFlash = 0;
     this._onDone = null;
-    this._closedAt = -Infinity;
+    this._mashGuard = new CommitSettle();
   }
 
   /** Live count of things that must be released. 0 whenever the overlay is shut. */
   get listenerCount() { return this._disposers.length; }
 
-  /**
-   * The board asks this before it acts on a commit key. True while the player
-   * is still mashing out of a rite: within SETTLE_MS of the close or of the
-   * last press it swallowed, which it renews.
-   */
-  swallowsCommit() {
-    const now = performance.now();
-    if (now - this._closedAt >= SETTLE_MS) return false;
-    this._closedAt = now;
-    return true;
-  }
+  /** The board asks this before it acts on a commit key. See CommitSettle. */
+  swallowsCommit() { return this._mashGuard.swallows(); }
 
   /**
    * True while a rite is on screen. Game.frame skips the board's render and
@@ -694,7 +676,7 @@ export class MinigameHost {
   close() {
     if (!this.isOpen) return;
     this.isOpen = false;
-    this._closedAt = performance.now();
+    this._mashGuard.arm();
     for (const dispose of this._disposers) dispose();
     this._disposers.length = 0;
 

@@ -455,7 +455,7 @@ test.describe('the rite host', () => {
     expect(after.listeners).toBe(0);
     expect(after.phase, 'the mash leaked into the board and sent a wave').toBe('prep');
 
-    await spinUntil(page, 'performance.now() - h._closedAt > 600');
+    await page.waitForTimeout(600);
     await page.keyboard.press('Space');
     const sent = await host(page, () => window.__game.state);
     expect(sent.phase, 'a deliberate Space after the card still sends the wave').toBe('combat');

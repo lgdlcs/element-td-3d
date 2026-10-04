@@ -838,8 +838,8 @@ export class Game {
         case 'Space':
           e.preventDefault();
           // A held Space, or the tail of a mash that just closed a rite's result
-          // card, is not a decision to send the next wave.
-          if (!e.repeat && !this.minigames?.swallowsCommit()) this.startWaveNow();
+          // card or the lottery, is not a decision to send the next wave.
+          if (!e.repeat && !this.minigames?.swallowsCommit() && !this.lottery?.swallowsCommit()) this.startWaveNow();
           break;
         case 'KeyP': this.state.paused = !this.state.paused; this.hud.refreshTop(); break;
         case 'Digit1': this.setSpeed(1); break;

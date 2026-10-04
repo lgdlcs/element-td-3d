@@ -30,3 +30,27 @@ export function isTypingTarget(e) {
     || t instanceof HTMLSelectElement
     || (t instanceof HTMLElement && t.isContentEditable);
 }
+
+/**
+ * The quiet window an overlay leaves behind when it closes, so the board does
+ * not read the tail of a mash as a commit. A player mashing Space through a
+ * result card closes it on one press and, with no window, sends the next wave
+ * on the next one. Each press inside the window renews it, because a measured
+ * mash (6 presses through Playwright) lasts over a second. A timestamp and not
+ * a listener, so an overlay holds nothing once it shuts.
+ */
+export class CommitSettle {
+  static MS = 500;
+  #closedAt = -Infinity;
+
+  /** The overlay just closed. */
+  arm() { this.#closedAt = performance.now(); }
+
+  /** True while the player is still mashing out; a swallowed press renews the window. */
+  swallows() {
+    const now = performance.now();
+    if (now - this.#closedAt >= CommitSettle.MS) return false;
+    this.#closedAt = now;
+    return true;
+  }
+}
