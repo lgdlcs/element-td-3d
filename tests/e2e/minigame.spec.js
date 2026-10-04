@@ -161,6 +161,8 @@ async function playRite(page, maxShots) {
       // world time and not an estimate.
       const t = inst.t + MINIGAMES.dt;
       const shots0 = inst.shots;
+      // The rifle is still racking (LuckyShotRite RACK): a press now is dropped.
+      if (t + 1e-6 < inst.readyAt) continue;
 
       // `targets` is built front-row-first, so the first index that survives
       // the `hitIndex` check is the nearest one — the same front-to-back walk

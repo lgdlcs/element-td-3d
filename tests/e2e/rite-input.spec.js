@@ -5,9 +5,11 @@
  * that the unit suites therefore cannot own:
  *
  *  1. THE CLICK QUEUE. Two `pointerdown` events at two different points of the
- *     canvas, dispatched inside ONE animation frame, resolve as two distinct
- *     hits at two different world positions — even when the pointer has moved
- *     somewhere else entirely before the fixed step that consumes them. Before
+ *     canvas, dispatched inside ONE animation frame, reach the rite as two
+ *     clicks at two different world positions, and the first resolves as a hit
+ *     where it was pressed, even when the pointer has moved somewhere else
+ *     entirely before the fixed step that consumes them (luckyshot's rack
+ *     drops the second). Before
  *     the queue the host kept a scalar click count plus one live pointer
  *     position, so a press at A followed by a move to B resolved at B: a hit
  *     credited to the wrong target. jsdom can dispatch those three events but
@@ -120,7 +122,7 @@ async function waitForClicks(page, n) {
 }
 
 test.describe('rite input', () => {
-  test('two presses in one frame are two hits, at the two places they were pressed', async ({ page }) => {
+  test('two presses in one frame reach the rite at the two places they were pressed', async ({ page }) => {
     const { errors } = await startRun(page, { freeze: false });
     await openLuckyShot(page);
     await recordClicks(page);
@@ -236,10 +238,12 @@ test.describe('rite input', () => {
     expect(got.pointer.y).toBeCloseTo(plan.away.y, 1);
     expect(Math.abs(got.pointer.y - plan.a.y)).toBeGreaterThan(2);
 
-    // TWO DISTINCT HITS, on the two targets that were aimed at and no others.
-    expect(got.shots).toBe(2);
-    expect(got.hits).toBe(2);
-    expect(got.down).toEqual([plan.a.i, plan.b.i].sort((p, q) => p - q));
+    // The first press is a hit on the target it was aimed at, at its own place
+    // and not at the pointer's. The second falls inside the rifle's rack
+    // (LuckyShotRite RACK) and is dropped by the rite, not by the queue.
+    expect(got.shots).toBe(1);
+    expect(got.hits).toBe(1);
+    expect(got.down).toEqual([plan.a.i]);
 
     expect(errors).toEqual([]);
   });
