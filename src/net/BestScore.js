@@ -45,8 +45,9 @@ export function loadBest() {
 }
 
 /**
- * Record a finished run. Returns `{ best, record }` — `record` is true only when
- * this run actually beat the stored score, which is what the end card reports.
+ * Record a finished run. Returns `{ best, previous, record }`: `previous` is the
+ * score stored before this run, and `record` is true only when this run actually
+ * beat it. The end card reports exactly this.
  *
  * Ties do NOT count as a record: equalling your best is not beating it, and
  * flashing "new best" at an identical number reads as a bug.
@@ -54,10 +55,10 @@ export function loadBest() {
 export function saveBest(result) {
   const prev = loadBest();
   const score = int(result?.score);
-  if (score <= prev.score) return { best: prev, record: false };
+  if (score <= prev.score) return { best: prev, previous: prev.score, record: false };
   const next = { score, wave: int(result?.wave), won: !!result?.won, at: Date.now() };
   writeRaw(KEY, JSON.stringify(next));
-  return { best: next, record: true };
+  return { best: next, previous: prev.score, record: true };
 }
 
 function int(v) {

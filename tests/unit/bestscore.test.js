@@ -77,16 +77,18 @@ describe('BestScore', () => {
 
   describe('saveBest', () => {
     it('records a first run', () => {
-      const { best, record } = saveBest({ score: 900, wave: 12, won: false });
+      const { best, previous, record } = saveBest({ score: 900, wave: 12, won: false });
       expect(record).toBe(true);
+      expect(previous).toBe(0);
       expect(best.score).toBe(900);
       expect(loadBest().score).toBe(900);
     });
 
     it('records a better run and keeps the new numbers', () => {
       saveBest({ score: 900, wave: 12, won: false });
-      const { best, record } = saveBest({ score: 2400, wave: 30, won: true });
+      const { best, previous, record } = saveBest({ score: 2400, wave: 30, won: true });
       expect(record).toBe(true);
+      expect(previous).toBe(900);
       expect(best).toMatchObject({ score: 2400, wave: 30, won: true });
       expect(loadBest().score).toBe(2400);
     });

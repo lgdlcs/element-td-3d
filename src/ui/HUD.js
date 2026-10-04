@@ -559,20 +559,13 @@ export class HUD {
     // end card with nothing but a z-index between them.
     this.setHelp(false);
     this.build.setCodex(false);
-    // `best` is whatever was loaded at boot, so a run that beat it is a new
-    // record even though the store is written by main.js after this renders.
-    const record = s.score > this.best;
     const board = this.leaderboard.slice(0, 5);
     this.nodes.endcard.innerHTML = `
       <div class="end-inner ${won ? 'win' : 'lose'}">
         <span class="end-kicker">${won ? 'Convergence complete' : 'The convergence fails'}</span>
         <h1>${won ? 'The Elements Hold' : 'The Line Is Broken'}</h1>
         <p>${won ? `All ${TOTAL_WAVES} waves repelled.` : `You fell on wave ${s.wave} of ${TOTAL_WAVES}.`}</p>
-        <div class="end-best ${record ? 'record' : ''}">
-          ${record
-            ? `<b>New personal best</b><span>${num(s.score)} · previous ${this.best ? num(this.best) : 'none'}</span>`
-            : `<b>Personal best</b><span>${this.best ? num(this.best) : '—'}</span>`}
-        </div>
+        <div class="end-best"></div>
         ${board.length ? `<div class="end-board">
           <u>Global top ${board.length}</u>
           <ol>${board.map((p) => `<li><span>${esc(String(p.name ?? '?'))}</span><b>${num(p.score)}</b><i>wave ${num(p.wave)}</i></li>`).join('')}</ol>
@@ -589,6 +582,19 @@ export class HUD {
     this.nodes.endcard.classList.add('show');
     this.nodes.endcard.querySelector('#end-again')
       .addEventListener('click', () => window.location.reload());
+  }
+
+  /**
+   * The end card's best line, from what saveBest did with this run rather than
+   * from the value cached at boot: another tab may have written a record since.
+   */
+  showRecord({ best, previous, record }) {
+    const el = this.nodes.endcard.querySelector('.end-best');
+    if (!el) return;
+    el.classList.toggle('record', record);
+    el.innerHTML = record
+      ? `<b>New personal best</b><span>${num(best.score)} · previous ${previous ? num(previous) : 'none'}</span>`
+      : `<b>Personal best</b><span>${best.score ? num(best.score) : '—'}</span>`;
   }
 
   // ---- per-frame -------------------------------------------------------

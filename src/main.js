@@ -126,8 +126,9 @@ async function start() {
       // still works with no server, and it is what the status bar and the end
       // card read. The room result and the global leaderboard are both no-ops
       // when offline (see NetClient), so neither can hold up the end card.
-      const { best } = saveBest(result);
-      game.hud.setBest(best.score);
+      const saved = saveBest(result);
+      game.hud.setBest(saved.best.score);
+      game.hud.showRecord(saved);
       net.finished(result);
       net.best(result);
     },

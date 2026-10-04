@@ -27,8 +27,6 @@ test.describe('end of run', () => {
       const g = window.__game;
       g.state.lives = 1;
       g.state.score = 4242;
-      g.hud.best = 0;
-      g.hud.refreshTop();
       g.setSpeed(3);
       g.startWaveNow();
     });
@@ -41,6 +39,7 @@ test.describe('end of run', () => {
     await expect(page.locator('#endcard .end-inner')).toHaveClass(/\blose\b/);
     await expect(page.locator('#endcard h1')).toHaveText('The Line Is Broken');
     await expect(page.locator('#endcard .end-best')).toHaveClass(/\brecord\b/);
+    await expect(page.locator('#endcard .end-best')).toContainText('previous none');
 
     const s = await readState(page);
     expect(s.lives).toBeLessThanOrEqual(0);
@@ -62,9 +61,9 @@ test.describe('end of run', () => {
     await settle(page, 600);
     expect((await readState(page)).wave).toBe(wave);
 
-    // LAST, because showEnd re-renders the card from `hud.best`, which main.js
-    // has updated by now — re-rendering before the record assertions above would
-    // measure the second render rather than the real one.
+    // LAST, because showEnd re-renders the card without the best line, which
+    // only main.js's onRunEnd fills — re-rendering before the record assertions
+    // above would measure the second render rather than the real one.
     //
     // The two full-bleed reference panels stand down for the result. The key
     // sheet is no longer phase-gated, so "it never coexists with the end card"
@@ -103,6 +102,7 @@ test.describe('end of run', () => {
     // ...and the card says so rather than claiming a record.
     await expect(page.locator('#endcard .end-best')).not.toHaveClass(/\brecord\b/);
     await expect(page.locator('#endcard .end-best')).toContainText('Personal best');
+    await expect(page.locator('#endcard .end-best')).toContainText('999');
 
     expect(errors, errors.join('\n')).toEqual([]);
   });
