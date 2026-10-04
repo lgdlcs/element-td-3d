@@ -275,7 +275,7 @@ export class Game {
       this.rig.addShake(0.4);
       this.audio.play('leak');
       this.hud.pulseLives();
-      if (this.state.lives <= 0) this.#gameOver();
+      if (this.state.lives <= 0) this.#end(false);
     };
 
     this.creeps.onDeath = (i, x, y, z, bounty, type) => {
@@ -345,7 +345,7 @@ export class Game {
       this.state.interestActive = true;
       this.audio.play('waveClear');
 
-      if (def.n >= TOTAL_WAVES) { this.#victory(); return; }
+      if (def.n >= TOTAL_WAVES) { this.#end(true); return; }
 
       if (def.grantsElement) {
         this.state.pendingElementPicks++;
@@ -1416,8 +1416,8 @@ export class Game {
     // looked away, so seat them SETTLED rather than making the whole maze climb
     // out of the ground again; and the matrices have to be written NOW, because
     // batch.update() is only reachable from TowerManager.update() inside #step(),
-    // which FROZEN_PHASES skips — and the two most common ways out of spectate
-    // are #gameOver() and #victory(). Without this the end card comes up over
+    // which FROZEN_PHASES skips — and the most common way out of spectate is
+    // #end(). Without this the end card comes up over
     // every local tower stacked at the world origin at identity scale, with the
     // glow and rune layers still laid out for the opponent's board because
     // _layoutDirty is only consumed by that same update().
@@ -1446,29 +1446,21 @@ export class Game {
     this.onSpectateExit?.(reason);
   }
 
-  #gameOver() {
+  /**
+   * End the run, once. A defeat is not one event: every creep that leaks after
+   * lives reach 0 calls in again, from the same frame's remaining substeps, and
+   * each repeat used to re-render the end card and replay the defeat sting.
+   */
+  #end(won) {
+    if (this._ended) return;
+    this._ended = true;
     // BEFORE showEnd. The end card is the thing that says the run is over, and
     // showing it over a tinted opponent's board is incoherent — the player would
     // be reading their own result on top of someone else's maze.
     this.exitSpectate('over');
-    this.state.phase = 'gameover';
-    this.hud.showEnd(false);
-    this.audio.play('gameover');
-    this.#reportEnd(false);
-  }
-
-  #victory() {
-    this.exitSpectate('over');
-    this.state.phase = 'victory';
-    this.hud.showEnd(true);
-    this.audio.play('victory');
-    this.#reportEnd(true);
-  }
-
-  /** Fire onRunEnd exactly once, however the run ended. */
-  #reportEnd(won) {
-    if (this._ended) return;
-    this._ended = true;
+    this.state.phase = won ? 'victory' : 'gameover';
+    this.hud.showEnd(won);
+    this.audio.play(won ? 'victory' : 'gameover');
     this.onRunEnd?.({ score: this.state.score, wave: Math.max(1, this.state.wave), won });
   }
 
@@ -1509,7 +1501,7 @@ export class Game {
     if (mute) { this.fx.muted = false; this.rig.shakeMuted = false; this.pipeline.flashMuted = false; }
 
     // `this.spectating` re-read rather than `mute`: #step can end the run, and
-    // #gameOver leaves spectate synchronously.
+    // #end leaves spectate synchronously.
     if (this.spectating) this._spectate.update(dt);
 
     // A 3D rite owns the frame: the board sits behind a near-opaque veil, the

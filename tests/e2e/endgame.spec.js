@@ -61,9 +61,9 @@ test.describe('end of run', () => {
     await settle(page, 600);
     expect((await readState(page)).wave).toBe(wave);
 
-    // LAST, because showEnd re-renders the card without the best line, which
-    // only main.js's onRunEnd fills — re-rendering before the record assertions
-    // above would measure the second render rather than the real one.
+    // LAST, because showEnd re-renders the card from the store, which main.js
+    // has written by now — re-rendering before the record assertions above
+    // would measure the second render rather than the real one.
     //
     // The two full-bleed reference panels stand down for the result. The key
     // sheet is no longer phase-gated, so "it never coexists with the end card"
@@ -102,8 +102,28 @@ test.describe('end of run', () => {
     // ...and the card says so rather than claiming a record.
     await expect(page.locator('#endcard .end-best')).not.toHaveClass(/\brecord\b/);
     await expect(page.locator('#endcard .end-best')).toContainText('Personal best');
-    await expect(page.locator('#endcard .end-best')).toContainText('999');
+    await expect(page.locator('#endcard .end-best span')).toHaveText(/^999\s999$/);
 
+    expect(errors, errors.join('\n')).toEqual([]);
+  });
+
+  test('every extra leak after the last life leaves the card and the record alone', async ({ page }) => {
+    // A real defeat is several leaks: the rest of the frame's substeps keep
+    // walking creeps off the board after lives reach 0, and each one used to end
+    // the run again and re-render the card over the one main.js had saved for.
+    const { errors } = await startRun(page, { elements: ['fire'], gold: 0 });
+
+    await page.evaluate(() => {
+      localStorage.removeItem('elementtd.best.v1');
+      const g = window.__game;
+      g.state.lives = 1;
+      g.state.score = 4242;
+      for (let i = 0; i < 4; i++) g.creeps.onLeak(0, 'normal');
+    });
+
+    const best = page.locator('#endcard .end-best');
+    await expect(best).toHaveClass(/\brecord\b/);
+    await expect(best.locator('span')).toHaveText(/^4\s242 · previous none$/);
     expect(errors, errors.join('\n')).toEqual([]);
   });
 });
