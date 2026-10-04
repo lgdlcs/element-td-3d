@@ -80,13 +80,13 @@ const MOODS = Object.freeze({
     skyTop: 0x27365c, skyMid: 0xb7728a, horizon: 0xf6b071, fog: 0xc98d72, fogNear: 22, fogFar: 78,
     hemiSky: 0xffd8b0, hemiGround: 0x2c3a20, hemi: 1.05, key: 0xffc58a, keyI: 3.0,
     keyFrom: [-14, 11, -4], sun: 0xffd29a, sunSize: 16, grass: [0x6c8a3a, 0x97a048, 0x4a632c],
-    mote: 0xffd58a, lit: 0xfff2d6, dim: 0x6f7a58,
+    mote: 0xffd58a, lit: 0xfff2d6, dim: 0x6f7a58, rim: 0,
   }),
   night: Object.freeze({
     skyTop: 0x050916, skyMid: 0x17223f, horizon: 0x34486e, fog: 0x1c2945, fogNear: 16, fogFar: 64,
     hemiSky: 0x9db4e8, hemiGround: 0x1a2430, hemi: 1.15, key: 0xbccfff, keyI: 2.4,
     keyFrom: [10, 12, -6], sun: 0xe4ecff, sunSize: 7, grass: [0x2e4a33, 0x3d5a3c, 0x1e3326],
-    mote: 0xc8ff9a, lit: 0xd6e4ff, dim: 0x56637a,
+    mote: 0xc8ff9a, lit: 0xd6e4ff, dim: 0x56637a, rim: 1.8,
   }),
 });
 
@@ -555,6 +555,22 @@ class HuntView extends RiteView {
       boar: std(0x6a5240, { emissive: 0x2a1a10 }), bristle: std(0x463428, { emissive: 0x1c120a }), snout: std(0x8a5e4c), tusk: std(0xf1e6cc),
       hare: std(0xa48766), eye: new THREE.MeshBasicMaterial({ color: 0x0c0806 }),
     };
+    /**
+     * A rim of moonlight round every runner at night: brown bodies on the dark
+     * floor read as clutter, a lit edge reads as an animal at a glance. Off at
+     * dusk, where the runners are already darker than the lit grass and a light
+     * edge only closes the gap (tools/scratch/hunt-contrast.mjs, paired: night
+     * 0.113 -> 0.200, dusk 0.126 -> 0.106 had it been on).
+     */
+    const rim = this.rim = { value: new THREE.Color(this.mood.key).multiplyScalar(this.mood.rim) };
+    const addRim = (shader) => {
+      shader.uniforms.uRim = rim;
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uRim;')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          totalEmissiveRadiance += uRim * pow(1.0 - saturate(dot(normal, normalize(vViewPosition))), 3.0);`);
+    };
+    for (const m of Object.values(M)) if (m.isMeshStandardMaterial) m.onBeforeCompile = addRim;
     this.items = [];
     for (let i = 0; i < ANIMALS; i++) {
       const a = this.rite.animals[i];
