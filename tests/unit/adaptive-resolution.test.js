@@ -7,9 +7,9 @@ import { AdaptiveResolution } from '../../src/render/AdaptiveResolution.js';
  * rendered area (scale squared), with 4% jitter and the odd missed vsync.
  * `costMs(t)` is the full-resolution cost at virtual time t.
  */
-function play({ hz, costMs, secs }) {
+function play({ hz, costMs, secs, dpr = 1, onTick }) {
   const interval = 1000 / hz;
-  const renderer = { ratio: 1, getPixelRatio() { return this.ratio; }, setPixelRatio(v) { this.ratio = v; } };
+  const renderer = { ratio: dpr, getPixelRatio() { return this.ratio; }, setPixelRatio(v) { this.ratio = v; } };
   let changes = 0;
   const ar = new AdaptiveResolution(renderer, () => { changes++; });
   let seed = 7;
@@ -23,6 +23,7 @@ function play({ hz, costMs, secs }) {
     lastMs = vsyncs * interval;
     ar.update(lastMs / 1000);
     t += lastMs;
+    onTick?.(t, ar);
   }
   const settledMs = Math.max(1, Math.ceil((costMs(t) * ar.scale * ar.scale) / interval)) * (1000 / hz);
   return { changes, scale: ar.scale, settledFps: Math.round(1000 / settledMs), ratio: renderer.ratio };
@@ -60,6 +61,32 @@ describe('AdaptiveResolution under vsync-quantized frame times', () => {
   it.each(RATES)('gives the pixels back within a minute of a heavy wave ending at %i Hz', (hz) => {
     const r = play({ hz, costMs: (t) => (t < 30_000 ? 40 : 6), secs: 100 });
     expect(r.scale).toBe(1);
+  });
+
+  it.each(RATES)('is back at full resolution 10 s into every prep phase at %i Hz', (hz) => {
+    // 45 s waves that need the floor, 30 s preps (WAVES.prepFloor) that do not.
+    // Each wave fails the probe above the floor until its hold reaches the
+    // cap, which outlasts the prep unless the wave's end clears it.
+    const cycle = 75_000;
+    const heavy = (t) => t % cycle < 45_000;
+    const atTen = [];
+    let was = true;
+    play({
+      hz,
+      costMs: (t) => (heavy(t) ? 40 : 6),
+      secs: 600,
+      onTick: (t, ar) => {
+        if (was && !heavy(t)) ar.forgetFailures();
+        if (!heavy(t) && t % cycle >= 55_000 && atTen.length < Math.floor(t / cycle) + 1) atTen.push(ar.scale);
+        was = heavy(t);
+      },
+    });
+    expect(atTen).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+  });
+
+  it('keeps a display ratio off the 0.05 grid as the ceiling', () => {
+    const r = play({ hz: 100, costMs: () => 5, secs: 60, dpr: 4 / 3 });
+    expect(r).toMatchObject({ changes: 0, scale: 4 / 3, ratio: 4 / 3 });
   });
 
   it('stays at the clamp when even minScale cannot hold 60 fps', () => {

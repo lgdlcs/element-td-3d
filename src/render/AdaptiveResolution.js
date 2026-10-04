@@ -50,6 +50,11 @@
  * minute, and an upscale that fails is undone rather than re-estimated. The
  * flips decay from every 0.8 s to about one probe a minute, and a lighter
  * scene still gets its pixels back within that minute.
+ *
+ * A minute is a whole prep phase, though, and a long wave keeps failing the
+ * probe just above the floor until its hold is at the cap. The game knows when
+ * the board gets lighter even though the frame time cannot, so the end of a
+ * wave calls forgetFailures() and the climb starts right away.
  */
 
 /** Over this is under 60 fps, with room for a 60 Hz display's own jitter. */
@@ -150,7 +155,8 @@ export class AdaptiveResolution {
     }
     next = Math.max(this.minScale, Math.min(this.maxScale, next));
     // Quantise, so we do not reallocate render targets over rounding noise.
-    next = Math.round(next * 20) / 20;
+    // A display ratio off the grid (4/3) would round above it, so clamp again.
+    next = Math.min(this.maxScale, Math.round(next * 20) / 20);
     if (next === this.scale) return;
 
     if (next > this.scale) { this._upAt = this._clock; this._upFrom = this.scale; }
@@ -158,6 +164,15 @@ export class AdaptiveResolution {
     this.renderer.setPixelRatio(next);
     this.onChange?.();
     this._cooldown = 1;
+  }
+
+  /**
+   * The board just got lighter in a way a vsync-quantized frame time cannot
+   * show (a wave ended). Scales that lost 60 fps under the old load are no
+   * longer out of reach.
+   */
+  forgetFailures() {
+    this._blocked.clear();
   }
 
   /** Every repeat failure at the same scale doubles how long it stays out of reach. */
