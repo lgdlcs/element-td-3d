@@ -286,8 +286,8 @@ async function start() {
 
   if (!skipLobby) {
     const chosen = await openLobby(net);
-    multiplayer = chosen.multiplayer;
-    game.beginRun(chosen.seed);
+    multiplayer = chosen.mode === 'online';
+    game.beginRun(chosen.seed, { mode: chosen.mode });
     if (multiplayer) {
       // `chosen.you` rather than something read off the transport: the id is
       // assigned in `welcome` and the lobby is what observed it, so passing it
@@ -389,8 +389,9 @@ function wireSpectate(game, net, scoreboard) {
 /**
  * Run the lobby and resolve once the player has committed to a run.
  *
- * Resolves `{ seed, multiplayer }`. A solo choice mints its own seed, so the
- * seeded element draw behaves identically in both modes and there is no
+ * Resolves `{ seed, mode, you }`, mode being 'solo' or 'online' (runMode.js).
+ * A solo choice mints its own seed, so the seeded element draw behaves
+ * identically in both modes and there is no
  * "multiplayer only" code path inside the game to go stale.
  *
  * This function is the ONLY place that knows both the lobby and the transport.
@@ -411,15 +412,15 @@ function openLobby(net) {
       // server posts under the name it holds, and without this it holds none.
       // It is also harmless when no server is listening — every send is a no-op
       // while offline.
-      onSolo: (name) => { net.hello(name); finish(Math.floor(Math.random() * 0xffffffff) >>> 0, false, null); },
+      onSolo: (name) => { net.hello(name); finish(Math.floor(Math.random() * 0xffffffff) >>> 0, 'solo', null); },
     });
     window.__lobby = lobby;
 
-    function finish(seed, multiplayer, id = you) {
+    function finish(seed, mode, id = you) {
       if (done) return;      // 'go' can race a solo click; first commit wins
       done = true;
       lobby.hide();
-      resolve({ seed: seed >>> 0, multiplayer, you: id });
+      resolve({ seed: seed >>> 0, mode, you: id });
     }
 
     net.on('welcome', (m) => { you = m.id ?? you; });
@@ -434,7 +435,7 @@ function openLobby(net) {
       lobby.setPlayers(m.players ?? [], you);
     });
     net.on('error', (m) => lobby.setError(m.code, m.msg));
-    net.on('go', (m) => finish(m.seed, true));
+    net.on('go', (m) => finish(m.seed, 'online'));
     net.on('open', () => { lobby.setConnection('online'); if (!done) lobby.setState('idle'); });
     // A close is not necessarily the end — NetClient may be mid-backoff — so this
     // reports the transport's own view. The 'offline' event below is what says

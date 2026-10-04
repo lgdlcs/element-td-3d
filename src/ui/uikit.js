@@ -125,8 +125,8 @@ export const SHORTCUTS = [
     title: 'The run',
     rows: [
       { keys: ['Space'], label: 'Send the next wave now', note: 'the earlier you send, the bigger the bonus' },
-      { keys: ['P'], label: 'Pause and resume' },
-      { keys: ['1', '2', '3'], label: 'Game speed' },
+      { keys: ['P'], label: 'Pause and resume', note: 'solo only' },
+      { keys: ['1', '2', '3'], label: 'Game speed', note: 'solo only · online, everyone plays at 1×' },
     ],
   },
   {

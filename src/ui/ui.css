@@ -268,11 +268,13 @@ kbd.k-tight { min-width: 13px; padding: 2px 3px 3px; box-shadow: none; }
   padding: 5px 8px; font-family: var(--font-num); font-size: 11px; color: var(--ink-3);
   transition: background var(--t-fast), color var(--t-fast);
 }
-#speed-buttons button:hover { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
+#speed-buttons button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
 #speed-buttons button.active {
   background: linear-gradient(180deg, var(--gold-hi), var(--gold));
   color: #14100a; font-weight: 700;
 }
+/* Online runs: speed and pause are solo only (runMode.js). */
+#speed-buttons button:disabled, .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 /* On the gold face a pale cap disappears; it inverts instead of fading. */
 #speed-buttons button.active kbd {
   color: rgba(20, 16, 10, 0.72);
@@ -287,7 +289,7 @@ kbd.k-tight { min-width: 13px; padding: 2px 3px 3px; box-shadow: none; }
   display: grid; place-items: center; font-size: 10px; color: var(--ink-3);
   transition: all var(--t-fast);
 }
-.icon-btn:hover { color: var(--ink); border-color: var(--line-2); background: rgba(255, 255, 255, 0.06); }
+.icon-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--line-2); background: rgba(255, 255, 255, 0.06); }
 .icon-btn.paused, .icon-btn.active { color: var(--gold); border-color: rgba(229, 189, 121, 0.4); background: var(--gold-dim); }
 /* An icon button that carries its key: it gives up the square and becomes a
    pill, because a 30px box cannot hold a glyph and a cap without one of them

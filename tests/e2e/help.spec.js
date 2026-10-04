@@ -225,6 +225,10 @@ test.describe('key sheet', () => {
     // switch, so the comparison is an equality and not a subset.
     expect(groups['The selected tower']).toEqual(['U', 'M', 'X']);
     expect(groups['The run']).toEqual(['Space', 'P', '1', '2', '3']);
+    // Pause and speed are solo only (src/game/runMode.js), and the sheet says so.
+    const notes = await page.locator('#help .help-cols .hk-label i').allTextContents();
+    expect(notes).toContain('solo only');
+    expect(notes).toContain('solo only · online, everyone plays at 1×');
 
     // The remaining Game key lives in the Building section alongside the dock's,
     // and so does the right-button gesture that undoes exactly what Escape does.
