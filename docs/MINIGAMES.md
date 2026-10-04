@@ -1298,6 +1298,15 @@ between them, and **the only verb is where you hop**.
   `STRESS_LEAD` = 1.3 × its shake before the drop. One shake length for the
   whole floor made reaction time a cliff (always make it, or never); the
   spread turns it into a slope, the same lesson the 2D temper taught.
+- **Tiles wear out under you** (`LINGER` = 2.5 s, every wave). Stand on one
+  tile that long and it darkens and drops like any other (`STRESS_LEAD` × its
+  shake later), for everyone: a rival on it then goes with it (`#wear`,
+  `#ghostOn`). The schedule alone let a player hop once onto a late tile and
+  wait: the reference player stood 12–14 s without a hop at wave 3 and hopped
+  3.4 times a run. With wear it hops 6.2 times and never stands longer than
+  3.6 s (measured over the gate seeds). A faster or accelerating beat was tried
+  first: it shortened the run and moved the curve without fixing the stand,
+  because any schedule has a last pocket worth waiting in.
 - **Rivals.** Ghost hop lists built in `init` from the same schedule: each
   hops to its longest-lived neighbour `lag` seconds before its tile goes. The
   published `SeededRivals.outAt` is a cap: from `LURE` = 2.2 s before it, a
@@ -1313,12 +1322,15 @@ between them, and **the only verb is where you hop**.
   unchanged. Idle dies with the first tile: 0.06–0.12 (40 seeds × 5 waves).
 - **Calibration.** The harness brain no longer reads `gone`: it sees what the
   floor shows (settled, darkened, shaking with its glow, hole), leaves a tile
-  when it darkens, and picks the neighbour with the most settled ground around
-  it. Gate seeds: 0.934 / 0.731 / 0.614 at waves 3 / 28 / 53, every platforms
-  gate green. On 30 held-out seeds the same player reads 0.93 / 0.84 / 0.74,
-  i.e. about 0.1–0.2 generous; the old 2D rite read 0.62 / 0.53 / 0.47 there,
-  0.2 punishing. Five seeds is a small sample for a rite whose runs end in one
-  fall.
+  when it darkens, and picks the neighbour with the most settled ground
+  REACHABLE from it, since every stop now leaves a hole behind and a greedy
+  "most open neighbours" reader walked into dead ends. Gate seeds: 0.802 /
+  0.700 / 0.637 at waves 3 / 28 / 53, every platforms gate green. On 30
+  held-out seeds the same player reads 0.81 / 0.77 / 0.70, close at wave 3 and
+  about 0.1–0.15 generous later. Five seeds is a small sample for a rite whose
+  runs end in one fall; `LINGER` was picked from a grid (2.0–3.5 s, waves
+  flat or ramped, with or without a horizon) as the simplest setting that
+  passes every gate.
 - **The view.** Ground frame, camera ~52° down at fov 32, fitted to the FLOOR
   rather than the 16 × 9 field (nothing is picked), drifting toward you. Tiles
   are beveled slabs on jittered rock cones; the crack glow is an emissive map

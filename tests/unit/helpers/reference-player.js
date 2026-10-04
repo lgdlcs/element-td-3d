@@ -443,8 +443,10 @@ export function heavenBestXY(inst) {
  * what the 3D floor SHOWS: a tile is settled, darkened (`STRESS_LEAD` x the
  * warning ahead of its shake), shaking (with a glow that grows as it nears the
  * drop), or a hole. Settled tiles all look alike, so among them it prefers the
- * one with the most settled ground around it — "hop away from the collapse".
- * It leaves its own tile as soon as it darkens.
+ * one with the most settled ground reachable from it: "hop toward the room".
+ * Tiles wear out under a player who lingers (PlatformsRite LINGER), so every
+ * stop leaves a hole behind, and counting only adjacent open tiles walked the
+ * bot into dead ends. It leaves its own tile as soon as it darkens.
  *
  * NOT AN ORACLE ANY MORE. The 2D rite's bot read `inst.gone` directly and
  * re-planned 1.1 s ahead, which made reaction lag free by construction and the
@@ -464,10 +466,25 @@ function platformsLook(inst, i) {
   const w = inst.shake[i];
   if (left <= w) return left;                              // shaking: the glow says how long
   if (left <= w * PLATFORMS_STRESS) return 50; // darkened
-  let open = 0;
-  const n = neighbours(i, NB2);
-  for (let k = 0; k < n; k++) if (inst.gone[NB2[k]] - inst.t > inst.shake[NB2[k]] * PLATFORMS_STRESS) open++;
-  return 100 + open;
+  return 100 + settledRoom(inst, i);
+}
+
+const ROOM = new Int32Array(64);
+const SEEN = new Uint8Array(64);
+/** Settled tiles reachable from `i` through settled tiles: "where there is room". */
+function settledRoom(inst, i) {
+  const settled = (c) => inst.gone[c] - inst.t > inst.shake[c] * PLATFORMS_STRESS;
+  SEEN.fill(0);
+  let head = 0, tail = 0;
+  ROOM[tail++] = i; SEEN[i] = 1;
+  while (head < tail) {
+    const n = neighbours(ROOM[head++], NB2);
+    for (let k = 0; k < n; k++) {
+      const c = NB2[k];
+      if (!SEEN[c] && settled(c)) { SEEN[c] = 1; ROOM[tail++] = c; }
+    }
+  }
+  return tail;
 }
 
 function platformsIntent(inst) {

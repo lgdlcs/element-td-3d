@@ -71,6 +71,18 @@ const HOP = 0.42;
 
 // ---- the schedule -----------------------------------------------------------
 
+/**
+ * Seconds you may stand on one tile before it wears out under you.
+ *
+ * The schedule alone let a player stand still: hop once onto a tile that goes
+ * late and wait. The reference player stood up to 12-14 s without a hop at
+ * wave 3 and hopped 3.4 times a run. A worn tile darkens and shakes like any
+ * other (STRESS_LEAD x its shake) and drops for everyone, rivals standing on it
+ * included. With it: 6.2 hops at wave 3 and no stand longer than 3.6 s.
+ * Constant across waves: the schedule already carries the wave.
+ */
+const LINGER = 2.5;
+
 /** Seconds before the first tile starts to shake. The starting gun. */
 const FIRST_CRACK = 0.95;
 /** Seconds held after the last tile goes, so the field is seen to empty. */
@@ -299,6 +311,8 @@ class PlatformsRite {
     /** The tile you are flying to while HOPPING; -1 otherwise. */
     this.to = -1;
     this.hopAt = 0;
+    /** When you last landed. Standing past LINGER wears the tile out. */
+    this.landedAt = 0;
     /** A direction pressed mid-air, taken on landing so a quick tap is never lost. */
     this.queueX = 0;
     this.queueY = 0;
@@ -537,6 +551,7 @@ class PlatformsRite {
       this.cell = this.to;
       this.to = -1;
       this.state = STAND;
+      this.landedAt = t;
       this.px = cellX(this.cell);
       this.py = cellY(this.cell);
       this._warned = this.gone[this.cell] - this.shake[this.cell] <= t;
@@ -564,11 +579,38 @@ class PlatformsRite {
       return;
     }
 
+    if (t - this.landedAt >= LINGER && this.gone[this.cell] - this.shake[this.cell] * STRESS_LEAD > t) {
+      this.#wear(this.cell, t);
+    }
+
     if (!this._warned && this.gone[this.cell] - this.shake[this.cell] <= t) {
       // Your own tile just started to shake. Silent-bodied cue: once per tile.
       this._warned = true;
       this._events.push({ type: 'tick', x: this.px, y: this.py });
     }
+  }
+
+  /** Tile `c` darkens now and drops STRESS_LEAD shakes later. A rival standing on it then goes with it. */
+  #wear(c, t) {
+    const drop = t + this.shake[c] * STRESS_LEAD;
+    this.gone[c] = drop;
+    for (let id = 0; id < RIVAL_COUNT; id++) {
+      if (this.rivalOut[id] <= t) continue;
+      this.rivalOut[id] = Math.min(this.rivalOut[id], this.#ghostOn(id, c, drop));
+    }
+  }
+
+  /** The first time at or after `from` that ghost `id` stands on tile `c`; Infinity if never. */
+  #ghostOn(id, c, from) {
+    const p = this.paths[id];
+    const x = cellX(c), y = cellY(c);
+    const n = p.t.length;
+    for (let k = 1; k < n; k++) {
+      if (p.t[k] > from && p.x[k] === x && p.y[k] === y && p.x[k - 1] === x && p.y[k - 1] === y) {
+        return Math.max(p.t[k - 1], from);
+      }
+    }
+    return p.x[n - 1] === x && p.y[n - 1] === y ? Math.max(p.t[n - 1], from) : Infinity;
   }
 
   #fall(t) {
@@ -632,9 +674,8 @@ export const PLATFORMS_RITE = {
   hint: 'Hop off a tile before it drops: the longer you stay up, the more it pays',
   rules: [
     'Hop from tile to tile; hold two arrows to hop diagonally.',
-    'Tiles shake and glow red, then drop: hop off before yours goes.',
-    'A hole drops you too, but the edge of the floor is a wall.',
-    'Stay up longest and outlast your three rivals.',
+    'A tile shakes before it drops, and so does one you stand on too long.',
+    'Keep hopping, and outlast your three rivals.',
   ],
   keys: [
     { keys: ['↑', '←', '↓', '→'], action: 'Hop' },
@@ -652,7 +693,7 @@ export const PLATFORMS_RITE = {
 };
 
 export {
-  PlatformsRite, RAND_CALLS, COLS, ROWS, TILES, RIVAL_COUNT, PITCH, HOP, STRESS_LEAD,
+  PlatformsRite, RAND_CALLS, COLS, ROWS, TILES, RIVAL_COUNT, PITCH, HOP, STRESS_LEAD, LINGER,
   STAND, HOPPING, OUT, OUT_HOLD,
   cellX, cellY, cellAt, neighbours, hopTarget,
 };

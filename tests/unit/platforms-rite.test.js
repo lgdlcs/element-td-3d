@@ -67,9 +67,14 @@ function stepUntil(inst, input, pred, max = 2000) {
   for (let n = 0; n < max && !pred(inst); n++) inst.update(DT, input);
 }
 
-/** Park the player on `cell` as if they had landed there. */
+/** Park the player on `cell` as if they had just landed there. */
 function park(inst, cell) {
-  inst.cell = cell; inst.px = cellX(cell); inst.py = cellY(cell);
+  inst.cell = cell; inst.px = cellX(cell); inst.py = cellY(cell); inst.landedAt = inst.t;
+}
+
+/** Step idle with the player kept on `cell` (re-parked each step, so it never wears) until `pred`. */
+function holdOn(inst, cell, pred, max = 2000) {
+  for (let n = 0; n < max && !pred(inst); n++) { park(inst, cell); inst.update(DT, idle()); }
 }
 
 /** The axis that hops from `from` toward neighbour `to`. */
@@ -80,8 +85,11 @@ function toward(from, to) {
 /**
  * What the floor SHOWS, as a number (higher is safer): a hole, a shaking tile
  * (its glow says how long is left), a darkened tile, or settled ground scored by
- * how much settled ground surrounds it. The same reading as the calibration
+ * how much settled ground it connects to. The same reading as the calibration
  * brain in helpers/reference-player.js; no `gone` time beyond what is visible.
+ * Room rather than adjacent open tiles since tiles wear out under a player who
+ * lingers: every stop leaves a hole behind, and a greedy reader walks into a
+ * dead end.
  */
 const NB = new Int32Array(8);
 const NB2 = new Int32Array(8);
@@ -90,10 +98,17 @@ function look(inst, i) {
   if (left <= 0) return -1e9;
   if (left <= inst.shake[i]) return left;
   if (left <= inst.shake[i] * STRESS_LEAD) return 50;
-  let open = 0;
-  const n = neighbours(i, NB2);
-  for (let k = 0; k < n; k++) if (inst.gone[NB2[k]] - inst.t > inst.shake[NB2[k]] * STRESS_LEAD) open++;
-  return 100 + open;
+  const seen = new Uint8Array(TILES);
+  const queue = [i];
+  seen[i] = 1;
+  for (let h = 0; h < queue.length; h++) {
+    const n = neighbours(queue[h], NB2);
+    for (let k = 0; k < n; k++) {
+      const c = NB2[k];
+      if (!seen[c] && inst.gone[c] - inst.t > inst.shake[c] * STRESS_LEAD) { seen[c] = 1; queue.push(c); }
+    }
+  }
+  return 100 + queue.length;
 }
 
 /** Deliberate play: stay on settled ground, leave a darkening tile for the safest-looking neighbour. */
@@ -302,6 +317,40 @@ describe('platforms — dying', () => {
     expect(inst.aliveFor - inst.gone[victim]).toBeLessThanOrEqual(DT + 1e-9);
   });
 
+  it('wears out a tile you stand on for 2.5 s: it darkens, then drops', () => {
+    const inst = spawn({ seed: 21, wave: 15 });
+    const cell = inst.order[TILES - 1];
+    park(inst, cell);
+    const scheduled = inst.gone[cell];
+    const t0 = inst.t;
+    stepUntil(inst, idle(), (i) => i.gone[cell] !== scheduled, Math.ceil(2.5 / DT) + 2);
+    expect(inst.t - t0).toBeCloseTo(2.5, 1);
+    expect(inst.gone[cell] - inst.t).toBeCloseTo(inst.shake[cell] * STRESS_LEAD, 9);
+    expect(inst.gone[cell]).toBeLessThan(scheduled);
+    stepUntil(inst, idle(), (i) => !i.alive);
+    expect(inst.aliveFor - inst.gone[cell]).toBeLessThanOrEqual(DT + 1e-9);
+  });
+
+  it('does not wear a tile you keep hopping off', () => {
+    const inst = spawn({ seed: 21, wave: 3 });
+    const a = inst.order[TILES - 1];
+    const nb = new Int32Array(8);
+    const n = neighbours(a, nb);
+    let b = nb[0];
+    for (let k = 1; k < n; k++) if (inst.gone[nb[k]] > inst.gone[b]) b = nb[k];
+    park(inst, a);
+    const ga = inst.gone[a], gb = inst.gone[b];
+    for (let k = 0; k < 6; k++) {
+      const [from, to] = k % 2 ? [b, a] : [a, b];
+      stepUntil(inst, idle(), () => false, Math.ceil(1 / DT));
+      inst.update(DT, toward(from, to));
+      stepUntil(inst, idle(), (i) => i.state === STAND);
+    }
+    expect(inst.alive).toBe(true);
+    expect(inst.gone[a]).toBe(ga);
+    expect(inst.gone[b]).toBe(gb);
+  });
+
   it('kills a player who lands in a hole, at the landing', () => {
     const inst = spawn({ seed: 21, wave: 15 });
     const hole = inst.order[5];
@@ -310,8 +359,7 @@ describe('platforms — dying', () => {
     let from = -1;
     for (let k = 0; k < n; k++) if (inst.gone[nb[k]] > inst.gone[hole] + 2) from = nb[k];
     expect(from, 'no standing neighbour next to the hole on this seed').toBeGreaterThanOrEqual(0);
-    park(inst, from);
-    stepUntil(inst, idle(), (i) => i.t > i.gone[hole] + 0.1);
+    holdOn(inst, from, (i) => i.t > i.gone[hole] + 0.1);
     const t0 = inst.t;
     inst.update(DT, toward(from, hole));
     stepUntil(inst, idle(), (i) => !i.alive || i.state === STAND, HOP_STEPS + 2);
@@ -430,9 +478,10 @@ describe('platforms — skill', () => {
   it('makes the BEST neighbour worth more than any live one', () => {
     // The collapse's own regression test: if neighbours died independently,
     // a random live neighbour would be as good as the best one. Measured at
-    // 0.047 / 0.040 / 0.064 (16 seeds). Smaller than the 2D rite's ~0.23,
-    // and that is the honest cost of 8-way hops: most neighbours can be reached
-    // and left again, so the skill moved from "which tile" to "leave in time".
+    // 0.094 / 0.032 / 0.073 (16 seeds) since tiles wear out under a lingering
+    // player. Smaller than the 2D rite's ~0.23, and that is the honest cost of
+    // 8-way hops: most neighbours can be reached and left again, so the skill
+    // moved from "which tile" to "leave in time".
     for (const wave of [3, 28, 53]) {
       const best = mean(wave, () => skilled);
       const any = mean(wave, (seed) => anyLive(mulberry32(seed * 7 + 3)));
