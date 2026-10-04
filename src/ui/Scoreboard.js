@@ -157,6 +157,7 @@ export class Scoreboard {
     // rail can still grow down into a panel that fitted a moment earlier. #fit()
     // is what guarantees the two glass cards never actually overlap.
     this.$rail = root.querySelector('#threat');
+    this.$dock = root.querySelector('#dock');
     // Height is the whole constraint here, so a resize has to re-run the test
     // even when no `scores` frame is due (paused, or between runs).
     window.addEventListener('resize', () => this.#fit());
@@ -234,6 +235,15 @@ export class Scoreboard {
    * its height and cannot make the test flip back.
    */
   #fit() {
+    // The dock is centred and `width: max-content`, so it widens with every
+    // bound element: with three elements it already reaches x=228 at 1600 wide,
+    // under this panel's right edge at 260. When it does, sit on top of it
+    // instead of under it; the rail test below still decides whether that
+    // leaves enough room.
+    const d = this.$dock?.getBoundingClientRect();
+    const underDock = d && d.width > 0 && d.left < this.$el.offsetLeft + this.$el.offsetWidth + 8;
+    this.$el.style.bottom = underDock ? `${Math.round(innerHeight - d.top + 8)}px` : '';
+
     const rail = this.$rail;
     if (!rail) return;
     // A rail that is faded out (codex open) is not something to collide with,
