@@ -28,7 +28,7 @@ import { riteRng } from '../../src/minigames/schedule.js';
 import { mulberry32 } from '../../src/core/Rng.js';
 import { NAMES } from '../../src/minigames/rivals.js';
 import {
-  PLATFORMS_RITE, RAND_CALLS, TILES, COLS, ROWS, RIVAL_COUNT, HOP, STRESS_LEAD,
+  PLATFORMS_RITE, RAND_CALLS, TILES, COLS, ROWS, RIVAL_COUNT, HOP, STRESS_LEAD, LINGER,
   STAND, HOPPING, OUT,
   cellX, cellY, cellAt, neighbours, hopTarget,
 } from '../../src/minigames/rites/PlatformsRite.js';
@@ -425,6 +425,57 @@ describe('platforms — the rivals', () => {
     }
   });
 
+  it('keeps rivals under the wear rule, and walks them off a tile the player wore out', () => {
+    // A player who walks to a rival and parks wears tiles out next to it and
+    // under it. Rivals must see a worn tile like any other drop and keep off
+    // it, and no rival may stand still longer than the player is allowed to.
+    const at = { x: 0, y: 0, h: 0 };
+    let wears = 0, rodeWornDown = 0;
+    for (let seed = 1; seed <= 60; seed++) {
+      const inst = spawn({ seed, wave: 12 });
+      const prey = seed % RIVAL_COUNT;
+      const planned = Float64Array.from(inst.gone);
+      const still = new Float64Array(RIVAL_COUNT);
+      const last = Array.from({ length: RIVAL_COUNT }, () => ({ x: NaN, y: NaN }));
+      for (let n = 0; n < 2000; n++) {
+        let input = idle();
+        if (inst.alive && inst.state === STAND) {
+          inst.ghostAt(prey, inst.t, at);
+          const dx = at.x - inst.px, dy = at.y - inst.py;
+          if (look(inst, inst.cell) < 100) {
+            input = axis(Math.sign(Math.round(dx)) || 1, Math.sign(Math.round(dy)));
+          }
+        }
+        const before = Float64Array.from(inst.gone);
+        const done = inst.update(DT, input) === true;
+        for (let c = 0; c < TILES; c++) if (inst.gone[c] < before[c]) wears++;
+        for (let id = 0; id < RIVAL_COUNT; id++) {
+          if (inst.rivalOut[id] <= inst.t) continue;
+          inst.ghostAt(id, inst.t, at);
+          const moved = at.x !== last[id].x || at.y !== last[id].y;
+          still[id] = moved ? 0 : still[id] + DT;
+          last[id].x = at.x; last[id].y = at.y;
+          expect(still[id], `seed ${seed} rival ${id} stood ${still[id].toFixed(2)} s`).toBeLessThan(LINGER);
+          if (at.h === 0) {
+            expect(inst.gone[cellAt(at.x, at.y)], `seed ${seed} rival ${id} on a gone tile`).toBeGreaterThan(inst.t);
+          }
+        }
+        for (const e of inst.drainEvents()) {
+          if (e.type !== 'claim') continue;
+          inst.ghostAt(e.i, inst.rivalOut[e.i], at);
+          expect(e.x, `seed ${seed} rival ${e.i} claimed away from where it fell`).toBe(at.x);
+          const p = inst.paths[e.i];
+          const stood = p.x.at(-1) === p.x.at(-2) && p.y.at(-1) === p.y.at(-2);
+          const c = cellAt(at.x, at.y);
+          if (stood && inst.gone[c] !== planned[c]) rodeWornDown++;
+        }
+        if (done) break;
+      }
+    }
+    expect(wears, 'the chase never wore a tile out').toBeGreaterThan(30);
+    expect(rodeWornDown, 'a rival stood on a worn tile until it dropped').toBe(0);
+  });
+
   it('drops every ghost into a hole or with its tile, never over the edge of the floor', () => {
     for (let seed = 1; seed <= 60; seed++) {
       for (const wave of [3, 28, 53]) {
@@ -478,13 +529,14 @@ describe('platforms — skill', () => {
   it('makes the BEST neighbour worth more than any live one', () => {
     // The collapse's own regression test: if neighbours died independently,
     // a random live neighbour would be as good as the best one. Measured at
-    // 0.094 / 0.032 / 0.073 (16 seeds) since tiles wear out under a lingering
-    // player. Smaller than the 2D rite's ~0.23, and that is the honest cost of
-    // 8-way hops: most neighbours can be reached and left again, so the skill
-    // moved from "which tile" to "leave in time".
+    // 0.120 / 0.116 / 0.168 (64 seeds) since rivals keep hopping too. Sixteen
+    // seeds read 0.094 / 0.017 / 0.072 on the same code: the rivals' share of
+    // the score is noise at that size. Smaller than the 2D rite's ~0.23, and
+    // that is the honest cost of 8-way hops: most neighbours can be reached
+    // and left again, so the skill moved from "which tile" to "leave in time".
     for (const wave of [3, 28, 53]) {
-      const best = mean(wave, () => skilled);
-      const any = mean(wave, (seed) => anyLive(mulberry32(seed * 7 + 3)));
+      const best = mean(wave, () => skilled, 64);
+      const any = mean(wave, (seed) => anyLive(mulberry32(seed * 7 + 3)), 64);
       expect(best - any, `wave ${wave}: best ${best.toFixed(3)} vs any-live ${any.toFixed(3)}`)
         .toBeGreaterThan(0.03);
     }
