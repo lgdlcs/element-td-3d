@@ -11,8 +11,8 @@
  *     further from it on the lake bed) and still covers the pixels its catch
  *     ellipse is tested against. The depth is cosmetic and never reaches the rite.
  *  2. THE LEAD IS DRAWN. Every fish trails a wake on the surface exactly as
- *     long as the distance it swims during one flight of the lure; the first
- *     casts also show a ring where the lure should land (`ghostCasts`).
+ *     long as the distance it swims during one flight of the lure, and a ring
+ *     marks where the lure must land to catch the fish nearest the pointer.
  *  3. THE FLIGHT IS VISIBLE. The lure arcs from the rod tip to the reticle in
  *     FLIGHT seconds, splashes, and either comes back with a fish flying out of
  *     the water toward you or is reeled in empty. A rival's float appears over
@@ -968,10 +968,9 @@ class FishingView extends RiteView {
         this.reticle.scale.setScalar(1 + denied * 0.15);
       }
     }
-    // The ghost: for the first casts, where the lure must land to catch the
-    // fish nearest the pointer.
+    // The lead ring: where the lure must land to catch the fish nearest the pointer.
     this.ghost.visible = false;
-    if (R.ghostCasts > 0 && R.aimed && ready) {
+    if (R.aimed && ready) {
       const i = R.nearestFish(R.aimX, R.aimY, t);
       if (i >= 0) {
         const F = R.fish[i];

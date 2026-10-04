@@ -14,11 +14,11 @@ outright, in one commit, and everything below describes what replaced them.
 | rite | id | clock | verb | scores on | `RAND_CALLS` | rivals |
 |---|---|---:|---|---|---:|:--:|
 | escape from gay heaven **(3D)** | `heaven` | 20 s | steer a mote, pointer or `axis` | strikes dodged out of a fixed count | 121 | — |
-| Falling Platforms **(3D)** | `platforms` | 24 s | hop tile to tile, `axis` only | survival + who you outlasted | 41 | yes |
-| Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds | points against a fixed PAR | 24 | — |
+| Falling Platforms **(3D)** | `platforms` | 24 s | hop tile to tile, `axis` only; a tile wears out under you in 2.5 s | survival + who you outlasted | 41 | yes |
+| Lucky Shot **(3D)** | `luckyshot` | 20 s | aim and fire, 24 rounds, 0.5 s rack | points against a fixed PAR (60) | 24 | — |
 | Offroad Racing **(3D)** | `offroad` | 26 s | steer, boost | gates + gold + placing | 58 | yes |
 | Game Hunt **(3D)** | `hunt` | 20 s | reaction shot at runners, reload | animals taken out of 10 | 69 | yes |
-| Fishing **(3D)** | `fishing` | 20 s | leading shot (cast) | points against a fixed PAR | 94 | yes |
+| Fishing **(3D)** | `fishing` | 20 s | leading shot (cast on the drawn lead ring) | points against a fixed PAR | 94 | yes |
 
 Full write-ups in §13.
 
@@ -1512,12 +1512,19 @@ the bottom-right corner. Same competitive rule as `hunt`, same clock,
   the pier). Each fish is drawn on the camera ray through its field point at
   its own cosmetic depth (`placeOnRay`), so deep fish look deep and still
   cover the pixels of their catch ellipse. The depth never reaches the rite.
-- **The lead is drawn.** Every fish trails a wake on the surface exactly as long
-  as the distance it swims during one flight ("aim one wake ahead of the
-  fish"), with a ripple marking its tail so the full length reads, and for the first three casts a dashed ring marks where the lure must
-  land to catch the fish nearest the pointer (`ghostCasts`, `nearestFish`).
-  The speed band is 3× wide and stratified, so no memorised offset plays the
-  rite: the unit suite searches for the best constant and requires it to lose.
+- **The lead is drawn, on every cast.** A dashed ring marks where the lure
+  must land to catch the fish nearest the pointer (`nearestFish`), and every
+  fish trails a wake exactly as long as the distance it swims during one
+  flight. The ring used to show for the first three casts only, as a lesson
+  ("aim one wake ahead of the fish"), and the rules spent two of their four
+  lines explaining it; a 20-second party game cannot afford a lesson, so the
+  answer is now always drawn and the rules are three short lines. The skill
+  left is the hand's: the ring moves as fast as its fish, which fish to take
+  matters (gold, the rivals' deadlines), and a miss costs the long reel. The
+  calibration gate is unchanged by this: its reference player always aimed
+  at the lead. The speed band is 3× wide and stratified, so no memorised
+  offset plays the rite: the unit suite searches for the best constant and
+  requires it to lose.
 - **The rivals are visible.** In the last 1.5 s before a rival's deadline its
   float bobs over the fish, on a line from its boat; at the deadline the fish
   is yanked out of the water to that boat and the name tag's tally ticks up.

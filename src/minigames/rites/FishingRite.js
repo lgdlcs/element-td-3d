@@ -27,9 +27,11 @@
  * THE LEAD IS A PER-FISH QUANTITY. The speed band is 3x wide and stratified, so
  * every run holds the slowest fish, the fastest, and fourteen between, and no
  * single memorised offset covers the shoal (the unit suite measures the best
- * constant and requires it to lose). Every fish trails a wake exactly as long
- * as the distance it covers during one flight: "cast one wake ahead of its
- * nose" is the whole lesson, and the first GHOST_CASTS casts show the answer.
+ * constant and requires it to lose). The view draws the answer for the fish
+ * nearest the pointer, a ring where the lure must land (`nearestFish`), on
+ * every cast: a 20 s party game cannot afford a lesson. The skill left is
+ * the hand's: following a ring that moves as fast as its fish, choosing which
+ * fish, and not wasting a cast on the long reel of a miss.
  *
  * WHAT IS SCARCE: casts. An empty cast reels for longer than a full one, both
  * reels lengthen with the wave, and the rivals' claim schedule tightens with
@@ -151,12 +153,6 @@ const LOST = 2;
 /** How long a landed lure stays "the hook in the water" before the rod frees it. */
 const SETTLE_HOLD = 0.18;
 
-/**
- * How many casts the lead ghost is shown for. It draws the exact answer; shown
- * forever it would replace the lead instead of teaching it.
- */
-const GHOST_CASTS = 3;
-
 class FishingRite {
   init(ctx) {
     this.wave = ctx.wave;
@@ -177,7 +173,6 @@ class FishingRite {
     this.last = null;
     /** Rite time before which no new cast is accepted. */
     this.readyAt = 0;
-    this.ghostCasts = GHOST_CASTS;
     /** Last moment a cast was refused, for the view's "still reeling" pulse. */
     this.deniedAt = -9;
 
@@ -283,7 +278,7 @@ class FishingRite {
 
   /**
    * The swimming fish whose lead point is nearest (x, y) at time `t`, or -1.
-   * What the ghost marks during the first casts. Pure.
+   * What the view's lead ring marks. Pure.
    */
   nearestFish(x, y, t) {
     let best = -1;
@@ -343,7 +338,6 @@ class FishingRite {
         this.hook = { x: hx, y: hy, t0: this.t, landAt: this.t + FLIGHT, hit: -1, settledAt: -1, readyAt: Infinity };
         this.last = this.hook;
         this.casts++;
-        if (this.ghostCasts > 0) this.ghostCasts--;
         this._push({ type: 'tick', x: hx, y: hy });
       }
     }
@@ -443,10 +437,9 @@ export const FISHING_RITE = {
   name: 'Fishing',
   hint: 'Cast ahead of the fish — the lure takes a moment to land',
   rules: [
-    'The lure takes a moment to land: cast where a fish WILL be.',
-    'Each wake is that lead: aim one wake ahead of the fish.',
-    'Golden fish are worth 3. The rival boats take whatever you leave.',
-    'An empty cast takes longer to reel in.',
+    'Point near a fish: a ring shows where it will be when your lure lands.',
+    'Cast on the ring to catch it. Golden fish are worth 3.',
+    'Rival boats take the fish you leave, and a miss reels in slowly.',
   ],
   keys: [
     { keys: ['Mouse'], action: 'Aim' },
@@ -465,7 +458,7 @@ export const FISHING_RITE = {
 
 export {
   FishingRite, RAND_CALLS, FLIGHT, REEL_EMPTY, REEL_HELD, REEL_WAVE, CLAIM_SQUEEZE,
-  FISH, PAR, PAR_FRACTION, GOLD_VALUE, GHOST_CASTS, BOB, LANE_NEAR, LANE_FAR,
+  FISH, PAR, PAR_FRACTION, GOLD_VALUE, BOB, LANE_NEAR, LANE_FAR,
   HOOK_R, RY_K, SPEED_MIN, SPEED_MAX, LEN_MIN, LEN_MAX, SPAN, RIVALS, DURATION,
   SWIMMING, KEPT, LOST,
 };

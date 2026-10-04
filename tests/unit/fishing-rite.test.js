@@ -31,7 +31,7 @@ import { riteRng } from '../../src/minigames/schedule.js';
 import { assertRiteContract } from './helpers/rite-contract.js';
 import {
   FISHING_RITE, RAND_CALLS, FLIGHT, REEL_EMPTY, REEL_HELD, REEL_WAVE, CLAIM_SQUEEZE,
-  FISH, PAR, PAR_FRACTION, GOLD_VALUE, GHOST_CASTS, BOB, LANE_NEAR, LANE_FAR,
+  FISH, PAR, PAR_FRACTION, GOLD_VALUE, BOB, LANE_NEAR, LANE_FAR,
   HOOK_R, RY_K, SPEED_MIN, SPEED_MAX, LEN_MAX, DURATION, SWIMMING, KEPT, LOST,
 } from '../../src/minigames/rites/FishingRite.js';
 
@@ -547,23 +547,8 @@ describe('FishingRite — what is scarce', () => {
     }
   });
 
-  it('spends the lead ghost after three casts', () => {
-    // The ghost draws the exact answer. As a permanent overlay it replaces the
-    // lead instead of teaching it, so the view shows it only while
-    // `ghostCasts > 0`, and that counter must reach zero and stay there.
-    const inst = spawn({ seed: 42, wave: 8 });
-    expect(inst.ghostCasts).toBe(GHOST_CASTS);
-    expect(GHOST_CASTS).toBeLessThanOrEqual(3);
-    for (let n = 0; n < GHOST_CASTS + 2; n++) {
-      cast(inst, 0, EMPTY_Y);
-      for (let i = 0; i < 200 && (inst.hook || inst.t < inst.readyAt); i++) idle(inst, 1);
-    }
-    expect(inst.casts).toBe(GHOST_CASTS + 2);
-    expect(inst.ghostCasts).toBe(0);
-  });
-
   it('marks the fish whose lead point is nearest the pointer', () => {
-    // What the ghost points at. Asked at a fish's own lead point, the answer is
+    // What the lead ring points at. Asked at a fish's own lead point, the answer is
     // that fish; asked once it has left the water, it is some other fish.
     const inst = spawn({ seed: 4242, wave: 8 });
     idle(inst, 12);
