@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { bootGame, settle } from './fixtures.js';
+import { bootGame, settle, fakeRoomServer } from './fixtures.js';
 
 /**
  * The lobby as it stands TODAY, before any leaderboard work lands on it.
@@ -32,6 +32,10 @@ const appErrors = (errors) =>
   errors.filter((e) => !/WebSocket connection to .* failed/i.test(e));
 
 test.describe('lobby', () => {
+  // Hermetic: whatever server is listening on 5274 (often someone's live game)
+  // is never contacted, and the lobby settles on 'idle' in one round trip.
+  test.beforeEach(({ page }) => fakeRoomServer(page));
+
   test('shows the entry screen and holds the run back until a choice is made', async ({ page }) => {
     const { errors } = await bootGame(page, { query: 'mp' });
 
@@ -174,6 +178,120 @@ test.describe('lobby', () => {
     await expect(page.locator('#picker-cards .pcard')).toHaveCount(3);
     expect(await page.evaluate(() => window.__game.state.pendingElementPicks)).toBe(1);
     expect(await page.evaluate(() => window.__game.state.gold)).toBe(275);
+
+    expect(appErrors(errors), errors.join('\n')).toEqual([]);
+  });
+});
+
+/**
+ * Speed and pause are solo only (src/game/runMode.js). Online, one player at 3x
+ * makes the room wait for `over`, and one player on pause holds it open for
+ * good. These reach a real online run through fakeRoomServer, so no server on
+ * the machine is needed or touched.
+ */
+test.describe('run mode', () => {
+  const speedOf = (page) => page.evaluate(() => window.__game.state.speed);
+  const pausedOf = (page) => page.evaluate(() => window.__game.state.paused);
+
+  async function enterRoom(page) {
+    const server = await fakeRoomServer(page);
+    const handles = await bootGame(page, { query: 'mp' });
+    await expect.poll(() => page.evaluate(() => window.__lobby?.state), { timeout: 20000 }).toBe('idle');
+    await page.click('#lobby-create');
+    await expect.poll(() => page.evaluate(() => window.__lobby.state)).toBe('lobby');
+    return { server, ...handles };
+  }
+
+  async function startOnline(page) {
+    await page.click('#lobby-ready');
+    await page.click('#lobby-start');
+    await expect.poll(() => page.evaluate(() => window.__game.mode)).toBe('online');
+  }
+
+  // Binds the first element through the game, like helpers.startRun, so the
+  // keys below reach Game rather than the element picker.
+  async function bindFire(page) {
+    await page.evaluate(() => {
+      const g = window.__game;
+      g.state.pendingElementPicks = 1;
+      g.chooseElement('fire');
+    });
+    await expect(page.locator('#picker')).not.toHaveClass(/\bopen\b/);
+  }
+
+  test('online: 1/2/3, the speed buttons and P do nothing', async ({ page }) => {
+    const { server, errors } = await enterRoom(page);
+    await startOnline(page);
+    await bindFire(page);
+
+    const buttons = page.locator('#speed-buttons button');
+    await expect(buttons).toHaveCount(3);
+    for (const n of [1, 2, 3]) {
+      const b = page.locator(`#speed-buttons button[data-speed="${n}"]`);
+      await expect(b).toBeDisabled();
+      await expect(b).toHaveAttribute('title', /^Solo only/);
+    }
+    await expect(page.locator('#pause-btn')).toBeDisabled();
+    await expect(page.locator('#pause-btn')).toHaveAttribute('title', /^Solo only/);
+
+    await page.keyboard.press('3');
+    await page.keyboard.press('2');
+    await page.keyboard.press('p');
+    await page.locator('#speed-buttons button[data-speed="3"]').click({ force: true });
+    await page.locator('#pause-btn').click({ force: true });
+    await settle(page, 200);
+    expect(await speedOf(page)).toBe(1);
+    expect(await pausedOf(page)).toBe(false);
+    // The console is a caller too.
+    expect(await page.evaluate(() => window.__game.setSpeed(3))).toBe(false);
+    expect(await page.evaluate(() => window.__game.togglePause())).toBe(false);
+    expect(await speedOf(page)).toBe(1);
+
+    // The page told the server it was racing: status frames flow while unpaused.
+    await expect.poll(() => server.received.some((m) => m.t === 'status')).toBe(true);
+
+    expect(appErrors(errors), errors.join('\n')).toEqual([]);
+  });
+
+  test('online: a lost connection says so, hides the scoreboard, and keeps 1x', async ({ page }) => {
+    const { server, errors } = await enterRoom(page);
+    await startOnline(page);
+    await bindFire(page);
+    const rival = { id: 'p2', name: 'Rival', host: false, ready: true, lives: 50, score: 0, wave: 1, killed: 0, leaked: 0 };
+    const me = { ...rival, id: 'p1', name: 'Me', host: true };
+    server.send({ t: 'scores', players: [me, rival] });
+    await expect(page.locator('#scoreboard')).toBeVisible();
+
+    await server.drop();
+
+    await expect(page.locator('#toast')).toContainText('Connection lost');
+    await expect(page.locator('#scoreboard')).toBeHidden();
+    expect(await page.evaluate(() => window.__game.mode)).toBe('online');
+    await page.keyboard.press('3');
+    await settle(page, 100);
+    expect(await speedOf(page)).toBe(1);
+
+    expect(appErrors(errors), errors.join('\n')).toEqual([]);
+  });
+
+  test('Play solo from inside a room leaves it, and speed and pause work', async ({ page }) => {
+    const { server, errors } = await enterRoom(page);
+    await page.click('#lobby-solo');
+    await expect(page.locator('#lobby')).toBeHidden();
+    await expect.poll(() => server.received.map((m) => m.t)).toContain('leave');
+    expect(await page.evaluate(() => window.__game.mode)).toBe('solo');
+    await bindFire(page);
+
+    await expect(page.locator('#speed-buttons button[data-speed="3"]')).toBeEnabled();
+    await expect(page.locator('#speed-buttons button[data-speed="3"]')).toHaveAttribute('title', 'Triple speed · key 3');
+    await page.keyboard.press('3');
+    await expect.poll(() => speedOf(page)).toBe(3);
+    await page.locator('#speed-buttons button[data-speed="2"]').click();
+    await expect.poll(() => speedOf(page)).toBe(2);
+    await page.keyboard.press('p');
+    await expect.poll(() => pausedOf(page)).toBe(true);
+    await page.locator('#pause-btn').click();
+    await expect.poll(() => pausedOf(page)).toBe(false);
 
     expect(appErrors(errors), errors.join('\n')).toEqual([]);
   });

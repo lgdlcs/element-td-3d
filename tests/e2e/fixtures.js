@@ -163,3 +163,39 @@ export async function silentServer(page) {
     // sent to the page.
   });
 }
+
+/**
+ * Stand a minimal ROOM server in front of the page, so a spec can reach an
+ * online run without a real server on the machine (and without touching one).
+ *
+ * It answers just enough of the protocol for one host alone in a room:
+ * hello -> welcome, create -> joined, ready -> lobby, start -> go. Everything the page sends is
+ * recorded in `received` (parsed frames), `send()` pushes any other frame,
+ * and `drop()` closes the socket the way a lost connection would.
+ *
+ * MUST BE CALLED BEFORE bootGame, like silentServer.
+ *
+ * @returns {Promise<{received: object[], send(msg: object): void, drop(): Promise<void>}>}
+ */
+export async function fakeRoomServer(page, { seed = 1234 } = {}) {
+  const received = [];
+  let socket = null;
+  const me = { id: 'p1', name: '', host: true, ready: false, lives: 0, score: 0, wave: 0, killed: 0, leaked: 0 };
+  await page.routeWebSocket('**/ws', (ws) => {
+    socket = ws;
+    const say = (msg) => ws.send(JSON.stringify(msg));
+    ws.onMessage((raw) => {
+      const msg = JSON.parse(String(raw));
+      received.push(msg);
+      if (msg.t === 'hello') { me.name = msg.name; say({ t: 'welcome', id: me.id }); }
+      if (msg.t === 'create') say({ t: 'joined', code: 'ABCD', you: me.id, players: [me] });
+      if (msg.t === 'ready') { me.ready = !!msg.ready; say({ t: 'lobby', code: 'ABCD', players: [me] }); }
+      if (msg.t === 'start') say({ t: 'go', seed, at: Date.now() });
+    });
+  });
+  return {
+    received,
+    send(msg) { socket.send(JSON.stringify(msg)); },
+    async drop() { await socket?.close({ code: 1001, reason: 'test drop' }); },
+  };
+}
