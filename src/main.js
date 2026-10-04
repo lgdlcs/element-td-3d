@@ -412,7 +412,13 @@ function openLobby(net) {
       // server posts under the name it holds, and without this it holds none.
       // It is also harmless when no server is listening — every send is a no-op
       // while offline.
-      onSolo: (name) => { net.hello(name); finish(Math.floor(Math.random() * 0xffffffff) >>> 0, 'solo', null); },
+      // leave() first: a player still seated in a room keeps the host's Begin
+      // button on "Waiting on <name>" forever. Harmless outside a room.
+      onSolo: (name) => {
+        net.leave();
+        net.hello(name);
+        finish(Math.floor(Math.random() * 0xffffffff) >>> 0, 'solo', null);
+      },
     });
     window.__lobby = lobby;
 
