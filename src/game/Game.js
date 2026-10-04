@@ -421,6 +421,7 @@ export class Game {
 
   #beginPrep(nextWave) {
     this.state.phase = 'prep';
+    this.pipeline.adaptive?.forgetFailures();
     this.state.wave = nextWave - 1;
     this.state.prepTimer = waveDef(nextWave).prepTime;
     // The standing banner for the whole build phase, so a player who tabbed away

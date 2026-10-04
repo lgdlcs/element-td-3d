@@ -31,11 +31,38 @@
  * longer worth looking at, so the controller stops and lets the frame rate fall.
  * A visibly soft image at 40 fps is a state the player can understand and act on
  * (lower the preset); an unreadable image at 60 fps is not.
+ *
+ * WHY IT PROBES INSTEAD OF READING HEADROOM
+ *
+ * On a vsync'd display a frame lasts a whole number of refresh intervals, so
+ * the frame time says only whether the frame made the refresh, never by how
+ * much. At 100 Hz every frame is 10 or 20 ms and at 60 Hz 16.7 or 33.3, so no
+ * fixed "comfortably inside budget" threshold is reachable on every display: a
+ * 13.5 ms upscale bar was met by every 10 ms frame and a 16.6 ms target missed
+ * by every 20 ms one, and a machine sitting on that boundary flipped between
+ * two scales every 48 frames for as long as it ran (screen recording
+ * 2026-10-04, tools/scratch/vsync-flicker.mjs). The same bar was never met at
+ * 60 Hz, so a scale lost to one heavy wave never came back there.
+ *
+ * So the only question is whether the frame meets 60 fps. While it does, the
+ * controller adds pixels a step at a time. A scale that loses 60 fps is kept
+ * out of reach for a hold that doubles every time it fails again, up to a
+ * minute, and an upscale that fails is undone rather than re-estimated. The
+ * flips decay from every 0.8 s to about one probe a minute, and a lighter
+ * scene still gets its pixels back within that minute.
+ *
+ * A minute is a whole prep phase, though, and a long wave keeps failing the
+ * probe just above the floor until its hold is at the cap. The game knows when
+ * the board gets lighter even though the frame time cannot, so the end of a
+ * wave calls forgetFailures() and the climb starts right away.
  */
 
-/** Target frame time. 60 fps with a little slack so we do not oscillate. */
-const TARGET_MS = 16.6;
-const UPSCALE_MS = 13.5;   // only add pixels if we are comfortably inside budget
+/** Over this is under 60 fps, with room for a 60 Hz display's own jitter. */
+const BUDGET_MS = 17.5;
+/** A loss of 60 fps this soon after an upscale is that upscale failing. */
+const PROBE_MS = 3_000;
+const FIRST_HOLD_MS = 10_000;
+const MAX_HOLD_MS = 60_000;
 
 export class AdaptiveResolution {
   /**
@@ -71,6 +98,11 @@ export class AdaptiveResolution {
 
     this._samples = [];
     this._cooldown = 0;
+    this._clock = 0;
+    this._upAt = -Infinity;
+    this._upFrom = this.scale;
+    /** scale -> {until, hold}: levels that lost 60 fps, kept out of reach. */
+    this._blocked = new Map();
   }
 
   /**
@@ -84,6 +116,7 @@ export class AdaptiveResolution {
     const ms = dt * 1000;
     if (ms > 500) { this._samples.length = 0; return; }
 
+    this._clock += ms;
     this._samples.push(ms);
     // 24 frames is ~0.4s at 60fps and ~0.6s at 40fps: long enough that one
     // slow frame cannot move the resolution, short enough that convergence
@@ -103,27 +136,49 @@ export class AdaptiveResolution {
     this._samples.length = 0;
 
     let next = this.scale;
-    if (median > TARGET_MS) {
-      // Cost is linear in AREA, so the scale factor that would hit the target
-      // is sqrt(target / actual). Damp it: overshooting down is ugly and the
-      // measurement is one sample of a noisy process.
-      const ideal = this.scale * Math.sqrt(TARGET_MS / median);
-      next = this.scale + (ideal - this.scale) * 0.6;
-    } else if (median < UPSCALE_MS && this.scale < this.maxScale) {
-      // Climb back slowly. A player who walks away from a heavy wave should
-      // regain sharpness, but not so eagerly that we ping-pong across the
-      // budget every second.
-      next = this.scale * 1.06;
+    if (median > BUDGET_MS) {
+      this._block(this.scale);
+      if (this._clock - this._upAt < PROBE_MS) {
+        // The upscale we just made cost 60 fps: undo it.
+        next = this._upFrom;
+      } else {
+        // Cost is linear in AREA, so the scale factor that would hit the
+        // target is sqrt(target / actual). Damp it, since overshooting down is
+        // ugly, but always move at least one step: a frame quantized to the
+        // next refresh can look close enough that the damped step rounds back.
+        const ideal = this.scale * Math.sqrt(BUDGET_MS / median);
+        next = Math.min(this.scale + (ideal - this.scale) * 0.6, this.scale - 0.05);
+      }
+    } else {
+      const up = Math.round(Math.min(this.maxScale, this.scale * 1.06) * 20) / 20;
+      if (!(this._blocked.get(up)?.until > this._clock)) next = up;
     }
-
     next = Math.max(this.minScale, Math.min(this.maxScale, next));
     // Quantise, so we do not reallocate render targets over rounding noise.
-    next = Math.round(next * 20) / 20;
+    // A display ratio off the grid (4/3) would round above it, so clamp again.
+    next = Math.min(this.maxScale, Math.round(next * 20) / 20);
     if (next === this.scale) return;
 
+    if (next > this.scale) { this._upAt = this._clock; this._upFrom = this.scale; }
     this.scale = next;
     this.renderer.setPixelRatio(next);
     this.onChange?.();
     this._cooldown = 1;
+  }
+
+  /**
+   * The board just got lighter in a way a vsync-quantized frame time cannot
+   * show (a wave ended). Scales that lost 60 fps under the old load are no
+   * longer out of reach.
+   */
+  forgetFailures() {
+    this._blocked.clear();
+  }
+
+  /** Every repeat failure at the same scale doubles how long it stays out of reach. */
+  _block(scale) {
+    const prev = this._blocked.get(scale);
+    const hold = prev ? Math.min(prev.hold * 2, MAX_HOLD_MS) : FIRST_HOLD_MS;
+    this._blocked.set(scale, { until: this._clock + hold, hold });
   }
 }
