@@ -369,8 +369,9 @@ test.describe('the lottery', () => {
     expect(r.earned).toBe(r.expectedPayout);
     // Nothing created, nothing lost.
     expect(r.books.fed).toBe(r.books.paid + r.books.held);
-    // And the house edge is real, over the whole run.
-    expect(r.earned).toBeLessThan(r.spent);
+    // No house-edge check here: the seed is random, and 53 draws of a
+    // 0.93-deviation return can end ahead (seen: 15 965 earned for 12 500
+    // spent). EV + pot feed < 1 is asserted in tests/unit/lottery.test.js.
     expect(errors).toEqual([]);
   });
 
