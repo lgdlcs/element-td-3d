@@ -38,6 +38,9 @@
   --warn:          #ffb454;
 
   /* --- geometry ------------------------------------------------------ */
+  /* Room the dock takes at the bottom of the screen: its height, its bottom
+     offset and 8px of air. Re-set wherever the dock grows (min-width 2200px). */
+  --dock-clear:    122px;
   --r-s: 7px;
   --r-m: 11px;
   --r-l: 16px;
@@ -741,10 +744,9 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   width: 296px;
   /* Never down into the dock: it is centred and widens with every bound
      element, so at 1280x720 it ran under this panel's last 18px and hid the
-     Space cap on Send wave. 122px is the dock's height plus its 16px offset
-     and 8px of air. Past the cap the panel scrolls, with its actions row
-     pinned to the bottom (.insp-actions). */
-  max-height: calc(100vh - var(--topbar-h) - 12px - 122px);
+     Space cap on Send wave. Past the cap the panel scrolls, with its actions
+     row pinned to the bottom (.insp-actions). */
+  max-height: calc(100vh - var(--topbar-h) - 12px - var(--dock-clear));
   border-radius: var(--r-l);
   box-shadow: var(--shadow-2);
   overflow: hidden auto;
@@ -950,6 +952,9 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   display: flex; align-items: center; justify-content: center; gap: 7px;
   transition: background var(--t-fast), color var(--t-fast);
 }
+/* Three columns leave Sell ~92px at the 296px panel width, and "Sell +45 X"
+   needs ~94 with the default padding: the X cap was clipped at the edge. */
+.insp-actions-3 button { padding-inline: 4px; gap: 4px; }
 .insp-actions button em { font-style: normal; font-family: var(--font-num); font-size: 11.5px; color: var(--gold); }
 .insp-actions .primary { color: var(--ink); }
 .insp-actions .primary:hover:not(:disabled) { background: rgba(229, 189, 121, 0.16); color: var(--gold-hi); }
@@ -1510,7 +1515,7 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 /* On a 1440p canvas a fixed-px HUD shrinks to a sliver of the frame. Step the
    interface up so it keeps the same optical weight against the board. */
 @media (min-width: 2200px) {
-  :root { --topbar-h: 66px; }
+  :root { --topbar-h: 66px; --dock-clear: 151px; }
   #topbar { height: 66px; padding: 0 26px; gap: 30px; }
   .brand-name { font-size: 19px; }
   .stat { min-width: 96px; padding: 7px 16px 8px; }
