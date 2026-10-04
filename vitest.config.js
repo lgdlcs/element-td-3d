@@ -31,5 +31,12 @@ export default defineConfig({
     reporters: ['default'],
     // Unit tests are pure; nothing should ever take a second.
     testTimeout: 10000,
+    // Node 26 ships its own `globalThis.localStorage` (Web Storage), which is
+    // undefined without --localstorage-file and shadows jsdom's. Turning it off
+    // lets jsdom files see a real Storage again. Guarded so older Nodes, which
+    // do not know the flag, still start.
+    execArgv: process.allowedNodeEnvironmentFlags.has('--experimental-webstorage')
+      ? ['--no-experimental-webstorage']
+      : [],
   },
 });

@@ -12,6 +12,7 @@ import { Picker } from './Picker.js';
 import { Inspector } from './Inspector.js';
 import { Threat } from './Threat.js';
 import { publishTop } from './globalTop.js';
+import { loadBest } from '../net/BestScore.js';
 
 /**
  * DOM overlay HUD.
@@ -86,7 +87,11 @@ export class HUD {
       b.addEventListener('click', () => this.game.setSpeed(Number(b.dataset.speed)));
     });
     this.nodes.pause.addEventListener('click', () => this.game.togglePause());
-    this.$('#restart-btn').addEventListener('click', () => window.location.reload());
+    // One stray click on ⟳ used to throw the whole run away (and, online, the
+    // room seat with it).
+    this.$('#restart-btn').addEventListener('click', () => {
+      if (window.confirm('Restart? This run will be lost.')) window.location.reload();
+    });
 
     // ---- key sheet ------------------------------------------------------
     this.nodes.help.innerHTML = HELP_TEMPLATE;
@@ -559,9 +564,12 @@ export class HUD {
     // end card with nothing but a z-index between them.
     this.setHelp(false);
     this.build.setCodex(false);
-    // `best` is whatever was loaded at boot, so a run that beat it is a new
-    // record even though the store is written by main.js after this renders.
-    const record = s.score > this.best;
+    // Read from the store, not from `this.best`: another tab may have set a
+    // record since this one last refreshed it. Game.js #end renders this card
+    // before onRunEnd saves the run, so the store still holds the score to
+    // beat; the rule (strictly greater) is saveBest's.
+    const best = loadBest().score;
+    const record = s.score > best;
     const board = this.leaderboard.slice(0, 5);
     this.nodes.endcard.innerHTML = `
       <div class="end-inner ${won ? 'win' : 'lose'}">
@@ -570,8 +578,8 @@ export class HUD {
         <p>${won ? `All ${TOTAL_WAVES} waves repelled.` : `You fell on wave ${s.wave} of ${TOTAL_WAVES}.`}</p>
         <div class="end-best ${record ? 'record' : ''}">
           ${record
-            ? `<b>New personal best</b><span>${num(s.score)} · previous ${this.best ? num(this.best) : 'none'}</span>`
-            : `<b>Personal best</b><span>${this.best ? num(this.best) : '—'}</span>`}
+            ? `<b>New personal best</b><span>${num(s.score)} · previous ${best ? num(best) : 'none'}</span>`
+            : `<b>Personal best</b><span>${best ? num(best) : '—'}</span>`}
         </div>
         ${board.length ? `<div class="end-board">
           <u>Global top ${board.length}</u>
@@ -691,7 +699,7 @@ const TEMPLATE = /* html */`
       </div>
       <div class="stat">
         <span class="stat-k">Wave</span>
-        <b class="stat-v"><span id="stat-wave">1</span><em id="stat-wave-total">/ 50</em></b>
+        <b class="stat-v"><span id="stat-wave">1</span><em id="stat-wave-total">/ ${TOTAL_WAVES}</em></b>
       </div>
       <div class="stat">
         <span class="stat-k">Score</span>

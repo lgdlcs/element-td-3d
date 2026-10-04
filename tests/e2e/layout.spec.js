@@ -231,6 +231,46 @@ test.describe('layout at 1280x720', () => {
     expect(errors, errors.join('\n')).toEqual([]);
   });
 
+  // The dock is centred and widens with every bound element, so by wave 15
+  // (four elements) it reaches under both corner panels at 720p. The inspector
+  // caps its height above it; the leaderboard sits on top of it. It must stay
+  // visible and clickable: its rows are the only way into spectate.
+  test('with four elements the inspector and the leaderboard clear the dock', async ({ page }) => {
+    const { errors } = await startRun(page, { elements: ['fire', 'water', 'earth', 'nature'], gold: 20000 });
+    const rect = (sel) => page.evaluate((s) => {
+      const r = document.querySelector(s).getBoundingClientRect();
+      return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+    }, sel);
+    const meets = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+
+    await page.evaluate(() => {
+      const g = window.__game;
+      g.build('fire', 10, 8);
+      g.setBuildSelection(null);
+      g.selectTower(g.towers.towers[0].id);
+      const sb = window.__scoreboard;
+      sb.show();
+      sb.update([0, 1].map((i) => ({ id: 'p' + i, name: 'Player' + i, score: 1000 - i, lives: 40, wave: 15 })), 'p0');
+    });
+    await expect(page.locator('#inspector')).toHaveClass(/\bopen\b/);
+    await expect.poll(() => page.evaluate(() =>
+      +getComputedStyle(document.getElementById('scoreboard')).opacity),
+    { message: 'the leaderboard never faded in' }).toBe(1);
+
+    const dock = await rect('#dock');
+    expect(meets(await rect('#inspector'), dock), 'inspector over the dock').toBe(false);
+    const sb = await rect('#scoreboard');
+    expect(meets(sb, dock), 'leaderboard over the dock').toBe(false);
+    // Visible is not enough: the row has to be what a click lands on.
+    const hit = await page.evaluate(() => {
+      const row = document.querySelector('#sb-list .sb-row.other');
+      const r = row.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('.sb-row') === row;
+    });
+    expect(hit, 'the other player\'s row is not clickable').toBe(true);
+    expect(errors, errors.join('\n')).toEqual([]);
+  });
+
   test('the resting HUD still leaves the middle of the board clear', async ({ page }) => {
     // The existing layout contract from tools/ui-contract.mjs, at the smaller
     // frame this file is about: nothing the player did not open may sit over the

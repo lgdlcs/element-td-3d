@@ -38,6 +38,9 @@
   --warn:          #ffb454;
 
   /* --- geometry ------------------------------------------------------ */
+  /* Room the dock takes at the bottom of the screen: its height, its bottom
+     offset and 8px of air. Re-set wherever the dock grows (min-width 2200px). */
+  --dock-clear:    122px;
   --r-s: 7px;
   --r-m: 11px;
   --r-l: 16px;
@@ -739,9 +742,15 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   position: absolute;
   right: 18px; top: calc(var(--topbar-h) + 12px);
   width: 296px;
+  /* Never down into the dock: it is centred and widens with every bound
+     element, so at 1280x720 it ran under this panel's last 18px and hid the
+     Space cap on Send wave. Past the cap the panel scrolls, with its actions
+     row pinned to the bottom (.insp-actions). */
+  max-height: calc(100vh - var(--topbar-h) - 12px - var(--dock-clear));
   border-radius: var(--r-l);
   box-shadow: var(--shadow-2);
-  overflow: hidden;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
   opacity: 0; transform: translateX(12px) scale(0.99);
   pointer-events: none;
   transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease);
@@ -866,10 +875,7 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
    top of the viewport with no height of its own. Scoped to `.morph` so the
    default and foundation panels keep their intrinsic-height layout.
    ------------------------------------------------------------------------- */
-#inspector.morph {
-  display: flex; flex-direction: column;
-  max-height: calc(100vh - var(--topbar-h) - 30px);
-}
+#inspector.morph { display: flex; flex-direction: column; }
 #inspector.morph > .insp-head, #inspector.morph > .insp-actions { flex: none; }
 .morph-sheet { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-top: 0; }
 .morph-sheet::-webkit-scrollbar { width: 6px; }
@@ -925,7 +931,11 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 .morph-loss .ao-cost { color: var(--ink-4); text-decoration: line-through solid var(--warn); }
 .morph-loss .ao-name::after { content: ' ↓'; color: var(--warn); }
 
-.insp-actions { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1px; background: var(--line); border-top: 1px solid var(--line); }
+.insp-actions { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1px; background: var(--line); border-top: 1px solid var(--line);
+  /* Pinned while the panel scrolls (see #inspector's max-height), so it needs
+     an opaque floor: the buttons themselves are transparent. */
+  position: sticky; bottom: 0; z-index: 3;
+  background: linear-gradient(var(--line), var(--line)), var(--solid); }
 .insp-actions-3 { grid-template-columns: 1.25fr 0.95fr 1fr; }
 /* Three columns leave the Sell button ~90px, and num() groups with a thin space
    — enough for "+1 162" to break across two lines mid-number. */
@@ -942,6 +952,9 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   display: flex; align-items: center; justify-content: center; gap: 7px;
   transition: background var(--t-fast), color var(--t-fast);
 }
+/* Three columns leave Sell ~92px at the 296px panel width, and "Sell +45 X"
+   needs ~94 with the default padding: the X cap was clipped at the edge. */
+.insp-actions-3 button { padding-inline: 4px; gap: 4px; }
 .insp-actions button em { font-style: normal; font-family: var(--font-num); font-size: 11.5px; color: var(--gold); }
 .insp-actions .primary { color: var(--ink); }
 .insp-actions .primary:hover:not(:disabled) { background: rgba(229, 189, 121, 0.16); color: var(--gold-hi); }
@@ -1502,7 +1515,7 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 /* On a 1440p canvas a fixed-px HUD shrinks to a sliver of the frame. Step the
    interface up so it keeps the same optical weight against the board. */
 @media (min-width: 2200px) {
-  :root { --topbar-h: 66px; }
+  :root { --topbar-h: 66px; --dock-clear: 151px; }
   #topbar { height: 66px; padding: 0 26px; gap: 30px; }
   .brand-name { font-size: 19px; }
   .stat { min-width: 96px; padding: 7px 16px 8px; }
@@ -1613,6 +1626,9 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 @media (max-width: 1440px) {
   #threat { width: 218px; }
   #inspector { width: 274px; }
+  /* 274px leaves Sell ~85px, and "Sell +45 X" needs ~94: it was painted past
+     the panel's edge and clipped. */
+  .insp-actions button { padding: 12px 4px; gap: 4px; }
   .tcard { width: 62px; }
   .tc-name { font-size: 9.5px; }
   #dock { gap: 10px; padding: 8px 10px; }
@@ -1673,9 +1689,14 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
 /* Below ~900px the two rails would start crowding the board: the threat rail
    collapses to its handle and the dock loses its aspirational fusion slots. */
 @media (max-width: 900px) {
+  /* The bar has to hold six element pips, the speed row and five buttons. At
+     844 wide it overflowed by ~118px and pushed help and DEV off the right
+     edge; the wordmark and the gaps are what can go. */
+  #topbar { gap: 10px; }
+  .controls { gap: 5px; }
+  .brand { display: none; }
   .stat { min-width: 0; padding: 5px 9px 6px; }
   .stat-k { display: none; }
-  .brand-sub { display: none; }
   #threat { transform: translateX(calc(-100% + 4px)); }
   #threat:hover, #threat:focus-within { transform: none; }
   #threat .th-inner { opacity: 0; }
@@ -1687,7 +1708,11 @@ body.codex-open #inspector { transform: translateX(calc(100% + 22px)); opacity: 
   #codex { width: calc(100vw - 20px); bottom: 96px; }
   .codex-grid { grid-template-columns: repeat(3, 1fr); }
   .picker-cards { flex-wrap: wrap; }
-  .picker-inner { max-height: 100vh; overflow-y: auto; }
+  /* The top bar sits above the picker (z 35 over 30), so the scroll box starts
+     under it, or the card titles scroll out from behind the bar. */
+  #picker { padding-top: var(--topbar-h); }
+  .picker-inner { max-height: calc(100vh - var(--topbar-h)); overflow-y: auto; }
+  .insp-actions kbd { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

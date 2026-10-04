@@ -1,7 +1,7 @@
 /**
  * Wave schedule.
  *
- * 50 waves shaped as a difficulty staircase with boss beats every 10 and a
+ * 55 waves shaped as a difficulty staircase with boss beats every 10 and a
  * mixed "gauntlet" finale. HP scales super-linearly but bounty scales slower,
  * so late game requires compounding, not just spending.
  */
