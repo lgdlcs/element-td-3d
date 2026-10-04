@@ -29,7 +29,7 @@ import { MINIGAMES } from '../../src/core/Config.js';
 import { FIELD, makeInput, clickAt } from '../../src/minigames/contract.js';
 import { riteRng } from '../../src/minigames/schedule.js';
 import {
-  LUCKY_SHOT_RITE, RAND_CALLS, AMMO, PAR, DURATION, END_HOLD,
+  LUCKY_SHOT_RITE, RAND_CALLS, AMMO, RACK, PAR, DURATION, END_HOLD,
   PER_ROW, TARGETS, ROW_TABLE, GOLDEN_MULT, BYSTANDER_VALUE,
 } from '../../src/minigames/rites/LuckyShotRite.js';
 import { assertRiteContract } from './helpers/rite-contract.js';
@@ -73,6 +73,14 @@ function stepUntil(inst, done, what, cap = Math.ceil(DURATION / DT) + 60) {
     if (done(inst, ended)) return n + 1;
   }
   throw new Error(`stepUntil: ${what} never happened in ${cap} steps`);
+}
+
+/** Steps from one shot to the first step the rifle is racked again. */
+const RACK_STEPS = Math.ceil(RACK / DT - 1e-6);
+
+/** Wait out the rack after a shot, so the next `update` is the first that can fire. */
+function rack(inst) {
+  for (let k = 0; k < RACK_STEPS - 1; k++) inst.update(DT, makeInput());
 }
 
 /** A shot at (x, y), delivered through the click queue like the host does. */
@@ -225,13 +233,12 @@ describe('LuckyShotRite — the click queue', () => {
   /**
    * THE TEST THE WHOLE WAVE 0 INPUT CHANGE EXISTS FOR.
    *
-   * Two presses inside one fixed step, at two different places, resolve as two
-   * different targets. Nothing about this can work if the rite reads
-   * `input.x/y`: there is only one of those per step, so the second shot would
-   * land on the first one's target (or on nothing) and one of the two rounds
-   * would buy nothing.
+   * A press resolves where it was pressed. `x/y` is left at a second press's
+   * position, as the host leaves it, so a rite that read `input.x/y` would fire
+   * the first round at the wrong place. The second press falls inside RACK and
+   * is dropped without costing a round.
    */
-  it('resolves two clicks in one step as two distinct hits', () => {
+  it('resolves a click where it was pressed, and drops a second one inside the rack', () => {
     const inst = spawn({ seed: 77 });
     const found = findTwoClean(inst);
     expect(found, 'no two clean targets found in 15 s — the layout changed').not.toBeNull();
@@ -248,12 +255,12 @@ describe('LuckyShotRite — the click queue', () => {
       clicks: [clickAt(found.ax, found.ay), clickAt(found.bx, found.by)],
     }));
 
-    expect(inst.aliveAt(found.a, inst.t), 'first click did not land').toBe(false);
-    expect(inst.aliveAt(found.b, inst.t), 'second click did not land').toBe(false);
-    expect(inst.shots).toBe(2);
-    expect(inst.hits).toBe(2);
-    expect(inst.ammo).toBe(AMMO - 2);
-    expect(inst.points - before).toBe(inst.targets[found.a].value + inst.targets[found.b].value);
+    expect(inst.aliveAt(found.a, inst.t), 'first click did not land where it was pressed').toBe(false);
+    expect(inst.aliveAt(found.b, inst.t), 'second click fired while the rifle racked').toBe(true);
+    expect(inst.shots).toBe(1);
+    expect(inst.hits).toBe(1);
+    expect(inst.ammo, 'a dropped press must not cost a round').toBe(AMMO - 1);
+    expect(inst.points - before).toBe(inst.targets[found.a].value);
   });
 
   it('fires on the right button and on a keyboard commit, exactly like the left', () => {
@@ -321,8 +328,10 @@ describe('LuckyShotRite — hit resolution', () => {
     inst.update(DT, shotAt(f.x, f.y));
     expect(inst.aliveAt(i, inst.t)).toBe(false);
 
-    // Same target, one step later, still down: a second round is spent and buys
-    // nothing. Without this a player could sit on one cut-out and farm it.
+    // Same target, as soon as the rifle is racked, still down: a second round
+    // is spent and buys nothing. Without this a player could sit on one cut-out
+    // and farm it.
+    rack(inst);
     const pts = inst.points;
     const x2 = inst.xAt(i, inst.t + DT);
     inst.update(DT, shotAt(x2, f.y));
@@ -392,7 +401,7 @@ describe('LuckyShotRite — hit resolution', () => {
      * and it fires the instant the prize is standing — for the whole clock. It
      * used to bank the multiple over and over. Now the prize is finite by
      * construction, so the ENTIRE rite spent waiting for it is worth one prize:
-     * at most 12 of 38, less than a third of the payout, against 24 rounds it
+     * at most 12 of 60, a fifth of the payout, against 24 rounds it
      * never fired. Whatever else a player does, this is not the line.
      */
     for (const seed of [1234, 77, 31337]) {
@@ -480,33 +489,42 @@ describe('LuckyShotRite — ammo is the design', () => {
     const miss = shotAt(0, -4.3);
     for (let k = 0; k < AMMO; k++) {
       expect(inst.update(DT, miss), `ended early, after ${k + 1} of ${AMMO} rounds`).not.toBe(true);
+      if (k < AMMO - 1) rack(inst);
     }
     expect(inst.ammo).toBe(0);
 
-    // A short hold so the last shot is seen, then it is over — far short of the
-    // clock, which is the point: an empty gun ends the rite, it does not leave
-    // the player watching a booth for fifteen seconds.
+    // A short hold so the last shot is seen, then it is over, short of the
+    // clock: an empty gun ends the rite, it does not leave the player watching
+    // a booth until the timer runs out.
     stepUntil(inst, (_i, ended) => ended, 'the rite ending after running dry', 200);
-    expect(inst.t).toBeLessThan(AMMO * DT + END_HOLD + 4 * DT);
-    expect(inst.t).toBeLessThan(DURATION / 4);
+    expect(inst.t).toBeLessThan((AMMO - 1) * RACK + END_HOLD + 4 * DT);
+    expect(inst.t).toBeLessThan(DURATION);
   });
 
   it('spends nothing once the gun is empty', () => {
     const inst = spawn();
     const miss = shotAt(0, -4.3);
-    for (let k = 0; k < AMMO + 20; k++) inst.update(DT, miss);
+    for (let k = 0; k < AMMO + 5; k++) { inst.update(DT, miss); rack(inst); }
     expect(inst.shots).toBe(AMMO);
     expect(inst.ammo).toBe(0);
   });
 
-  it('drops the overflow of one step rather than the rounds', () => {
-    // Twelve clicks in one step (the host's cap) spend twelve rounds and no
-    // more; the queue is not a way to buy ammo back.
+  it('spends one round on a step of twelve clicks: the rack drops the rest', () => {
     const inst = spawn();
     const clicks = Array.from({ length: 12 }, () => clickAt(0, -4.3));
     inst.update(DT, makeInput({ x: 0, y: -4.3, inside: true, clicks }));
-    expect(inst.shots).toBe(12);
-    expect(inst.ammo).toBe(AMMO - 12);
+    expect(inst.shots).toBe(1);
+    expect(inst.ammo).toBe(AMMO - 1);
+  });
+
+  it('lasts at least AMMO racks for a player who presses on every step', () => {
+    // The mash that used to end the rite in about two seconds.
+    const inst = spawn();
+    const miss = shotAt(0, -4.3);
+    let n = 0;
+    while (inst.update(DT, miss) !== true && n < Math.ceil(DURATION / DT) + 60) n++;
+    expect(inst.shots).toBe(AMMO);
+    expect(inst.t).toBeGreaterThanOrEqual((AMMO - 1) * RACK + END_HOLD - DT);
   });
 
   it('scores a do-nothing run at exactly zero', () => {
@@ -628,6 +646,7 @@ describe('LuckyShotRite — what the view is handed', () => {
     runTo(inst, f.n);
     inst.drainEvents();
     inst.update(DT, shotAt(f.x, f.y));
+    rack(inst);
     inst.update(DT, shotAt(0, 4.2));
     const ev = inst.drainEvents();
     expect(ev).toHaveLength(2);

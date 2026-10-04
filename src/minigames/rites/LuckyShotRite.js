@@ -57,6 +57,14 @@ import { clamp } from '../contract.js';
 /** Seconds on the clock, matching `duration` on the def below. */
 const DURATION = 20;
 
+/**
+ * Seconds the rifle takes to rack after a round. A press while it racks is
+ * dropped, not spent: without it a player mashing the button emptied all 24
+ * rounds in about two seconds and the rite was over before it began. With it,
+ * the fastest possible run lasts AMMO * RACK = 12 s.
+ */
+const RACK = 0.5;
+
 /** THE ANTI-MASH RULE. Rounds, spent on a hit and on a miss alike. */
 const AMMO = 24;
 
@@ -143,9 +151,13 @@ const BYSTANDER_VALUE = -1;
 /**
  * PAR — the score that is worth a full payout.
  *
- * Nineteen hits at the average target value, out of twenty-four rounds. That is
- * 79 % accuracy on moving targets, which is a good run and not a perfect one:
- * the ceiling has to be reachable or the top of the curve is decoration.
+ * Two and a half points a round, over twenty-four rounds: every round on a
+ * rabbit or better, with plates and the golden in the mix. RACK gives a player
+ * half a second to pick between shots, so the bar asks them to pick. It was 38
+ * (nineteen hits at the average value) when the rounds could be sprayed; with
+ * the rack the reference player scores 48.8 / 37.4 / 33.8 at waves 3 / 28 / 53
+ * and a perfect one 74.6, so 60 puts it back on the calibration curve with the
+ * ceiling still reachable (tests/unit/calibration.test.js).
  *
  * PAR IS CONSTANT ACROSS WAVES, AND THAT IS DELIBERATE. `ctx.wave` shrinks and
  * quickens the valuable row, so a late rite genuinely is harder — but the payout
@@ -158,9 +170,7 @@ const BYSTANDER_VALUE = -1;
  * at all — a constant bar with a constant game is a rite that gets easier as the
  * player's other numbers grow. See WAVE_SHRINK for the lever that carries it.
  */
-const AVG_VALUE = ROW_TABLE.reduce((a, r) => a + r.value, 0) / ROWS;   // 2
-const PAR_HITS = 19;
-const PAR = PAR_HITS * AVG_VALUE;                                      // 38
+const PAR = AMMO * 2.5;   // 60
 
 /** Seconds a knocked-down target stays down before it flips back up. */
 const DOWN_TIME = 1.15;
@@ -398,6 +408,8 @@ class LuckyShotRite {
     this.bestStreak = 0;
     /** World time the last round was spent, or -1. Drives END_HOLD. */
     this.emptyAt = -1;
+    /** World time the rifle is racked and ready again. */
+    this.readyAt = 0;
 
     // ---- presentation state (written in update, only READ by the view) -----
     this.aimX = 0;
@@ -486,6 +498,9 @@ class LuckyShotRite {
      */
     for (const c of input.clicks) {
       if (this.ammo <= 0) break;                 // out of rounds: the queue is inert
+      // Racking: the press is dropped. The epsilon absorbs the float sum of dt.
+      if (this.t + 1e-6 < this.readyAt) continue;
+      this.readyAt = this.t + RACK;
       this.ammo--;
       this.shots++;
       this.#fire(c.x, c.y);
@@ -499,6 +514,9 @@ class LuckyShotRite {
     if (this.t >= DURATION) return true;
     return undefined;
   }
+
+  /** 0 while ready, rising to 1 right after a shot. For the view. */
+  rackLeft() { return clamp((this.readyAt - this.t) / RACK, 0, 1); }
 
   /** Resolve one round. The round is already spent by the time we get here. */
   #fire(cx, cy) {
@@ -591,7 +609,7 @@ export const LUCKY_SHOT_RITE = {
   rules: [
     'Shoot the targets as they slide past. Ducks 1, rabbits 2, plates 3.',
     'The golden one pays 4x, once. The figure with raised hands costs 1.',
-    '24 rounds, and a miss spends one too. 38 points pays in full.',
+    '24 rounds, and a miss spends one too. 60 points pays in full.',
   ],
   keys: [
     { keys: ['Mouse'], action: 'Aim' },
@@ -609,7 +627,7 @@ export const LUCKY_SHOT_RITE = {
 };
 
 export {
-  LuckyShotRite, RAND_CALLS, AMMO, PAR, DURATION, END_HOLD,
+  LuckyShotRite, RAND_CALLS, AMMO, RACK, PAR, DURATION, END_HOLD,
   ROW_TABLE, PER_ROW, TARGETS, GOLDEN_MULT, BYSTANDER_VALUE, DOWN_TIME,
   RESET_SPIN, LOW_AMMO, TRACK,
 };

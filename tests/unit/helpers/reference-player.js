@@ -73,7 +73,7 @@ import { HEAVEN_RITE, PLAY_HW, PLAY_HH } from '../../../src/minigames/rites/Heav
 import {
   PLATFORMS_RITE, cellX, cellY, neighbours, STRESS_LEAD as PLATFORMS_STRESS,
 } from '../../../src/minigames/rites/PlatformsRite.js';
-import { LUCKY_SHOT_RITE, TARGETS } from '../../../src/minigames/rites/LuckyShotRite.js';
+import { LUCKY_SHOT_RITE, TARGETS, RACK } from '../../../src/minigames/rites/LuckyShotRite.js';
 import { OFFROAD_RITE, HALF_W } from '../../../src/minigames/rites/OffroadRite.js';
 import { HUNT_RITE } from '../../../src/minigames/rites/HuntRite.js';
 import { FISHING_RITE, FISH, FLIGHT, SWIMMING } from '../../../src/minigames/rites/FishingRite.js';
@@ -505,6 +505,8 @@ function platformsIntent(inst) {
  * policy is evaluated at the same instant, so neither change is visible.
  */
 const SHOT_PERIOD = 12;
+/** Steps between two shots the rifle will take (RACK): a press sooner is dropped. */
+const RACK_PERIOD = Math.ceil(RACK / DT - 1e-6);
 
 function luckyAim(inst) {
   const t = inst.t + DT;
@@ -646,7 +648,7 @@ const INTENT = Object.freeze({
   heaven: (inst) => ({ aim: heavenBestXY(inst), axis: null, fire: false, alt: false }),
   platforms: platformsIntent,
   luckyshot: (inst, step) => ({
-    aim: luckyAim(inst), axis: null, fire: step % SHOT_PERIOD === 0, alt: false,
+    aim: luckyAim(inst), axis: null, fire: step % Math.max(SHOT_PERIOD, RACK_PERIOD) === 0, alt: false,
   }),
   offroad: offroadIntent,
   hunt: huntIntent,

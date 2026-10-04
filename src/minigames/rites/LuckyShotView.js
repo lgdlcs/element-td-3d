@@ -745,7 +745,8 @@ class LuckyShotView extends RiteView {
       this.world(R.aimX, R.aimY, this.cross.position);
       this.cross.quaternion.copy(cam.quaternion);
       this.cross.scale.setScalar(1 + this.recoil * 0.5);
-      this.crossMat.opacity = 0.8 + 0.2 * this.recoil;
+      // Faint while the rifle racks, so a press that would be dropped looks it.
+      this.crossMat.opacity = R.rackLeft() > 0 ? 0.3 : 0.8 + 0.2 * this.recoil;
     }
 
     // The rifle swings to the crosshair and kicks.

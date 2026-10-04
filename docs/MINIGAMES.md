@@ -78,7 +78,7 @@ export const LUCKY_SHOT_RITE = {
   rules: [                     // REQUIRED: 2-4 lines on the intro card (§5)
     'Shoot the targets as they slide past. Ducks 1, rabbits 2, plates 3.',
     'The golden one pays 4x, once. The figure with raised hands costs 1.',
-    '24 rounds, and a miss spends one too. 38 points pays in full.',
+    '24 rounds, and a miss spends one too. 60 points pays in full.',
   ],
   keys: [                      // REQUIRED: the intro card's key list (§5)
     { keys: ['Mouse'], action: 'Aim' },
@@ -1351,10 +1351,18 @@ up; a miss leaves a bullet hole in the back wall. The gameplay numbers are the
   tuning number: without it the optimal play is to spray the field at 60 clicks a
   second, which is a benchmark of the player's mouse. Do not soften it, do not
   refund a miss, do not top it up on a streak.
-- **Score.** `ratio = points / PAR`, `PAR = 38` — nineteen hits at the average
-  value of 2, i.e. 79 % accuracy on moving targets. A good run, not a perfect
-  one: a ceiling nobody reaches is decoration. PAR does **not** move with the
-  wave (§12); the wave speeds up the rows and the reward already scales.
+- **A 0.5 s rack after every round** (`RACK`). A press while the rifle racks is
+  dropped, not spent, and the crosshair fades to show it. Rounds alone did not
+  stop a mash: 24 presses emptied the gun in about two seconds and the rite was
+  over before it began. With the rack the fastest possible run is 12 s, and a
+  player has half a second to pick the next target.
+- **Score.** `ratio = points / PAR`, `PAR = AMMO × 2.5 = 60`: every round on a
+  rabbit or better, with plates and the golden in the mix. It was 38 before the
+  rack; a player who has time to pick picks better (reference player 30.2 →
+  48.8 points at wave 3, perfect player 74.6), so the bar moved with it to keep
+  the calibration curve. A good run, not a perfect one: a ceiling nobody
+  reaches is decoration. PAR does **not** move with the wave (§12); the wave
+  speeds up the rows and the reward already scales.
 - The front two rows deliberately **overlap** (gap 1.35 against summed radii
   1.50), which is what makes "the frontmost target wins" a rule with teeth; the
   targets array is built front-first so the hit test is two lines and not a sort.
