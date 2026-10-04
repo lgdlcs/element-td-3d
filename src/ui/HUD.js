@@ -269,14 +269,13 @@ export class HUD {
 
   /**
    * Greyed out rather than hidden: hiding would shift the top bar, and a
-   * disabled button also leaves the Tab order. The title says why.
+   * disabled button also leaves the Tab order. The title says why. Called once,
+   * from Game.beginRun, since a run's mode never changes after that.
    */
-  #applyRunRules(rules) {
-    this._rulesShown = rules;
+  applyRunRules(rules) {
     const lock = (b, allowed, why) => {
-      b.dataset.title ??= b.title;
       b.disabled = !allowed;
-      b.title = allowed ? b.dataset.title : why;
+      if (!allowed) b.title = why;
     };
     for (const b of this.nodes.speed.querySelectorAll('button')) {
       lock(b, rules.speed, 'Solo only · online, everyone plays at 1×');
@@ -293,7 +292,6 @@ export class HUD {
     this.nodes.waveTotal.textContent = `/ ${TOTAL_WAVES}`;
     this.nodes.score.textContent = num(s.score);
 
-    if (this._rulesShown !== this.game.rules) this.#applyRunRules(this.game.rules);
     this.nodes.speed.querySelectorAll('button').forEach((b) => {
       const on = Number(b.dataset.speed) === s.speed;
       b.classList.toggle('active', on);

@@ -246,6 +246,7 @@ export class Game {
     this.seed = seed >>> 0;
     if (!rules.speed) this.state.speed = 1;
     if (!rules.pause) this.state.paused = false;
+    this.hud.applyRunRules(rules);
     this.hud.refreshTop();
     // First element pick is free and immediate.
     this.state.pendingElementPicks = 1;
