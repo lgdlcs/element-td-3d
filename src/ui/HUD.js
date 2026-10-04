@@ -85,10 +85,7 @@ export class HUD {
     this.nodes.speed.querySelectorAll('button').forEach((b) => {
       b.addEventListener('click', () => this.game.setSpeed(Number(b.dataset.speed)));
     });
-    this.nodes.pause.addEventListener('click', () => {
-      this.game.state.paused = !this.game.state.paused;
-      this.refreshTop();
-    });
+    this.nodes.pause.addEventListener('click', () => this.game.togglePause());
     this.$('#restart-btn').addEventListener('click', () => window.location.reload());
 
     // ---- key sheet ------------------------------------------------------
@@ -270,6 +267,22 @@ export class HUD {
 
   // ---- top bar ---------------------------------------------------------
 
+  /**
+   * Greyed out rather than hidden: hiding would shift the top bar, and a
+   * disabled button also leaves the Tab order. The title says why. Called once,
+   * from Game.beginRun, since a run's mode never changes after that.
+   */
+  applyRunRules(rules) {
+    const lock = (b, allowed, why) => {
+      b.disabled = !allowed;
+      if (!allowed) b.title = why;
+    };
+    for (const b of this.nodes.speed.querySelectorAll('button')) {
+      lock(b, rules.speed, 'Solo only · online, everyone plays at 1×');
+    }
+    lock(this.nodes.pause, rules.pause, 'Solo only · no pause in an online race');
+  }
+
   refreshTop() {
     const s = this.game.state;
 
@@ -391,11 +404,11 @@ export class HUD {
     }
   }
 
-  warn(msg, tone = 'warn') {
+  warn(msg, tone = 'warn', secs = 1.9) {
     this.nodes.toast.className = `t-${tone}`;
     this.nodes.toast.textContent = msg;
     this.nodes.toast.classList.add('show');
-    this._toastTimer = 1.9;
+    this._toastTimer = secs;
   }
 
   announceWave(def) {

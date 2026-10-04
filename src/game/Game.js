@@ -22,6 +22,7 @@ import { AudioEngine } from '../audio/AudioEngine.js';
 import { MinigameHost } from '../minigames/MinigameHost.js';
 import { riteForWave } from '../minigames/schedule.js';
 import { Lottery } from '../ui/Lottery.js';
+import { rulesFor } from './runMode.js';
 
 /** Scratch vector for world→screen projection (audio panning). */
 const _sound = new THREE.Vector3();
@@ -71,6 +72,8 @@ export class Game {
   constructor(canvas, quality = 'ultra', opts = {}) {
     this.canvas = canvas;
     this.seed = (opts.seed ?? Math.floor(Math.random() * 0xffffffff)) >>> 0;
+    /** 'solo' | 'online', see runMode.js. Set for good by beginRun. */
+    this.mode = 'solo';
     this.onRunEnd = opts.onRunEnd ?? null;
     this.pipeline = new RenderPipeline(canvas, quality);
     this.q = this.pipeline.q;
@@ -232,11 +235,19 @@ export class Game {
    * after the scene exists (see `autoStart`).
    *
    * Idempotent: calling it twice must not hand out a second free element pick.
+   *
+   * @param {{mode?: 'solo' | 'online'}} [opts]
    */
-  beginRun(seed = this.seed) {
+  beginRun(seed = this.seed, { mode = 'solo' } = {}) {
     if (this._begun) return false;
+    const rules = rulesFor(mode);
     this._begun = true;
+    this.mode = mode;
     this.seed = seed >>> 0;
+    if (!rules.speed) this.state.speed = 1;
+    if (!rules.pause) this.state.paused = false;
+    this.hud.applyRunRules(rules);
+    this.hud.refreshTop();
     // First element pick is free and immediate.
     this.state.pendingElementPicks = 1;
     this.state.phase = 'pickElement';
@@ -842,7 +853,7 @@ export class Game {
           // card or the lottery, is not a decision to send the next wave.
           if (!e.repeat && !this.minigames?.swallowsCommit() && !this.lottery?.swallowsCommit()) this.startWaveNow();
           break;
-        case 'KeyP': this.state.paused = !this.state.paused; this.hud.refreshTop(); break;
+        case 'KeyP': this.togglePause(); break;
         case 'Digit1': this.setSpeed(1); break;
         case 'Digit2': this.setSpeed(2); break;
         case 'Digit3': this.setSpeed(3); break;
@@ -1308,7 +1319,23 @@ export class Game {
     this.hud.refreshBuildBar();
   }
 
-  setSpeed(v) { this.state.speed = v; this.hud.refreshTop(); }
+  get rules() { return rulesFor(this.mode); }
+
+  /** @returns {boolean} false when this run's mode forbids it (online). */
+  setSpeed(v) {
+    if (!this.rules.speed) return false;
+    this.state.speed = v;
+    this.hud.refreshTop();
+    return true;
+  }
+
+  /** @returns {boolean} false when this run's mode forbids pausing (online). */
+  togglePause() {
+    if (!this.state.paused && !this.rules.pause) return false;
+    this.state.paused = !this.state.paused;
+    this.hud.refreshTop();
+    return true;
+  }
 
   // ---- spectate ---------------------------------------------------------
 
