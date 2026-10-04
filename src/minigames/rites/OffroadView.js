@@ -67,6 +67,12 @@ const RIVAL_CSS = ['#5aa2ff', '#5fd67f', '#cf86ff'];
 
 /** Banner height: well above the chase camera, which drives under every arch. */
 const GATE_Y = 2.55;
+/**
+ * A post fades between these shares of the frame width. The chase camera rides
+ * the road's edge when the car is roped wide, and an opaque post there filled
+ * 6-8 % of the frame for a moment (tools/scratch/offroad-posts.mjs).
+ */
+const POST_FADE_FROM = 0.02, POST_FADE_TO = 0.032;
 
 /** Gate states, the index into the banner materials. */
 const G_AHEAD = 0, G_NEXT = 1, G_GOOD = 2, G_MISS = 3;
@@ -592,7 +598,7 @@ class OffroadView extends RiteView {
       g.position.set(cx, 0, -gt.s);
       g.rotation.y = -Math.atan(R.slopeAt(gt.s));
       const posts = [-1, 1].map((side) => {
-        const p = new THREE.Mesh(postGeo, postMat);
+        const p = this.#post(postGeo, postMat, 0.08);
         p.position.set(side * (gt.hw + 0.1), 0, 0);
         p.castShadow = true;
         const cap = new THREE.Mesh(capGeo, this.bannerMat[G_AHEAD]);
@@ -614,6 +620,29 @@ class OffroadView extends RiteView {
     });
   }
 
+  /** A gate or arch post with its own fading material; `r` is its half-width. */
+  #post(geo, mat, r) {
+    const m = this.own(mat.clone());
+    m.transparent = true;
+    const p = new THREE.Mesh(geo, m);
+    (this.posts ??= []).push({ mesh: p, r });
+    return p;
+  }
+
+  /** Fade every post by the share of the frame it covers, from the camera's own view. */
+  #fadePosts() {
+    const cam = this.camera;
+    const tanH = Math.tan((cam.fov * Math.PI) / 360) * cam.aspect;
+    const v = this._pv ??= new THREE.Vector3();
+    for (const P of this.posts) {
+      v.set(0, 1.4, 0).applyMatrix4(P.mesh.matrixWorld).applyMatrix4(cam.matrixWorldInverse);
+      const frac = P.r / (Math.max(0.01, -v.z) * tanH);
+      const a = clamp((POST_FADE_TO - frac) / (POST_FADE_TO - POST_FADE_FROM), 0, 1);
+      P.mesh.material.opacity = a;
+      P.mesh.visible = a > 0.02;
+    }
+  }
+
   #buildArches() {
     const R = this.rite;
     const arch = (s, tex) => {
@@ -623,7 +652,7 @@ class OffroadView extends RiteView {
       const postMat = new THREE.MeshStandardMaterial({ color: 0x1d1d22, roughness: 0.5, metalness: 0.4 });
       const postGeo = new THREE.BoxGeometry(0.22, 3.2, 0.22).translate(0, 1.6, 0);
       for (const side of [-1, 1]) {
-        const p = new THREE.Mesh(postGeo, postMat);
+        const p = this.#post(postGeo, postMat, 0.11);
         p.position.x = side * (ROAD_HW + 0.5);
         p.castShadow = true;
         g.add(p);
@@ -1008,6 +1037,7 @@ class OffroadView extends RiteView {
     // The arches' posts stand at the road's edge, where the camera rides when
     // the car is roped wide: they go the same way as the gates.
     for (const A of this.arches) A.group.visible = A.s > camS + 2.0;
+    this.#fadePosts();
     for (let i = 0; i < GATE_COUNT; i++) {
       const G = this.gateMeshes[i];
       // Gone once the camera reaches it, so a car run wide never drags the
