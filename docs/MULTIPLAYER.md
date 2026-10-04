@@ -61,6 +61,7 @@ does not unlock 3x halfway through a race.
 - **Connection lost mid-run.** A reconnect comes back with a new id outside the
   room, so the client shows a "Connection lost" toast and hides the scoreboard.
   The run goes on locally, still at 1x. Rejoining the same run is not supported.
+  A drop after `over` changes nothing: the final standings stay on screen.
 
 ### The rites (between-wave minigames)
 

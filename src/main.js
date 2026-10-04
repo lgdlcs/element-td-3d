@@ -294,13 +294,18 @@ async function start() {
       // out is honest about where it came from.
       scoreboard.show();
       net.on('scores', (m) => scoreboard.update(m.players ?? [], chosen.you));
-      net.on('over', (m) => scoreboard.showFinal(m.standings ?? [], chosen.you));
       // A reconnect comes back with a new id outside the room (NetClient._fail),
       // so the room is gone for good: say so once, and stop showing rows that
-      // will never update again. The run itself goes on, still at 1x.
-      net.on('close', () => {
+      // will never update again. Once `over` has arrived the final standings
+      // are complete, so a later drop (a server restart, say) leaves them be.
+      const onClose = () => {
         scoreboard.hide();
-        game.hud.warn('Connection lost · you are out of the room, the run goes on', 'warn', 5);
+        game.hud.warn('Connection lost · you are out of the room', 'warn', 5);
+      };
+      net.on('close', onClose);
+      net.on('over', (m) => {
+        net.off('close', onClose);
+        scoreboard.showFinal(m.standings ?? [], chosen.you);
       });
     }
   }
@@ -398,8 +403,8 @@ function wireSpectate(game, net, scoreboard) {
  *
  * Resolves `{ seed, mode, you }`, mode being 'solo' or 'online' (runMode.js).
  * A solo choice mints its own seed, so the seeded element draw behaves
- * identically in both modes and there is no
- * "multiplayer only" code path inside the game to go stale.
+ * identically in both modes. What the mode changes inside the game is the
+ * RUN_RULES table in runMode.js, and nothing else.
  *
  * This function is the ONLY place that knows both the lobby and the transport.
  * Game.js is deliberately not in scope here.

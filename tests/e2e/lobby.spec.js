@@ -8,14 +8,10 @@ import { bootGame, settle, fakeRoomServer } from './fixtures.js';
  * (navigator.webdriver) and boots straight into a solo run, and `?mp` is the
  * documented override that keeps the overlay testable.
  *
- * WHAT THIS SPEC WILL AND WILL NOT ASSERT. Whether a multiplayer server answers
- * on 5274 is a property of the machine the suite runs on, not of the build, so
- * nothing here asserts "offline". It asserts the parts that hold either way: the
- * markup, that the run has NOT begun while the overlay is up, that the
- * connection attempt settles out of 'connecting', that the state class matches
- * whichever way it settled, and that Play solo works regardless. The
- * server-specific branch is asserted only once it is known which branch was
- * taken.
+ * No spec here talks to a real server. The 'lobby' describe answers through
+ * fakeRoomServer, so it always settles on 'idle'; 'lobby offline' closes every
+ * socket at once, so it always settles on 'offline'. Whatever is listening on
+ * 5274 (often someone's live game) is never contacted.
  */
 
 /**
@@ -91,20 +87,9 @@ test.describe('lobby', () => {
       { message: 'the lobby never left the connecting state', timeout: 20000 },
     ).not.toBe('connecting');
 
-    const settledState = await page.evaluate(() => window.__lobby.state);
-    expect(['idle', 'offline', 'lobby']).toContain(settledState);
-    await expect(page.locator('#lobby')).toHaveClass(new RegExp(`\\bs-${settledState}\\b`));
-
-    if (settledState === 'offline') {
-      // No server on 5274: the offline card explains itself and multiplayer is
-      // shut off, but solo stays reachable.
-      await expect(page.locator('#lobby-offline')).toBeVisible();
-      await expect(page.locator('#lobby-offline')).toContainText('npm run server');
-      await expect(page.locator('#lobby-create')).toBeDisabled();
-      await expect(page.locator('#lobby-solo')).toBeEnabled();
-    } else {
-      await expect(page.locator('#lobby-create')).toBeEnabled();
-    }
+    expect(await page.evaluate(() => window.__lobby.state)).toBe('idle');
+    await expect(page.locator('#lobby')).toHaveClass(/\bs-idle\b/);
+    await expect(page.locator('#lobby-create')).toBeEnabled();
 
     expect(appErrors(errors), errors.join('\n')).toEqual([]);
   });
@@ -183,6 +168,31 @@ test.describe('lobby', () => {
   });
 });
 
+test.describe('lobby offline', () => {
+  // Every socket is closed the moment it opens, which NetClient.connect
+  // resolves as offline (see the instant-close case in main.js openLobby).
+  test.beforeEach(({ page }) => page.routeWebSocket('**/ws', (ws) => ws.close()));
+
+  test('with no server the offline card explains itself and solo stays reachable', async ({ page }) => {
+    const { errors } = await bootGame(page, { query: 'mp' });
+    await expect.poll(
+      () => page.evaluate(() => window.__lobby?.state),
+      { message: 'the lobby never settled offline', timeout: 20000 },
+    ).toBe('offline');
+    await expect(page.locator('#lobby')).toHaveClass(/\bs-offline\b/);
+    await expect(page.locator('#lobby-offline')).toBeVisible();
+    await expect(page.locator('#lobby-offline')).toContainText('npm run server');
+    await expect(page.locator('#lobby-create')).toBeDisabled();
+    await expect(page.locator('#lobby-solo')).toBeEnabled();
+
+    await page.click('#lobby-solo');
+    await expect(page.locator('#lobby')).toBeHidden();
+    expect(await page.evaluate(() => window.__game.mode)).toBe('solo');
+
+    expect(appErrors(errors), errors.join('\n')).toEqual([]);
+  });
+});
+
 /**
  * Speed and pause are solo only (src/game/runMode.js). Online, one player at 3x
  * makes the room wait for `over`, and one player on pause holds it open for
@@ -237,8 +247,6 @@ test.describe('run mode', () => {
     await page.keyboard.press('3');
     await page.keyboard.press('2');
     await page.keyboard.press('p');
-    await page.locator('#speed-buttons button[data-speed="3"]').click({ force: true });
-    await page.locator('#pause-btn').click({ force: true });
     await settle(page, 200);
     expect(await speedOf(page)).toBe(1);
     expect(await pausedOf(page)).toBe(false);
@@ -270,6 +278,26 @@ test.describe('run mode', () => {
     await page.keyboard.press('3');
     await settle(page, 100);
     expect(await speedOf(page)).toBe(1);
+
+    expect(appErrors(errors), errors.join('\n')).toEqual([]);
+  });
+
+  test('online: a drop after over keeps the final standings on screen', async ({ page }) => {
+    const { server, errors } = await enterRoom(page);
+    await startOnline(page);
+    await bindFire(page);
+    const rival = { id: 'p2', name: 'Rival', host: false, ready: true, lives: 50, score: 10, wave: 3, killed: 0, leaked: 0 };
+    const me = { ...rival, id: 'p1', name: 'Me', host: true, score: 20 };
+    server.send({ t: 'over', standings: [me, rival] });
+    await expect(page.locator('#scoreboard')).toContainText('Final standings');
+    await expect(page.locator('#scoreboard')).toBeVisible();
+
+    await server.drop();
+    await settle(page, 500);
+
+    await expect(page.locator('#scoreboard')).toHaveClass(/\bon\b/);
+    await expect(page.locator('#scoreboard')).toContainText('Final standings');
+    await expect(page.locator('#toast')).not.toContainText('Connection lost');
 
     expect(appErrors(errors), errors.join('\n')).toEqual([]);
   });
