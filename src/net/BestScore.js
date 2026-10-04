@@ -46,7 +46,8 @@ export function loadBest() {
 
 /**
  * Record a finished run. Returns `{ best, record }` — `record` is true only when
- * this run actually beat the stored score, which is what the end card reports.
+ * this run actually beat the stored score. The end card makes the same call
+ * itself (HUD.showEnd), because it renders before this runs (Game.js #end).
  *
  * Ties do NOT count as a record: equalling your best is not beating it, and
  * flashing "new best" at an identical number reads as a bug.

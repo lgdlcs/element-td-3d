@@ -564,9 +564,10 @@ export class HUD {
     // end card with nothing but a z-index between them.
     this.setHelp(false);
     this.build.setCodex(false);
-    // Read from the store, not from `this.best`: that is loaded once at boot,
-    // and another tab may have set a record since. main.js writes this run's
-    // score after the card renders, so the store still holds the score to beat.
+    // Read from the store, not from `this.best`: another tab may have set a
+    // record since this one last refreshed it. Game.js #end renders this card
+    // before onRunEnd saves the run, so the store still holds the score to
+    // beat; the rule (strictly greater) is saveBest's.
     const best = loadBest().score;
     const record = s.score > best;
     const board = this.leaderboard.slice(0, 5);
