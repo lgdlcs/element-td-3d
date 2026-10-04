@@ -295,6 +295,13 @@ async function start() {
       scoreboard.show();
       net.on('scores', (m) => scoreboard.update(m.players ?? [], chosen.you));
       net.on('over', (m) => scoreboard.showFinal(m.standings ?? [], chosen.you));
+      // A reconnect comes back with a new id outside the room (NetClient._fail),
+      // so the room is gone for good: say so once, and stop showing rows that
+      // will never update again. The run itself goes on, still at 1x.
+      net.on('close', () => {
+        scoreboard.hide();
+        game.hud.warn('Connection lost · you are out of the room, the run goes on', 'warn', 5);
+      });
     }
   }
 }

@@ -406,11 +406,11 @@ export class HUD {
     }
   }
 
-  warn(msg, tone = 'warn') {
+  warn(msg, tone = 'warn', secs = 1.9) {
     this.nodes.toast.className = `t-${tone}`;
     this.nodes.toast.textContent = msg;
     this.nodes.toast.classList.add('show');
-    this._toastTimer = 1.9;
+    this._toastTimer = secs;
   }
 
   announceWave(def) {
