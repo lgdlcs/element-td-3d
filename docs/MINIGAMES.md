@@ -78,7 +78,7 @@ export const LUCKY_SHOT_RITE = {
   rules: [                     // REQUIRED: 2-4 lines on the intro card (§5)
     'Shoot the targets as they slide past. Ducks 1, rabbits 2, plates 3.',
     'The golden one pays 4x, once. The figure with raised hands costs 1.',
-    '24 rounds, and a miss spends one too. 60 points pays in full.',
+    '24 rounds, half a second to reload each. A miss spends one too. 60 points pays in full.',
   ],
   keys: [                      // REQUIRED: the intro card's key list (§5)
     { keys: ['Mouse'], action: 'Aim' },
