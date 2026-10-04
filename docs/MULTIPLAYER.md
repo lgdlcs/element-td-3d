@@ -31,6 +31,37 @@ is a picture, not a simulation you can influence, and the watcher's own run keep
 running at full rate underneath it. Nothing about it is authoritative and nothing
 about it can change a hit point on either machine — see "Spectating" below.
 
+### Speed and pause are solo only
+
+A run is `'solo'` or `'online'`, set once by `Game.beginRun(seed, { mode })` and
+never changed. `src/game/runMode.js` holds what each mode allows:
+
+| mode | 1x/2x/3x | pause (`P`, ❚❚) |
+|---|---|---|
+| solo | yes | yes |
+| online | no, always 1x | no |
+
+Online, everyone in the room shares the wall clock. A player at 3x finishes
+early and waits for `over`, while the others play at their own pace. A paused
+player keeps sending `status`, so the server never treats them as idle and the
+room never reaches `over`. Pausing would also give free build time in a race.
+
+`Game.setSpeed` and `Game.togglePause` refuse when the mode forbids them, which
+covers the keys, the top-bar buttons and console calls. The buttons stay in the
+top bar, greyed out, with a "Solo only" tooltip. The help sheet says the same.
+
+The mode does not change when the connection drops mid-run, so a lost socket
+does not unlock 3x halfway through a race.
+
+### Leaving a room
+
+- **Play solo** from inside a room sends `leave` first. Without it the player
+  stayed seated and not ready, and the host's Begin stayed on "Waiting on
+  <name>" forever.
+- **Connection lost mid-run.** A reconnect comes back with a new id outside the
+  room, so the client shows a "Connection lost" toast and hides the scoreboard.
+  The run goes on locally, still at 1x. Rejoining the same run is not supported.
+
 ### The rites (between-wave minigames)
 
 Same model, **no new wire traffic**. `riteForWave(seed, n)` is a pure function of
@@ -328,6 +359,7 @@ the standings.
 | `server/index.js` | the ws server, rooms, protocol |
 | `src/net/NetClient.js` | client transport, reconnect, offline fallback |
 | `src/core/Rng.js` | seeded RNG shared by client and server |
+| `src/game/runMode.js` | what a solo or online run allows (speed, pause) |
 | `src/ui/Lobby.js` + `lobby.css` | pre-game overlay |
 | `src/ui/Scoreboard.js` + `scoreboard.css` | in-game leaderboard |
 | `server/leaderboard.js` | global top-20, persisted to `server/leaderboard.json` |
